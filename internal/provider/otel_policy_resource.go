@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -106,8 +105,8 @@ func (r *OtelPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			},
 			"policy_id":  schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"sink_count": schema.Int64Attribute{Computed: true},
-			"created_at": schema.StringAttribute{Computed: true},
-			"created_by": schema.StringAttribute{Computed: true},
+			"created_at": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"created_by": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"updated_at": schema.StringAttribute{Computed: true},
 			"updated_by": schema.StringAttribute{Computed: true},
 		},
@@ -264,16 +263,3 @@ func otelPolicyToModel(tenantID string, pol *adminapi.OtelPolicy) OtelPolicyReso
 	return m
 }
 
-// stringSliceToList is a helper for converting *[]string from SDK responses
-// into a types.List.
-func stringSliceToList(p *[]string) types.List {
-	if p == nil {
-		return types.ListNull(types.StringType)
-	}
-	elems := make([]attr.Value, 0, len(*p))
-	for _, s := range *p {
-		elems = append(elems, types.StringValue(s))
-	}
-	lv, _ := types.ListValue(types.StringType, elems)
-	return lv
-}

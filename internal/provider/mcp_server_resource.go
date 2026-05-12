@@ -58,11 +58,15 @@ type MCPServerResourceModel struct {
 	HealthCheckURL       types.String `tfsdk:"health_check_url"`
 	EdgeSiteID           types.String `tfsdk:"edge_site_id"`
 	DeploymentMode      types.String `tfsdk:"deployment_mode"`
-	ProviderAuthType     types.String `tfsdk:"provider_auth_type"`
 	UpstreamAuthStrategy types.String `tfsdk:"upstream_auth_strategy"`
 	TransportType        types.String `tfsdk:"transport_type"`
 	EnabledScopes        types.List   `tfsdk:"enabled_scopes"` // []string
 	Tags                 types.Map    `tfsdk:"tags"`            // map[string]string
+
+	// Computed-only: ProviderAuthType is inferred by the platform from the
+	// upstream_auth_strategy + provider config; not user-settable through this
+	// input DTO. The response exposes it; v0.1 surfaces it as read-only.
+	ProviderAuthType types.String `tfsdk:"provider_auth_type"`
 
 	// Computed / server-set
 	ServerID              types.String `tfsdk:"server_id"`
@@ -194,10 +198,10 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Computed: true,
 			},
 			"provider_auth_type": schema.StringAttribute{
-				MarkdownDescription: "Authentication type the provider expects. Allowed values depend on " +
-					"the provider; common: `oauth2`, `bearer`, `none`, `cc_federated`.",
-				Optional: true,
+				MarkdownDescription: "Computed: authentication type the platform inferred for the provider. " +
+					"Not directly user-settable; influenced by `upstream_auth_strategy` and the provider's catalog config.",
 				Computed: true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"upstream_auth_strategy": schema.StringAttribute{
 				MarkdownDescription: "Strategy for authenticating to the upstream server. Allowed: `none`, " +
@@ -458,16 +462,37 @@ func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCP
 	return m.toBody(ctx)
 }
 
+// Defaults for the required-but-server-managed enum fields on
+// McpProviderInstance — the platform overrides these on persist, but
+// the wire schema rejects empty strings. See ferentin-platform#838 for
+// the input-DTO cleanup that should retire these defaults.
+const (
+	mcpServerDefaultHealthStatus     = gen.McpProviderInstanceHealthStatus("unknown")
+	mcpServerDefaultValidationStatus = gen.McpProviderInstanceValidationStatus("pending")
+	mcpServerDefaultTransportType    = gen.McpProviderInstanceTransportType("sse")
+	mcpServerDefaultUpstreamAuth     = gen.McpProviderInstanceUpstreamAuthStrategy("none")
+)
+
 func (m *MCPServerResourceModel) toBody(ctx context.Context) (adminapi.MCPServerCreate, error) {
 	body := adminapi.MCPServerCreate{
-		// Required non-pointer fields with sensible defaults.
-		Name:                    m.Name.ValueString(),
-		Priority:                int32(m.Priority.ValueInt64()),
-		ResourceCacheTtlSeconds: 0,
+		// User-supplied + required.
+		Name: m.Name.ValueString(),
+
+		// Required non-pointer enums with platform-sensible defaults; platform
+		// overrides on persist. Tracked in ferentin-platform#838.
+		HealthStatus:         mcpServerDefaultHealthStatus,
+		ValidationStatus:     mcpServerDefaultValidationStatus,
+		TransportType:        mcpServerDefaultTransportType,
+		UpstreamAuthStrategy: mcpServerDefaultUpstreamAuth,
+
+		// Runtime telemetry; server overrides.
 		FailureCount:            0,
-		// Enum required-fields default to zero-value strings; platform may
-		// either accept or override. If the platform rejects, raise the
-		// minimum required field set in HCL.
+		ResourceCacheTtlSeconds: 0,
+	}
+	if !m.Priority.IsNull() && !m.Priority.IsUnknown() {
+		body.Priority = int32(m.Priority.ValueInt64())
+	} else {
+		body.Priority = 100
 	}
 	if !m.TransportType.IsNull() && !m.TransportType.IsUnknown() {
 		body.TransportType = gen.McpProviderInstanceTransportType(m.TransportType.ValueString())

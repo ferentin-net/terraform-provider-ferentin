@@ -486,19 +486,3 @@ func llmInstanceToModel(
 	return m
 }
 
-// setStringPtr / setInt32Ptr / setBoolPtr (setBoolPtr is in edge_site_resource.go).
-func setStringPtr(in types.String, out **string) {
-	if in.IsNull() || in.IsUnknown() {
-		return
-	}
-	v := in.ValueString()
-	*out = &v
-}
-
-func setInt32Ptr(in types.Int64, out **int32) {
-	if in.IsNull() || in.IsUnknown() {
-		return
-	}
-	v := int32(in.ValueInt64())
-	*out = &v
-}

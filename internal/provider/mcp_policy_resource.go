@@ -12,7 +12,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
@@ -117,6 +119,9 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"type": schema.StringAttribute{
 						MarkdownDescription: "Effect type: `allow` or `deny`.",
 						Required:            true,
+						Validators: []validator.String{
+							stringvalidator.OneOf("allow", "deny"),
+						},
 					},
 					"message": schema.StringAttribute{
 						MarkdownDescription: "Optional message surfaced to the agent when the policy applies.",
@@ -134,11 +139,17 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			},
 
 			"policy_id":  schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"created_at": schema.StringAttribute{Computed: true},
+			"created_at": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"updated_at": schema.StringAttribute{Computed: true},
 		},
 	}
 }
+
+// Create vs Update body shape note: McpPolicyCreateRequest has Name, Priority,
+// ProviderInstances, and Effect as required NON-POINTER fields (gen reflects
+// the platform's Create contract). McpPolicyUpdateRequest has all fields as
+// pointers (a sparse-update contract). The two code paths look different
+// because the contracts differ; don't unify them.
 
 func (r *MCPPolicyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan MCPPolicyResourceModel
@@ -299,16 +310,6 @@ func (m *MCPPolicyResourceModel) toEffect(ctx context.Context) gen.McpEffectDto 
 		e.DenyToolsets = &s
 	}
 	return e
-}
-
-// stringListToSDK is shared with other resources.
-func stringListToSDK(ctx context.Context, l types.List) []string {
-	if l.IsNull() || l.IsUnknown() {
-		return []string{}
-	}
-	var out []string
-	_ = l.ElementsAs(ctx, &out, false)
-	return out
 }
 
 func mcpPolicyToModel(tenantID string, pol *adminapi.MCPPolicy) MCPPolicyResourceModel {

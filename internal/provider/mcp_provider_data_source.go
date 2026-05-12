@@ -23,7 +23,6 @@ type MCPProviderDataSource struct {
 type MCPProviderDataSourceModel struct {
 	ID          types.String `tfsdk:"id"`
 	ProviderID  types.String `tfsdk:"provider_id"`
-	Name        types.String `tfsdk:"name"`
 	Slug        types.String `tfsdk:"slug"`
 	DisplayName types.String `tfsdk:"display_name"`
 	Description types.String `tfsdk:"description"`
@@ -66,10 +65,6 @@ func (d *MCPProviderDataSource) Schema(_ context.Context, _ datasource.SchemaReq
 				MarkdownDescription: "UUID of the catalog provider entry.",
 				Required:            true,
 			},
-			"name": schema.StringAttribute{
-				MarkdownDescription: "Catalog name.",
-				Computed:            true,
-			},
 			"slug": schema.StringAttribute{
 				MarkdownDescription: "URL slug for the provider (e.g. `salesforce`, `box`).",
 				Computed:            true,
@@ -106,9 +101,8 @@ func (d *MCPProviderDataSource) Read(ctx context.Context, req datasource.ReadReq
 	}
 
 	data.ID = data.ProviderID
-	// MCPProviderCatalog has no Name field — surface DisplayName as the
-	// effective name; Slug is McpSlug.
-	data.Name = strPtrToTF(prov.DisplayName)
+	// MCPProviderCatalog has no separate Name field; the platform's catalog
+	// concept is DisplayName + McpSlug.
 	data.Slug = strPtrToTF(prov.McpSlug)
 	data.DisplayName = strPtrToTF(prov.DisplayName)
 	data.Description = strPtrToTF(prov.Description)

@@ -11,7 +11,9 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
@@ -104,7 +106,13 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			},
 			"name":              schema.StringAttribute{Required: true},
 			"agent_platform":    schema.StringAttribute{Required: true, MarkdownDescription: "Agent platform (`claude`, `chatgpt`, `microsoft_copilot`, …)."},
-			"application_type":  schema.StringAttribute{Required: true, MarkdownDescription: "`NATIVE`, `WEB`, or `SERVICE`."},
+			"application_type": schema.StringAttribute{
+				Required:            true,
+				MarkdownDescription: "`NATIVE`, `WEB`, or `SERVICE`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("NATIVE", "WEB", "SERVICE"),
+				},
+			},
 			"description":       schema.StringAttribute{Optional: true, Computed: true},
 			"scopes": schema.ListAttribute{
 				MarkdownDescription: "Constrained to the agent-client allowlist: `llm`, `mcp`, `summarizer`, " +
@@ -113,8 +121,12 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				ElementType: types.StringType,
 			},
 			"token_endpoint_auth_method": schema.StringAttribute{
-				Optional: true, Computed: true,
+				Optional:            true,
+				Computed:            true,
 				MarkdownDescription: "`private_key_jwt`, `client_secret_basic`, `client_secret_post`, or `none`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("private_key_jwt", "client_secret_basic", "client_secret_post", "none"),
+				},
 			},
 			"jwks_uri":              schema.StringAttribute{Optional: true, Computed: true},
 			"redirect_uris":         schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType},
@@ -123,15 +135,15 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"active":                schema.BoolAttribute{Optional: true, Computed: true},
 
 			"agent_id":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"client_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "Public fc_* identifier the agent presents at runtime."},
-			"client_secret": schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "Server-issued secret; only returned on Create for client_secret_* auth methods."},
-			"client_type":   schema.StringAttribute{Computed: true},
-			"ai_client_type": schema.StringAttribute{Computed: true},
-			"created_at":           schema.StringAttribute{Computed: true},
+			"client_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "Public fc_* identifier the agent presents at runtime.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"client_secret": schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "Server-issued secret; only returned on Create for client_secret_* auth methods.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"client_type":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"ai_client_type": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"created_at":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"updated_at":           schema.StringAttribute{Computed: true},
-			"managed_by":           schema.StringAttribute{Computed: true},
-			"managed_by_client_id": schema.StringAttribute{Computed: true},
-			"managed_by_module":    schema.StringAttribute{Computed: true},
+			"managed_by":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"managed_by_client_id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"managed_by_module":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 		},
 	}
 }
@@ -147,11 +159,14 @@ func (r *AIAgentResource) Create(ctx context.Context, req resource.CreateRequest
 	body := adminapi.OIDCClientRow{
 		Name:            plan.Name.ValueString(),
 		ApplicationType: gen.OidcClientApplicationType(plan.ApplicationType.ValueString()),
-		ClientType:      gen.OidcClientClientType("CONFIDENTIAL"),
+		ClientType:      clientTypeForApplicationType(plan.ApplicationType.ValueString()),
 	}
-	r.fillBody(ctx, &plan, &body)
+	if err := r.fillBody(ctx, &plan, &body); err != nil {
+		resp.Diagnostics.AddError("Invalid AI agent config", err.Error())
+		return
+	}
 	// Force ai_client_type='agent' — that's the entire point of this resource.
-	ait := gen.OidcClientAiClientType("agent")
+	ait := aiAgentClientType
 	body.AiClientType = &ait
 
 	agent, err := r.sdk.OIDCClients().Create(ctx, tenantID, body)
@@ -197,10 +212,13 @@ func (r *AIAgentResource) Update(ctx context.Context, req resource.UpdateRequest
 	body := adminapi.OIDCClientRow{
 		Name:            plan.Name.ValueString(),
 		ApplicationType: gen.OidcClientApplicationType(plan.ApplicationType.ValueString()),
-		ClientType:      gen.OidcClientClientType("CONFIDENTIAL"),
+		ClientType:      clientTypeForApplicationType(plan.ApplicationType.ValueString()),
 	}
-	r.fillBody(ctx, &plan, &body)
-	ait := gen.OidcClientAiClientType("agent")
+	if err := r.fillBody(ctx, &plan, &body); err != nil {
+		resp.Diagnostics.AddError("Invalid AI agent config", err.Error())
+		return
+	}
+	ait := aiAgentClientType
 	body.AiClientType = &ait
 
 	agent, err := r.sdk.OIDCClients().Update(ctx, tenantID, state.AgentID.ValueString(), "", body)
@@ -252,7 +270,26 @@ func (r *AIAgentResource) resolveTenant(perResource types.String) string {
 	return r.tenantID
 }
 
-func (r *AIAgentResource) fillBody(ctx context.Context, plan *AIAgentResourceModel, body *adminapi.OIDCClientRow) {
+// aiAgentClientType is the constant ai_client_type used for every agent
+// row this resource creates — M1 from the review (consolidate string literals
+// that were duplicated in Create + Update).
+const aiAgentClientType gen.OidcClientAiClientType = "agent"
+
+// clientTypeForApplicationType picks the OAuth client_type based on the
+// agent's application_type. M2 from the review: NATIVE / WEB are public
+// clients (no secret round-trip), SERVICE is confidential. Defaults to
+// CONFIDENTIAL when the application_type is unrecognized — the conservative
+// choice.
+func clientTypeForApplicationType(appType string) gen.OidcClientClientType {
+	switch strings.ToUpper(appType) {
+	case "NATIVE", "WEB":
+		return gen.OidcClientClientType("PUBLIC")
+	default:
+		return gen.OidcClientClientType("CONFIDENTIAL")
+	}
+}
+
+func (r *AIAgentResource) fillBody(ctx context.Context, plan *AIAgentResourceModel, body *adminapi.OIDCClientRow) error {
 	setStringPtr(plan.Description, &body.Description)
 	setStringPtr(plan.TokenEndpointAuthMethod, &body.TokenEndpointAuthMethod)
 	setStringPtr(plan.JwksURI, &body.ClientJwksUri)
@@ -271,10 +308,13 @@ func (r *AIAgentResource) fillBody(ctx context.Context, plan *AIAgentResourceMod
 		body.RedirectUris = &s
 	}
 	if !plan.RoleID.IsNull() && !plan.RoleID.IsUnknown() {
-		if rid, err := parseUUID(plan.RoleID.ValueString()); err == nil {
-			body.RoleId = &rid
+		rid, err := parseUUID(plan.RoleID.ValueString())
+		if err != nil {
+			return fmt.Errorf("role_id %q is not a valid UUID: %w", plan.RoleID.ValueString(), err)
 		}
+		body.RoleId = &rid
 	}
+	return nil
 }
 
 func agentToModel(tenantID string, a *adminapi.OIDCClientRow) AIAgentResourceModel {

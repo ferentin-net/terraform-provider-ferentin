@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -23,15 +24,16 @@ type MCPServerCardDataSource struct {
 }
 
 type MCPServerCardDataSourceModel struct {
-	ID             types.String `tfsdk:"id"`
-	Slug           types.String `tfsdk:"slug"`
-	CardID         types.String `tfsdk:"card_id"`
-	Source         types.String `tfsdk:"source"`
-	Checksum       types.String `tfsdk:"checksum"`
-	AdminUpload    types.Bool   `tfsdk:"admin_upload"`
-	Classpath      types.Bool   `tfsdk:"classpath"`
-	CreatedAt      types.String `tfsdk:"created_at"`
-	LastIngestedAt types.String `tfsdk:"last_ingested_at"`
+	ID              types.String `tfsdk:"id"`
+	Slug            types.String `tfsdk:"slug"`
+	CardID          types.String `tfsdk:"card_id"`
+	Source          types.String `tfsdk:"source"`
+	Checksum        types.String `tfsdk:"checksum"`
+	AdminUpload     types.Bool   `tfsdk:"admin_upload"`
+	Classpath       types.Bool   `tfsdk:"classpath"`
+	CreatedAt       types.String `tfsdk:"created_at"`
+	LastIngestedAt  types.String `tfsdk:"last_ingested_at"`
+	CardContentJSON types.String `tfsdk:"card_content_json"`
 }
 
 func NewMCPServerCardDataSource() datasource.DataSource { return &MCPServerCardDataSource{} }
@@ -74,6 +76,11 @@ func (d *MCPServerCardDataSource) Schema(_ context.Context, _ datasource.SchemaR
 			"classpath":        schema.BoolAttribute{Computed: true},
 			"created_at":       schema.StringAttribute{Computed: true},
 			"last_ingested_at": schema.StringAttribute{Computed: true},
+			"card_content_json": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "Raw card manifest as a JSON string. Decode with `jsondecode(...)` to drive " +
+					"`for_each` patterns (cf. §6.5 design-doc). Null if the platform returned no card content.",
+			},
 		},
 	}
 }
@@ -108,5 +115,16 @@ func (d *MCPServerCardDataSource) Read(ctx context.Context, req datasource.ReadR
 	data.Classpath = boolPtrOrDefault(card.Classpath)
 	data.CreatedAt = timePtrToTF(card.CreatedAt)
 	data.LastIngestedAt = timePtrToTF(card.LastIngestedAt)
+	// CardContent is a *Json (encoding/json.RawMessage-like) blob; render
+	// as a JSON string for callers' jsondecode().
+	if card.CardContent != nil {
+		if b, err := json.Marshal(card.CardContent); err == nil {
+			data.CardContentJSON = types.StringValue(string(b))
+		} else {
+			data.CardContentJSON = types.StringNull()
+		}
+	} else {
+		data.CardContentJSON = types.StringNull()
+	}
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

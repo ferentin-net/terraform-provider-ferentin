@@ -189,6 +189,7 @@ func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.Da
 	return []func() datasource.DataSource{
 		NewLLMProviderDataSource,
 		NewMCPProviderDataSource,
+		NewMCPProvidersDataSource,
 		NewMCPServerCardDataSource,
 		NewOtelSinkProviderDataSource,
 	}

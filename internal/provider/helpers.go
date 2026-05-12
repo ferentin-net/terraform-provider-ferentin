@@ -1,12 +1,25 @@
+// Package-level conversion helpers shared across every resource and data
+// source. Two directions:
+//   - "ToTF" / "OrDefault" / "ToList" — SDK response → Terraform-state types
+//   - "set*Ptr" / "ToSDK" / "Parse*" — Terraform-config → SDK input types
+//
+// Keeping these in one file lets new sub-clients copy the canonical pattern
+// without grepping across the package.
 package provider
 
 import (
+	"context"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// -------------------------------------------------------------------------
+// Parse / validate inbound (Terraform config → SDK input)
+// -------------------------------------------------------------------------
 
 // parseUUID converts a string into the openapi_types.UUID alias used by gen
 // types. Returns an error if the string isn't a valid UUID.
@@ -17,6 +30,53 @@ func parseUUID(s string) (openapi_types.UUID, error) {
 	}
 	return openapi_types.UUID(u), nil
 }
+
+// setStringPtr copies a Terraform String into an outbound *string, leaving
+// nil when the value is Null or Unknown.
+func setStringPtr(in types.String, out **string) {
+	if in.IsNull() || in.IsUnknown() {
+		return
+	}
+	v := in.ValueString()
+	*out = &v
+}
+
+// setBoolPtr is the bool analog of setStringPtr.
+func setBoolPtr(in types.Bool, out **bool) {
+	if in.IsNull() || in.IsUnknown() {
+		return
+	}
+	v := in.ValueBool()
+	*out = &v
+}
+
+// setInt32Ptr converts a Terraform Int64 to an SDK *int32. Terraform's
+// integer primitive is always 64-bit; we narrow on send.
+func setInt32Ptr(in types.Int64, out **int32) {
+	if in.IsNull() || in.IsUnknown() {
+		return
+	}
+	v := int32(in.ValueInt64())
+	*out = &v
+}
+
+// stringListToSDK converts a Terraform types.List of strings into a []string
+// suitable for SDK inputs. Returns an empty (non-nil) slice for Null /
+// Unknown lists — the platform's required `[]string` schemas distinguish
+// "explicitly empty" from "missing" and we always want the former for
+// resources we manage.
+func stringListToSDK(ctx context.Context, l types.List) []string {
+	if l.IsNull() || l.IsUnknown() {
+		return []string{}
+	}
+	var out []string
+	_ = l.ElementsAs(ctx, &out, false)
+	return out
+}
+
+// -------------------------------------------------------------------------
+// To-Terraform-state (SDK response → Terraform model)
+// -------------------------------------------------------------------------
 
 // strPtrToTF converts a *string from the SDK into a types.String. Nil maps
 // to Null (which the framework treats as "absent from response"); empty
@@ -29,7 +89,7 @@ func strPtrToTF(p *string) types.String {
 }
 
 // strPtrOrDefault is identical to strPtrToTF — kept as a separate name so
-// reader can tell whether the field is logically optional (Null OK) or
+// readers can tell whether the field is logically optional (Null OK) or
 // expected to be populated.
 func strPtrOrDefault(p *string) types.String {
 	return strPtrToTF(p)
@@ -80,4 +140,20 @@ func enumPtrToTF[T ~string](p *T) types.String {
 		return types.StringNull()
 	}
 	return types.StringValue(string(*p))
+}
+
+// stringSliceToList converts a *[]string from the SDK into a types.List of
+// strings. Nil maps to ListNull(StringType). Empty slice maps to an empty
+// list (not Null) — preserves the platform's "explicitly empty vs missing"
+// distinction.
+func stringSliceToList(p *[]string) types.List {
+	if p == nil {
+		return types.ListNull(types.StringType)
+	}
+	elems := make([]attr.Value, 0, len(*p))
+	for _, s := range *p {
+		elems = append(elems, types.StringValue(s))
+	}
+	lv, _ := types.ListValue(types.StringType, elems)
+	return lv
 }

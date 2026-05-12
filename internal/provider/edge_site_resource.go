@@ -487,16 +487,6 @@ func (r *EdgeSiteResource) resolveTenant(perResource types.String) string {
 	return r.tenantID
 }
 
-// setBoolPtr copies a Terraform Bool into an outbound *bool, leaving nil
-// when the value is Null or Unknown. The SDK send-only-set-fields pattern.
-func setBoolPtr(in types.Bool, out **bool) {
-	if in.IsNull() || in.IsUnknown() {
-		return
-	}
-	v := in.ValueBool()
-	*out = &v
-}
-
 // edgeSiteToModel maps the SDK's EdgeSite response into Terraform-state
 // shape. Distinguish:
 //
