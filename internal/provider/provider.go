@@ -177,12 +177,20 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewLLMProviderInstanceResource,
 		NewLLMPolicyResource,
 		NewMCPServerResource,
+		NewMCPProviderResource,
+		NewMCPPolicyResource,
+		NewOtelSinkResource,
+		NewOtelPolicyResource,
+		NewAIAgentResource,
 	}
 }
 
 func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.DataSource {
 	return []func() datasource.DataSource{
 		NewLLMProviderDataSource,
+		NewMCPProviderDataSource,
+		NewMCPServerCardDataSource,
+		NewOtelSinkProviderDataSource,
 	}
 }
 

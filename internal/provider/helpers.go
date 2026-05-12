@@ -3,8 +3,20 @@ package provider
 import (
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	openapi_types "github.com/oapi-codegen/runtime/types"
 )
+
+// parseUUID converts a string into the openapi_types.UUID alias used by gen
+// types. Returns an error if the string isn't a valid UUID.
+func parseUUID(s string) (openapi_types.UUID, error) {
+	u, err := uuid.Parse(s)
+	if err != nil {
+		return openapi_types.UUID{}, err
+	}
+	return openapi_types.UUID(u), nil
+}
 
 // strPtrToTF converts a *string from the SDK into a types.String. Nil maps
 // to Null (which the framework treats as "absent from response"); empty
