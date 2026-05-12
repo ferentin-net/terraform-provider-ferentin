@@ -445,64 +445,15 @@ func (r *MCPServerResource) resolveTenant(perResource types.String) string {
 
 // Below: model ↔ SDK conversion.
 //
-// The MCP server input DTO (gen.McpProviderInstance, aliased as
-// MCPServerCreate/Update) reuses the platform's full entity type, so it
-// has 13 required non-pointer fields that are conceptually server-set
-// (CreatedBy, FailureCount, HealthStatus, ValidationStatus, …). We pass
-// zero / empty / sensible-default values for these; the platform overrides
-// them on persist. The proper fix is platform-side: a separate Create
-// request type, mirroring the post-#837 cleanup of the response side.
-// Tracked as a follow-up; v0.1 just absorbs the awkward defaults here.
+// Post-ferentin-platform#838: McpServerCreateRequest and McpServerUpdateRequest
+// are now distinct types — Create has Name + ProviderId required, Update is a
+// sparse all-pointer patch. Create and Update body builders are separate
+// to reflect that.
 
 func (m *MCPServerResourceModel) toCreateBody(ctx context.Context) (adminapi.MCPServerCreate, error) {
-	return m.toBody(ctx)
-}
-
-func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCPServerUpdate, error) {
-	return m.toBody(ctx)
-}
-
-// Defaults for the required-but-server-managed enum fields on
-// McpProviderInstance — the platform overrides these on persist, but
-// the wire schema rejects empty strings. See ferentin-platform#838 for
-// the input-DTO cleanup that should retire these defaults.
-const (
-	mcpServerDefaultHealthStatus     = gen.McpProviderInstanceHealthStatus("unknown")
-	mcpServerDefaultValidationStatus = gen.McpProviderInstanceValidationStatus("pending")
-	mcpServerDefaultTransportType    = gen.McpProviderInstanceTransportType("sse")
-	mcpServerDefaultUpstreamAuth     = gen.McpProviderInstanceUpstreamAuthStrategy("none")
-)
-
-func (m *MCPServerResourceModel) toBody(ctx context.Context) (adminapi.MCPServerCreate, error) {
 	body := adminapi.MCPServerCreate{
-		// User-supplied + required.
 		Name: m.Name.ValueString(),
-
-		// Required non-pointer enums with platform-sensible defaults; platform
-		// overrides on persist. Tracked in ferentin-platform#838.
-		HealthStatus:         mcpServerDefaultHealthStatus,
-		ValidationStatus:     mcpServerDefaultValidationStatus,
-		TransportType:        mcpServerDefaultTransportType,
-		UpstreamAuthStrategy: mcpServerDefaultUpstreamAuth,
-
-		// Runtime telemetry; server overrides.
-		FailureCount:            0,
-		ResourceCacheTtlSeconds: 0,
 	}
-	if !m.Priority.IsNull() && !m.Priority.IsUnknown() {
-		body.Priority = int32(m.Priority.ValueInt64())
-	} else {
-		body.Priority = 100
-	}
-	if !m.TransportType.IsNull() && !m.TransportType.IsUnknown() {
-		body.TransportType = gen.McpProviderInstanceTransportType(m.TransportType.ValueString())
-	}
-	if !m.UpstreamAuthStrategy.IsNull() && !m.UpstreamAuthStrategy.IsUnknown() {
-		body.UpstreamAuthStrategy = gen.McpProviderInstanceUpstreamAuthStrategy(m.UpstreamAuthStrategy.ValueString())
-	}
-
-	// ProviderId is a required openapi_types.UUID (no pointer). The alias
-	// is uuid.UUID under the hood, so uuid.Parse works directly.
 	if !m.ProviderID.IsNull() && !m.ProviderID.IsUnknown() {
 		pid, err := uuid.Parse(m.ProviderID.ValueString())
 		if err != nil {
@@ -510,7 +461,6 @@ func (m *MCPServerResourceModel) toBody(ctx context.Context) (adminapi.MCPServer
 		}
 		body.ProviderId = openapi_types.UUID(pid)
 	}
-
 	setStringPtr(m.DisplayName, &body.DisplayName)
 	setStringPtr(m.Description, &body.Description)
 	setStringPtr(m.Icon, &body.Icon)
@@ -518,9 +468,53 @@ func (m *MCPServerResourceModel) toBody(ctx context.Context) (adminapi.MCPServer
 	setStringPtr(m.HealthCheckURL, &body.HealthCheckUrl)
 	setStringPtr(m.EdgeSiteID, &body.EdgeSiteId)
 	setBoolPtr(m.Enabled, &body.Enabled)
-
+	setInt32Ptr(m.Priority, &body.Priority)
+	if !m.TransportType.IsNull() && !m.TransportType.IsUnknown() {
+		v := gen.McpServerCreateRequestTransportType(m.TransportType.ValueString())
+		body.TransportType = &v
+	}
+	if !m.UpstreamAuthStrategy.IsNull() && !m.UpstreamAuthStrategy.IsUnknown() {
+		v := gen.McpServerCreateRequestUpstreamAuthStrategy(m.UpstreamAuthStrategy.ValueString())
+		body.UpstreamAuthStrategy = &v
+	}
 	if !m.DeploymentMode.IsNull() && !m.DeploymentMode.IsUnknown() {
-		v := gen.McpProviderInstanceDeploymentMode(m.DeploymentMode.ValueString())
+		v := gen.McpServerCreateRequestDeploymentMode(m.DeploymentMode.ValueString())
+		body.DeploymentMode = &v
+	}
+	if !m.EnabledScopes.IsNull() && !m.EnabledScopes.IsUnknown() {
+		var scopes []string
+		_ = m.EnabledScopes.ElementsAs(ctx, &scopes, false)
+		body.EnabledScopes = &scopes
+	}
+	if !m.Tags.IsNull() && !m.Tags.IsUnknown() {
+		var tags map[string]string
+		_ = m.Tags.ElementsAs(ctx, &tags, false)
+		body.Tags = &tags
+	}
+	return body, nil
+}
+
+func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCPServerUpdate, error) {
+	body := adminapi.MCPServerUpdate{}
+	setStringPtr(m.Name, &body.Name)
+	setStringPtr(m.DisplayName, &body.DisplayName)
+	setStringPtr(m.Description, &body.Description)
+	setStringPtr(m.Icon, &body.Icon)
+	setStringPtr(m.Endpoint, &body.Endpoint)
+	setStringPtr(m.HealthCheckURL, &body.HealthCheckUrl)
+	setStringPtr(m.EdgeSiteID, &body.EdgeSiteId)
+	setBoolPtr(m.Enabled, &body.Enabled)
+	setInt32Ptr(m.Priority, &body.Priority)
+	if !m.TransportType.IsNull() && !m.TransportType.IsUnknown() {
+		v := gen.McpServerUpdateRequestTransportType(m.TransportType.ValueString())
+		body.TransportType = &v
+	}
+	if !m.UpstreamAuthStrategy.IsNull() && !m.UpstreamAuthStrategy.IsUnknown() {
+		v := gen.McpServerUpdateRequestUpstreamAuthStrategy(m.UpstreamAuthStrategy.ValueString())
+		body.UpstreamAuthStrategy = &v
+	}
+	if !m.DeploymentMode.IsNull() && !m.DeploymentMode.IsUnknown() {
+		v := gen.McpServerUpdateRequestDeploymentMode(m.DeploymentMode.ValueString())
 		body.DeploymentMode = &v
 	}
 	if !m.EnabledScopes.IsNull() && !m.EnabledScopes.IsUnknown() {
