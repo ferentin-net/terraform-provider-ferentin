@@ -174,11 +174,14 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewEdgeSiteResource,
+		NewLLMProviderInstanceResource,
 	}
 }
 
 func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.DataSource {
-	return nil
+	return []func() datasource.DataSource{
+		NewLLMProviderDataSource,
+	}
 }
 
 func stringOrEnv(v types.String, envKey string) string {
