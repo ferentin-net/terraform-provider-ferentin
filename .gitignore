@@ -30,3 +30,16 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# Provider binary (built by `make build`)
+terraform-provider-ferentin
+terraform-provider-ferentin_v*
+
+# Terraform local state from example runs
+**/.terraform/
+**/.terraform.lock.hcl
+**/terraform.tfstate*
+**/*.tfvars
+!examples/**/*.tfvars.example
+
+# Dev install dir hint (not actually committed; this is here for IDE hints)
