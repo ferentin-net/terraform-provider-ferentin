@@ -12,7 +12,7 @@ VERSION     := dev
 OS_ARCH     := $(shell go env GOOS)_$(shell go env GOARCH)
 INSTALL_DIR := $(HOME)/.terraform.d/plugins/$(HOSTNAME)/$(NAMESPACE)/$(NAME)/$(VERSION)/$(OS_ARCH)
 
-.PHONY: build install fmt lint vet test testacc tidy clean
+.PHONY: build install fmt lint vet test testacc tidy clean docs docs-check
 
 build:
 	go build -o $(BINARY) .
@@ -23,6 +23,9 @@ install: build
 
 fmt:
 	gofmt -s -w .
+
+lint:
+	golangci-lint run ./...
 
 vet:
 	go vet ./...
@@ -37,6 +40,23 @@ testacc:
 
 tidy:
 	go mod tidy
+
+# Regenerate docs/ from schema MarkdownDescription + examples/. Run after any
+# schema change. Output is committed to the repo so the registry can render
+# it without rebuilding.
+docs:
+	go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs \
+		generate --provider-name ferentin --rendered-provider-name "Ferentin"
+
+# CI guard: regenerate docs into a tmp dir and `diff` against the committed
+# copy. Fails when schema changes haven't been followed by `make docs`.
+docs-check:
+	@tmp=$$(mktemp -d) && \
+		go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs \
+			generate --provider-name ferentin --rendered-provider-name "Ferentin" \
+			--rendered-website-dir $$tmp/docs && \
+		diff -r docs $$tmp/docs && \
+		rm -rf $$tmp
 
 clean:
 	rm -f $(BINARY)

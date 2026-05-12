@@ -1,0 +1,36 @@
+name: Acceptance tests
+
+# Acceptance tests hit a live platform and consume credentials, so they're
+# manual-trigger only (workflow_dispatch). Schedule a periodic run from a
+# branch when there's a staging environment to point at.
+
+on:
+  workflow_dispatch:
+    inputs:
+      endpoint:
+        description: 'FERENTIN_ENDPOINT (e.g. https://api.staging.ferentin.net)'
+        required: true
+        default: 'https://api.staging.ferentin.net'
+
+permissions:
+  contents: read
+
+jobs:
+  testacc:
+    name: TF_ACC=1 (live platform)
+    runs-on: ubuntu-latest
+    environment: acceptance-tests   # tighten: require manual approval per run
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run acceptance tests
+        env:
+          TF_ACC: '1'
+          FERENTIN_ENDPOINT: ${{ github.event.inputs.endpoint }}
+          FERENTIN_TENANT_ID: ${{ secrets.FERENTIN_TENANT_ID }}
+          FERENTIN_CLIENT_ID: ${{ secrets.FERENTIN_CLIENT_ID }}
+          FERENTIN_CLIENT_SECRET: ${{ secrets.FERENTIN_CLIENT_SECRET }}
+        run: go test -v -count=1 -timeout 30m ./internal/provider -run TestAcc

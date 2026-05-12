@@ -7,14 +7,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
@@ -89,7 +90,13 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Tenant MCP policy — ABAC governance for MCP traffic (allow/deny on tools / " +
 			"toolsets, optional rate limiting). Nested context_guards / redaction / trustflow / logging deferred " +
-			"to v0.2; see §6.6 of the design doc for an example.",
+			"to v0.2; see §6.6 of the design doc for an example.\n\n" +
+			"## Import\n\n" +
+			"Existing policies can be imported using `<tenant_id>/<policy_id>` " +
+			"(or `<policy_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_mcp_policy.example <tenant_id>/<policy_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -102,11 +109,21 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"name":               schema.StringAttribute{Required: true},
-			"description":        schema.StringAttribute{Optional: true, Computed: true},
-			"priority":           schema.Int64Attribute{Optional: true, Computed: true},
-			"enabled":            schema.BoolAttribute{Optional: true, Computed: true},
-			"validate_arguments": schema.BoolAttribute{Optional: true, Computed: true},
+			"name":        schema.StringAttribute{Required: true},
+			"description": schema.StringAttribute{Optional: true, Computed: true},
+			"priority":    schema.Int64Attribute{Optional: true, Computed: true},
+			"enabled": schema.BoolAttribute{
+				MarkdownDescription: "Whether the policy is enforced. Default `true`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
+			"validate_arguments": schema.BoolAttribute{
+				MarkdownDescription: "When true, validate tool-call arguments against the policy schema. Default `true`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
 			"provider_instances": schema.ListAttribute{
 				MarkdownDescription: "Instance names (`ferentin_mcp_server.*.name`) this policy applies to.",
 				Optional:            true, Computed: true,
@@ -176,7 +193,7 @@ func (r *MCPPolicyResource) Create(ctx context.Context, req resource.CreateReque
 
 	pol, err := r.sdk.MCPPolicies().Create(ctx, tenantID, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create MCP policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create MCP policy", err)
 		return
 	}
 	state := mcpPolicyToModel(tenantID, pol)
@@ -196,7 +213,7 @@ func (r *MCPPolicyResource) Read(ctx context.Context, req resource.ReadRequest, 
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read MCP policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read MCP policy", err)
 		return
 	}
 	refreshed := mcpPolicyToModel(tenantID, pol)
@@ -232,7 +249,7 @@ func (r *MCPPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 	v := strconv.FormatInt(0, 10)
 	pol, err := r.sdk.MCPPolicies().Update(ctx, tenantID, state.PolicyID.ValueString(), v, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update MCP policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update MCP policy", err)
 		return
 	}
 	refreshed := mcpPolicyToModel(tenantID, pol)
@@ -248,7 +265,7 @@ func (r *MCPPolicyResource) Delete(ctx context.Context, req resource.DeleteReque
 	tenantID := r.resolveTenant(state.TenantID)
 	err := r.sdk.MCPPolicies().Delete(ctx, tenantID, state.PolicyID.ValueString(), "")
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
-		resp.Diagnostics.AddError("Failed to delete MCP policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete MCP policy", err)
 	}
 }
 

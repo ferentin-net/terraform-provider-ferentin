@@ -88,13 +88,6 @@ func strPtrToTF(p *string) types.String {
 	return types.StringValue(*p)
 }
 
-// strPtrOrDefault is identical to strPtrToTF — kept as a separate name so
-// readers can tell whether the field is logically optional (Null OK) or
-// expected to be populated.
-func strPtrOrDefault(p *string) types.String {
-	return strPtrToTF(p)
-}
-
 // boolPtrOrDefault converts a *bool into a types.Bool. Nil maps to Null —
 // which round-trips through Terraform state correctly so a future read
 // doesn't trigger a spurious diff.

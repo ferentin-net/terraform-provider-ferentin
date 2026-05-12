@@ -6,14 +6,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
@@ -49,16 +50,16 @@ type AIAgentResourceModel struct {
 	Active                  types.Bool   `tfsdk:"active"`
 
 	// Computed
-	AgentID                  types.String `tfsdk:"agent_id"` // internal UUID
-	ClientID                 types.String `tfsdk:"client_id"` // public fc_* identifier
-	ClientSecret             types.String `tfsdk:"client_secret"` // sensitive, server-issued
-	ClientType               types.String `tfsdk:"client_type"`
-	AiClientType             types.String `tfsdk:"ai_client_type"`
-	CreatedAt                types.String `tfsdk:"created_at"`
-	UpdatedAt                types.String `tfsdk:"updated_at"`
-	ManagedBy                types.String `tfsdk:"managed_by"`
-	ManagedByClientID        types.String `tfsdk:"managed_by_client_id"`
-	ManagedByModule          types.String `tfsdk:"managed_by_module"`
+	AgentID           types.String `tfsdk:"agent_id"`      // internal UUID
+	ClientID          types.String `tfsdk:"client_id"`     // public fc_* identifier
+	ClientSecret      types.String `tfsdk:"client_secret"` // sensitive, server-issued
+	ClientType        types.String `tfsdk:"client_type"`
+	AiClientType      types.String `tfsdk:"ai_client_type"`
+	CreatedAt         types.String `tfsdk:"created_at"`
+	UpdatedAt         types.String `tfsdk:"updated_at"`
+	ManagedBy         types.String `tfsdk:"managed_by"`
+	ManagedByClientID types.String `tfsdk:"managed_by_client_id"`
+	ManagedByModule   types.String `tfsdk:"managed_by_module"`
 }
 
 func NewAIAgentResource() resource.Resource { return &AIAgentResource{} }
@@ -91,7 +92,15 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "An AI-agent OIDC client (where the underlying `ai_client_type='agent'`). " +
 			"Scopes are constrained to the macro-only allowlist from ferentin-platform#648 — " +
-			"`llm`, `mcp`, `summarizer`, plus OIDC standards (`openid`, `profile`, `email`, `offline_access`).",
+			"`llm`, `mcp`, `summarizer`, plus OIDC standards (`openid`, `profile`, `email`, `offline_access`).\n\n" +
+			"## Import\n\n" +
+			"Existing agents can be imported using `<tenant_id>/<agent_id>` " +
+			"(or `<agent_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_ai_agent.example <tenant_id>/<agent_id>\n" +
+			"```\n\n" +
+			"After import, `client_secret` is **not** retrievable (the server returns it only on Create). " +
+			"To rotate credentials, destroy and recreate the agent.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -104,8 +113,8 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"name":              schema.StringAttribute{Required: true},
-			"agent_platform":    schema.StringAttribute{Required: true, MarkdownDescription: "Agent platform (`claude`, `chatgpt`, `microsoft_copilot`, …)."},
+			"name":           schema.StringAttribute{Required: true},
+			"agent_platform": schema.StringAttribute{Required: true, MarkdownDescription: "Agent platform (`claude`, `chatgpt`, `microsoft_copilot`, …)."},
 			"application_type": schema.StringAttribute{
 				Required:            true,
 				MarkdownDescription: "`NATIVE`, `WEB`, or `SERVICE`.",
@@ -113,7 +122,7 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					stringvalidator.OneOf("NATIVE", "WEB", "SERVICE"),
 				},
 			},
-			"description":       schema.StringAttribute{Optional: true, Computed: true},
+			"description": schema.StringAttribute{Optional: true, Computed: true},
 			"scopes": schema.ListAttribute{
 				MarkdownDescription: "Constrained to the agent-client allowlist: `llm`, `mcp`, `summarizer`, " +
 					"plus OIDC standards. The platform's AgentClientScopeAllowlist rejects anything else.",
@@ -132,13 +141,18 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"redirect_uris":         schema.ListAttribute{Optional: true, Computed: true, ElementType: types.StringType},
 			"access_token_lifetime": schema.Int64Attribute{Optional: true, Computed: true},
 			"role_id":               schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Bound IaC/agent role UUID."},
-			"active":                schema.BoolAttribute{Optional: true, Computed: true},
+			"active": schema.BoolAttribute{
+				MarkdownDescription: "Whether the agent's OIDC client is active and accepting tokens. Default `true`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
 
-			"agent_id":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"client_id":     schema.StringAttribute{Computed: true, MarkdownDescription: "Public fc_* identifier the agent presents at runtime.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"client_secret": schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "Server-issued secret; only returned on Create for client_secret_* auth methods.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"client_type":   schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"ai_client_type": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"agent_id":             schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"client_id":            schema.StringAttribute{Computed: true, MarkdownDescription: "Public fc_* identifier the agent presents at runtime.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"client_secret":        schema.StringAttribute{Computed: true, Sensitive: true, MarkdownDescription: "Server-issued secret; only returned on Create for client_secret_* auth methods.", PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"client_type":          schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"ai_client_type":       schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"created_at":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"updated_at":           schema.StringAttribute{Computed: true},
 			"managed_by":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
@@ -171,7 +185,7 @@ func (r *AIAgentResource) Create(ctx context.Context, req resource.CreateRequest
 
 	agent, err := r.sdk.OIDCClients().Create(ctx, tenantID, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create AI agent client", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create AI agent client", err)
 		return
 	}
 	state := agentToModel(tenantID, agent)
@@ -191,7 +205,7 @@ func (r *AIAgentResource) Read(ctx context.Context, req resource.ReadRequest, re
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read AI agent client", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read AI agent client", err)
 		return
 	}
 	refreshed := agentToModel(tenantID, agent)
@@ -223,7 +237,7 @@ func (r *AIAgentResource) Update(ctx context.Context, req resource.UpdateRequest
 
 	agent, err := r.sdk.OIDCClients().Update(ctx, tenantID, state.AgentID.ValueString(), "", body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update AI agent client", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update AI agent client", err)
 		return
 	}
 	refreshed := agentToModel(tenantID, agent)
@@ -240,7 +254,7 @@ func (r *AIAgentResource) Delete(ctx context.Context, req resource.DeleteRequest
 	tenantID := r.resolveTenant(state.TenantID)
 	err := r.sdk.OIDCClients().Delete(ctx, tenantID, state.AgentID.ValueString(), "")
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
-		resp.Diagnostics.AddError("Failed to delete AI agent client", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete AI agent client", err)
 	}
 }
 

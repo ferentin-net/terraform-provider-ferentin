@@ -6,12 +6,15 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -87,7 +90,13 @@ func (r *OtelSinkResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A tenant OTEL sink — a telemetry destination (Datadog, Honeycomb, OTLP, …). " +
 			"Credentials for the sink are managed out-of-band via the `/credentials` sub-resource for v0.1; " +
-			"a future write-only `credentials` attribute is planned.",
+			"a future write-only `credentials` attribute is planned.\n\n" +
+			"## Import\n\n" +
+			"Existing sinks can be imported using `<tenant_id>/<sink_id>` " +
+			"(or `<sink_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_otel_sink.example <tenant_id>/<sink_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -101,18 +110,41 @@ func (r *OtelSinkResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"name":         schema.StringAttribute{Required: true},
-			"endpoint":     schema.StringAttribute{Required: true, MarkdownDescription: "Sink endpoint URL."},
-			"sink_type":    schema.StringAttribute{Required: true, MarkdownDescription: "Sink type (e.g. `otlp_grpc`, `otlp_http`, `datadog`)."},
-			"description":  schema.StringAttribute{Optional: true, Computed: true},
+			"name":     schema.StringAttribute{Required: true},
+			"endpoint": schema.StringAttribute{Required: true, MarkdownDescription: "Sink endpoint URL."},
+			"sink_type": schema.StringAttribute{
+				Required:            true,
+				MarkdownDescription: "Sink type. Allowed: `OTLP_GRPC`, `OTLP_HTTP`, `PROMETHEUS_REMOTE_WRITE`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("OTLP_GRPC", "OTLP_HTTP", "PROMETHEUS_REMOTE_WRITE"),
+				},
+			},
+			"description": schema.StringAttribute{Optional: true, Computed: true},
 			"provider_slug": schema.StringAttribute{Optional: true, Computed: true,
 				MarkdownDescription: "Catalog provider slug — pull from `data \"ferentin_otel_sink_provider\"`."},
-			"region":      schema.StringAttribute{Optional: true, Computed: true},
-			"protocol":    schema.StringAttribute{Optional: true, Computed: true},
-			"compression": schema.StringAttribute{Optional: true, Computed: true},
-			"auth_type":   schema.StringAttribute{Optional: true, Computed: true},
-			"timeout":     schema.StringAttribute{Optional: true, Computed: true},
-			"enabled":     schema.BoolAttribute{Optional: true, Computed: true},
+			"region": schema.StringAttribute{Optional: true, Computed: true},
+			"protocol": schema.StringAttribute{
+				Optional: true, Computed: true,
+				MarkdownDescription: "Transport protocol. Allowed: `GRPC`, `HTTP`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("GRPC", "HTTP"),
+				},
+			},
+			"compression": schema.StringAttribute{
+				Optional: true, Computed: true,
+				MarkdownDescription: "Compression type. Allowed: `gzip`, `none`, `zstd`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("gzip", "none", "zstd"),
+				},
+			},
+			"auth_type": schema.StringAttribute{Optional: true, Computed: true},
+			"timeout":   schema.StringAttribute{Optional: true, Computed: true},
+			"enabled": schema.BoolAttribute{
+				MarkdownDescription: "Whether this sink is active. Default `true`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
 			"headers": schema.MapAttribute{
 				MarkdownDescription: "Custom HTTP headers sent on every export to this sink.",
 				Optional:            true, Computed: true,
@@ -149,7 +181,7 @@ func (r *OtelSinkResource) Create(ctx context.Context, req resource.CreateReques
 
 	sink, err := r.sdk.OtelSinks().Create(ctx, tenantID, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create OTEL sink", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create OTEL sink", err)
 		return
 	}
 	state := otelSinkToModel(tenantID, sink)
@@ -169,7 +201,7 @@ func (r *OtelSinkResource) Read(ctx context.Context, req resource.ReadRequest, r
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read OTEL sink", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read OTEL sink", err)
 		return
 	}
 	refreshed := otelSinkToModel(tenantID, sink)
@@ -205,7 +237,7 @@ func (r *OtelSinkResource) Update(ctx context.Context, req resource.UpdateReques
 
 	sink, err := r.sdk.OtelSinks().Update(ctx, tenantID, state.SinkID.ValueString(), "", body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update OTEL sink", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update OTEL sink", err)
 		return
 	}
 	refreshed := otelSinkToModel(tenantID, sink)
@@ -221,7 +253,7 @@ func (r *OtelSinkResource) Delete(ctx context.Context, req resource.DeleteReques
 	tenantID := r.resolveTenant(state.TenantID)
 	err := r.sdk.OtelSinks().Delete(ctx, tenantID, state.SinkID.ValueString(), "")
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
-		resp.Diagnostics.AddError("Failed to delete OTEL sink", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete OTEL sink", err)
 	}
 }
 

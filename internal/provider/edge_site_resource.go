@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -107,7 +108,13 @@ func (r *EdgeSiteResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 		MarkdownDescription: "Manages a Ferentin edge site — a logical region/datacenter where service-edge " +
 			"instances enroll and serve LLM / MCP traffic. The `site_id` attribute is a user-supplied slug " +
 			"that becomes the resource's primary identifier; the platform also assigns a synthetic UUID " +
-			"available as `synthetic_id`.",
+			"available as `synthetic_id`.\n\n" +
+			"## Import\n\n" +
+			"Existing edge sites can be imported using `<tenant_id>/<site_id>` " +
+			"(or `<site_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_edge_site.example <tenant_id>/<site_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -172,39 +179,45 @@ func (r *EdgeSiteResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			},
 			"allow_http_upstream": schema.BoolAttribute{
 				MarkdownDescription: "When true, service-edge accepts `http://` (cleartext) for customer LLM / MCP " +
-					"upstream URLs. Default false (https-only). See platform #662.",
+					"upstream URLs. Default `false` (https-only). See platform #662.",
 				Optional: true,
 				Computed: true,
+				Default:  booldefault.StaticBool(false),
 			},
 			"verify_upstream_tls": schema.BoolAttribute{
 				MarkdownDescription: "When false, service-edge skips TLS verification on customer upstream calls. " +
-					"Default true (strict). See platform #662.",
+					"Default `true` (strict). See platform #662.",
 				Optional: true,
 				Computed: true,
+				Default:  booldefault.StaticBool(true),
 			},
 			"bundle_cloud_mcp": schema.BoolAttribute{
-				MarkdownDescription: "When true (default), cloud-routed MCP provider instances and their credentials " +
-					"flow into this site's policy bundle. False = least-privilege; only edge-routed servers appear. " +
+				MarkdownDescription: "When `true` (default), cloud-routed MCP provider instances and their credentials " +
+					"flow into this site's policy bundle. `false` = least-privilege; only edge-routed servers appear. " +
 					"See platform #723.",
 				Optional: true,
 				Computed: true,
+				Default:  booldefault.StaticBool(true),
 			},
 			"llm_enabled": schema.BoolAttribute{
-				MarkdownDescription: "When true (default), edges at this site receive a non-empty LLM bundle section. " +
-					"Tenant-level features.llm continues to gate at the tenant level.",
+				MarkdownDescription: "When `true` (default), edges at this site receive a non-empty LLM bundle section. " +
+					"Tenant-level `features.llm` continues to gate at the tenant level.",
 				Optional: true,
 				Computed: true,
+				Default:  booldefault.StaticBool(true),
 			},
 			"mcp_enabled": schema.BoolAttribute{
-				MarkdownDescription: "When true (default), edges at this site receive a non-empty MCP bundle section. " +
-					"Tenant-level features.mcp continues to gate at the tenant level.",
+				MarkdownDescription: "When `true` (default), edges at this site receive a non-empty MCP bundle section. " +
+					"Tenant-level `features.mcp` continues to gate at the tenant level.",
 				Optional: true,
 				Computed: true,
+				Default:  booldefault.StaticBool(true),
 			},
 			"monitoring_enabled": schema.BoolAttribute{
-				MarkdownDescription: "Whether monitoring is enabled for this site.",
+				MarkdownDescription: "Whether monitoring is enabled for this site. Default `false`.",
 				Optional:            true,
 				Computed:            true,
+				Default:             booldefault.StaticBool(false),
 			},
 			"mcp_gateway_url": schema.StringAttribute{
 				MarkdownDescription: "Customer-hosted L7 proxy URL fronting this site's service-edge replicas. " +
@@ -317,7 +330,7 @@ func (r *EdgeSiteResource) Create(ctx context.Context, req resource.CreateReques
 
 	site, err := r.sdk.EdgeSites().Create(ctx, tenantID, create)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create edge site", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create edge site", err)
 		return
 	}
 
@@ -342,7 +355,7 @@ func (r *EdgeSiteResource) Read(ctx context.Context, req resource.ReadRequest, r
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read edge site", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read edge site", err)
 		return
 	}
 
@@ -405,15 +418,7 @@ func (r *EdgeSiteResource) Update(ctx context.Context, req resource.UpdateReques
 
 	site, err := r.sdk.EdgeSites().Update(ctx, tenantID, siteID, version, update)
 	if err != nil {
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError(
-				"Edge site changed since last refresh",
-				"The site's version on the platform differs from Terraform state. "+
-					"Run `terraform refresh` and re-plan to pick up out-of-band edits, then re-apply.",
-			)
-			return
-		}
-		resp.Diagnostics.AddError("Failed to update edge site", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update edge site", err)
 		return
 	}
 
@@ -438,14 +443,7 @@ func (r *EdgeSiteResource) Delete(ctx context.Context, req resource.DeleteReques
 			// Already deleted out of band — fine.
 			return
 		}
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError(
-				"Edge site changed since last refresh",
-				"The site's version on the platform differs from Terraform state; refresh and re-plan.",
-			)
-			return
-		}
-		resp.Diagnostics.AddError("Failed to delete edge site", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete edge site", err)
 	}
 }
 

@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -22,10 +24,10 @@ import (
 // (catalog entry, e.g. "anthropic") and the credentials / config used to
 // reach it. See §6.4 of the design doc.
 //
-// The `api_key` attribute is Sensitive. A future Terraform 1.11+ refactor
-// can promote it to WriteOnly so the value never enters state at all; for
-// v0.1 the Sensitive flag prevents accidental logging but the value still
-// lives in state.
+// The secret attributes (`api_key`, `credentials`, `external_id`) are
+// WriteOnly — the value flows from config to the provider during apply but
+// is never written to state. To rotate a secret, bump the companion
+// `*_wo_version` integer.
 type LLMProviderInstanceResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
@@ -43,30 +45,33 @@ type LLMProviderInstanceResourceModel struct {
 	// Optional user-supplied
 	DisplayName                    types.String `tfsdk:"display_name"`
 	Description                    types.String `tfsdk:"description"`
-	APIKey                         types.String `tfsdk:"api_key"`
+	APIKey                         types.String `tfsdk:"api_key"`            // WriteOnly
+	APIKeyWOVersion                types.Int64  `tfsdk:"api_key_wo_version"` // companion to api_key
 	AuthType                       types.String `tfsdk:"auth_type"`
-	Credentials                    types.String `tfsdk:"credentials"`
+	Credentials                    types.String `tfsdk:"credentials"` // WriteOnly
+	CredentialsWOVersion           types.Int64  `tfsdk:"credentials_wo_version"`
 	HealthCheckURL                 types.String `tfsdk:"health_check_url"`
 	Enabled                        types.Bool   `tfsdk:"enabled"`
 	Priority                       types.Int64  `tfsdk:"priority"`
 	ImpersonateServiceAccountEmail types.String `tfsdk:"impersonate_service_account_email"`
 	AWSRegion                      types.String `tfsdk:"aws_region"`
 	RoleARN                        types.String `tfsdk:"role_arn"`
-	ExternalID                     types.String `tfsdk:"external_id"`
+	ExternalID                     types.String `tfsdk:"external_id"` // WriteOnly
+	ExternalIDWOVersion            types.Int64  `tfsdk:"external_id_wo_version"`
 	SessionDurationMinutes         types.Int64  `tfsdk:"session_duration_minutes"`
 
 	// Computed / server-set
-	InstanceID        types.String `tfsdk:"instance_id"` // server-generated UUID
-	Version           types.Int64  `tfsdk:"version"`
-	APIKeyConfigured  types.Bool   `tfsdk:"api_key_configured"`
-	HealthStatus      types.String `tfsdk:"health_status"`
-	AvailableForRouting types.Bool `tfsdk:"available_for_routing"`
-	CreatedAt         types.String `tfsdk:"created_at"`
-	CreatedBy         types.String `tfsdk:"created_by"`
-	ManagedBy         types.String `tfsdk:"managed_by"`
-	ManagedByClientID types.String `tfsdk:"managed_by_client_id"`
-	ManagedByModule   types.String `tfsdk:"managed_by_module"`
-	LastModifiedBy    types.String `tfsdk:"last_modified_by"`
+	InstanceID          types.String `tfsdk:"instance_id"` // server-generated UUID
+	Version             types.Int64  `tfsdk:"version"`
+	APIKeyConfigured    types.Bool   `tfsdk:"api_key_configured"`
+	HealthStatus        types.String `tfsdk:"health_status"`
+	AvailableForRouting types.Bool   `tfsdk:"available_for_routing"`
+	CreatedAt           types.String `tfsdk:"created_at"`
+	CreatedBy           types.String `tfsdk:"created_by"`
+	ManagedBy           types.String `tfsdk:"managed_by"`
+	ManagedByClientID   types.String `tfsdk:"managed_by_client_id"`
+	ManagedByModule     types.String `tfsdk:"managed_by_module"`
+	LastModifiedBy      types.String `tfsdk:"last_modified_by"`
 }
 
 func NewLLMProviderInstanceResource() resource.Resource {
@@ -74,13 +79,28 @@ func NewLLMProviderInstanceResource() resource.Resource {
 }
 
 var (
-	_ resource.Resource                = (*LLMProviderInstanceResource)(nil)
-	_ resource.ResourceWithConfigure   = (*LLMProviderInstanceResource)(nil)
-	_ resource.ResourceWithImportState = (*LLMProviderInstanceResource)(nil)
+	_ resource.Resource                     = (*LLMProviderInstanceResource)(nil)
+	_ resource.ResourceWithConfigure        = (*LLMProviderInstanceResource)(nil)
+	_ resource.ResourceWithImportState      = (*LLMProviderInstanceResource)(nil)
+	_ resource.ResourceWithConfigValidators = (*LLMProviderInstanceResource)(nil)
 )
 
 func (r *LLMProviderInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_llm_provider_instance"
+}
+
+// ConfigValidators surfaces auth-shape mistakes at plan time.
+//   - `aws_region` + `role_arn` must come as a pair (AWS IAM-role auth);
+//     one without the other is meaningless and would surface as an opaque
+//     platform 400 on apply.
+//   - `external_id` is only meaningful with `role_arn` (cross-account STS).
+func (r *LLMProviderInstanceResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.RequiredTogether(
+			path.MatchRoot("aws_region"),
+			path.MatchRoot("role_arn"),
+		),
+	}
 }
 
 func (r *LLMProviderInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -103,7 +123,15 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A tenant binding between an LLM provider (catalog entry — see `data \"ferentin_llm_provider\"`) " +
 			"and the credentials / configuration the platform uses to reach it. Multiple instances per provider " +
-			"are allowed (e.g., per-region, per-environment).",
+			"are allowed (e.g., per-region, per-environment).\n\n" +
+			"## Import\n\n" +
+			"Existing instances can be imported using `<tenant_id>/<instance_id>` " +
+			"(or `<instance_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_llm_provider_instance.example <tenant_id>/<instance_id>\n" +
+			"```\n\n" +
+			"After import, set `api_key` (and any other WriteOnly attrs) and bump the `*_wo_version` " +
+			"companions to push the secret on the next apply.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -145,11 +173,18 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 				Computed:            true,
 			},
 			"api_key": schema.StringAttribute{
-				MarkdownDescription: "Bearer API key for the provider. Sensitive — never emitted in plan output. " +
-					"The server stores an encrypted form; the wire response only exposes `api_key_configured`, " +
-					"not the value itself.",
+				MarkdownDescription: "Bearer API key for the provider. **WriteOnly** (Terraform 1.11+) — the " +
+					"value flows through to the provider during apply but never enters Terraform state. " +
+					"The server stores an encrypted form; the wire response only exposes `api_key_configured`. " +
+					"Bump `api_key_wo_version` to force a re-send when the upstream secret rotates.",
 				Optional:  true,
+				WriteOnly: true,
 				Sensitive: true,
+			},
+			"api_key_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Companion to write-only `api_key`. Bump this integer to force the " +
+					"provider to re-send the (potentially changed) `api_key` on the next apply.",
+				Optional: true,
 			},
 			"auth_type": schema.StringAttribute{
 				MarkdownDescription: "Authentication method for this provider. Allowed values vary per provider type; " +
@@ -159,9 +194,15 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 			},
 			"credentials": schema.StringAttribute{
 				MarkdownDescription: "Free-form credentials blob for auth types that aren't a single API key " +
-					"(e.g. GCP service-account JSON). Sensitive.",
+					"(e.g. GCP service-account JSON). **WriteOnly** — flows through but never enters state. " +
+					"Bump `credentials_wo_version` to force a re-send.",
 				Optional:  true,
+				WriteOnly: true,
 				Sensitive: true,
+			},
+			"credentials_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Companion to write-only `credentials`. Bump to force re-send.",
+				Optional:            true,
 			},
 			"health_check_url": schema.StringAttribute{
 				MarkdownDescription: "Optional custom health-check URL.",
@@ -169,9 +210,10 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 				Computed:            true,
 			},
 			"enabled": schema.BoolAttribute{
-				MarkdownDescription: "When false, the instance is registered but not used for routing.",
+				MarkdownDescription: "When false, the instance is registered but not used for routing. Default `true`.",
 				Optional:            true,
 				Computed:            true,
+				Default:             booldefault.StaticBool(true),
 			},
 			"priority": schema.Int64Attribute{
 				MarkdownDescription: "Routing priority (lower is higher-priority).",
@@ -194,10 +236,15 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 				Computed:            true,
 			},
 			"external_id": schema.StringAttribute{
-				MarkdownDescription: "External ID for cross-account IAM assumption.",
+				MarkdownDescription: "External ID for cross-account IAM assumption. **WriteOnly** — flows " +
+					"through but never enters state. Bump `external_id_wo_version` to force a re-send.",
+				Optional:  true,
+				WriteOnly: true,
+				Sensitive: true,
+			},
+			"external_id_wo_version": schema.Int64Attribute{
+				MarkdownDescription: "Companion to write-only `external_id`. Bump to force re-send.",
 				Optional:            true,
-				Computed:            true,
-				Sensitive:           true,
 			},
 			"session_duration_minutes": schema.Int64Attribute{
 				MarkdownDescription: "STS session duration in minutes (IAM flows).",
@@ -265,43 +312,46 @@ func (r *LLMProviderInstanceResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
+	// WriteOnly attrs are stripped from Plan; read them from Config.
+	var config LLMProviderInstanceResourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+
 	tenantID := r.resolveTenant(plan.TenantID)
 
 	create := adminapi.LLMProviderInstanceCreate{}
-	// Required
-	if v := plan.ProviderType.ValueString(); v != "" {
-		// ProviderType isn't a field on CreateRequest — it's a URL/query
-		// parameter on the create endpoint? Looking at the spec, provider
-		// type may be implied by a separate field. The actual gen field
-		// is just InstanceName; the provider_type slug binds via the
-		// platform's tenant + provider-slug map. We pass via InstanceName
-		// + tag fallback for now.
-		_ = v
-	}
 	v := plan.InstanceName.ValueString()
 	create.InstanceName = &v
-	// Optional
 	setStringPtr(plan.DisplayName, &create.DisplayName)
 	setStringPtr(plan.Description, &create.Description)
-	setStringPtr(plan.APIKey, &create.ApiKey)
+	// WriteOnly sources — read from Config.
+	setStringPtr(config.APIKey, &create.ApiKey)
+	setStringPtr(config.Credentials, &create.Credentials)
+	setStringPtr(config.ExternalID, &create.ExternalId)
 	setStringPtr(plan.AuthType, &create.AuthType)
-	setStringPtr(plan.Credentials, &create.Credentials)
 	setStringPtr(plan.HealthCheckURL, &create.HealthCheckUrl)
 	setStringPtr(plan.ImpersonateServiceAccountEmail, &create.ImpersonateServiceAccountEmail)
 	setStringPtr(plan.AWSRegion, &create.AwsRegion)
 	setStringPtr(plan.RoleARN, &create.RoleArn)
-	setStringPtr(plan.ExternalID, &create.ExternalId)
 	setBoolPtr(plan.Enabled, &create.Enabled)
 	setInt32Ptr(plan.Priority, &create.Priority)
 	setInt32Ptr(plan.SessionDurationMinutes, &create.SessionDurationMinutes)
 
 	inst, err := r.sdk.LLMProviderInstances().Create(ctx, tenantID, create)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create LLM provider instance", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create LLM provider instance", err)
 		return
 	}
 
-	state := llmInstanceToModel(tenantID, plan.ProviderType, plan.APIKey, plan.Credentials, plan.ExternalID, inst)
+	state := llmInstanceToModel(tenantID, plan.ProviderType, inst)
+	// Plan-only attrs that the wire doesn't echo: carry forward the user's
+	// last values so a no-op plan stays no-op. WriteOnly attrs (api_key,
+	// credentials, external_id) are NOT carried — they're config-only.
+	state.APIKeyWOVersion = plan.APIKeyWOVersion
+	state.CredentialsWOVersion = plan.CredentialsWOVersion
+	state.ExternalIDWOVersion = plan.ExternalIDWOVersion
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -321,19 +371,24 @@ func (r *LLMProviderInstanceResource) Read(ctx context.Context, req resource.Rea
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read LLM provider instance", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read LLM provider instance", err)
 		return
 	}
 
-	// Preserve user-supplied sensitive attributes (server never returns them).
-	refreshed := llmInstanceToModel(tenantID, state.ProviderType, state.APIKey, state.Credentials, state.ExternalID, inst)
+	refreshed := llmInstanceToModel(tenantID, state.ProviderType, inst)
+	// Carry forward the WO version companions — they live in state but the
+	// server doesn't echo them; preserving keeps the plan a no-op.
+	refreshed.APIKeyWOVersion = state.APIKeyWOVersion
+	refreshed.CredentialsWOVersion = state.CredentialsWOVersion
+	refreshed.ExternalIDWOVersion = state.ExternalIDWOVersion
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
 func (r *LLMProviderInstanceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state LLMProviderInstanceResourceModel
+	var plan, state, config LLMProviderInstanceResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -346,29 +401,33 @@ func (r *LLMProviderInstanceResource) Update(ctx context.Context, req resource.U
 	setStringPtr(plan.InstanceName, &update.InstanceName)
 	setStringPtr(plan.DisplayName, &update.DisplayName)
 	setStringPtr(plan.Description, &update.Description)
-	setStringPtr(plan.APIKey, &update.ApiKey)
 	setStringPtr(plan.AuthType, &update.AuthType)
-	setStringPtr(plan.Credentials, &update.Credentials)
 	setStringPtr(plan.HealthCheckURL, &update.HealthCheckUrl)
 	setStringPtr(plan.ImpersonateServiceAccountEmail, &update.ImpersonateServiceAccountEmail)
 	setBoolPtr(plan.Enabled, &update.Enabled)
 	setInt32Ptr(plan.Priority, &update.Priority)
 
+	// WriteOnly secrets are only sent when the user bumped the companion
+	// *_wo_version. Otherwise we leave them nil and the server preserves
+	// the existing encrypted value. Detecting "version bumped" by comparing
+	// plan-time vs prior state.
+	if !plan.APIKeyWOVersion.Equal(state.APIKeyWOVersion) {
+		setStringPtr(config.APIKey, &update.ApiKey)
+	}
+	if !plan.CredentialsWOVersion.Equal(state.CredentialsWOVersion) {
+		setStringPtr(config.Credentials, &update.Credentials)
+	}
+
 	inst, err := r.sdk.LLMProviderInstances().Update(ctx, tenantID, instanceID, version, update)
 	if err != nil {
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError(
-				"LLM provider instance changed since last refresh",
-				"The instance's version on the platform differs from Terraform state. "+
-					"Run `terraform refresh` and re-plan to pick up out-of-band edits.",
-			)
-			return
-		}
-		resp.Diagnostics.AddError("Failed to update LLM provider instance", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update LLM provider instance", err)
 		return
 	}
 
-	refreshed := llmInstanceToModel(tenantID, plan.ProviderType, plan.APIKey, plan.Credentials, plan.ExternalID, inst)
+	refreshed := llmInstanceToModel(tenantID, plan.ProviderType, inst)
+	refreshed.APIKeyWOVersion = plan.APIKeyWOVersion
+	refreshed.CredentialsWOVersion = plan.CredentialsWOVersion
+	refreshed.ExternalIDWOVersion = plan.ExternalIDWOVersion
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -388,14 +447,7 @@ func (r *LLMProviderInstanceResource) Delete(ctx context.Context, req resource.D
 		if errors.Is(err, adminapi.ErrNotFound) {
 			return
 		}
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError(
-				"LLM provider instance changed since last refresh",
-				"Refresh and re-plan.",
-			)
-			return
-		}
-		resp.Diagnostics.AddError("Failed to delete LLM provider instance", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete LLM provider instance", err)
 	}
 }
 
@@ -431,20 +483,21 @@ func (r *LLMProviderInstanceResource) resolveTenant(perResource types.String) st
 	return r.tenantID
 }
 
-// llmInstanceToModel maps SDK response → Terraform state. Sensitive inputs
-// (api_key, credentials, external_id) aren't round-tripped by the server, so
-// we carry them forward from the prior model.
+// llmInstanceToModel maps SDK response → Terraform state. WriteOnly inputs
+// (api_key, credentials, external_id) are not written to state by design —
+// state holds Null for them; their *_wo_version companions track rotation
+// intent and are carried over by the caller.
 func llmInstanceToModel(
 	tenantID string,
-	providerType, apiKey, credentials, externalID types.String,
+	providerType types.String,
 	inst *adminapi.LLMProviderInstance,
 ) LLMProviderInstanceResourceModel {
 	m := LLMProviderInstanceResourceModel{
 		TenantID:     types.StringValue(tenantID),
 		ProviderType: providerType,
-		APIKey:       apiKey,
-		Credentials:  credentials,
-		ExternalID:   externalID,
+		APIKey:       types.StringNull(),
+		Credentials:  types.StringNull(),
+		ExternalID:   types.StringNull(),
 	}
 
 	if inst.Id != nil {
@@ -485,4 +538,3 @@ func llmInstanceToModel(
 	m.LastModifiedBy = enumPtrToTF(inst.LastModifiedBy)
 	return m
 }
-

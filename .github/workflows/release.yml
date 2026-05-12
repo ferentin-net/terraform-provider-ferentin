@@ -1,0 +1,39 @@
+name: Release
+
+# Tag-driven release: pushing a vX.Y.Z tag invokes goreleaser, which builds
+# multi-arch binaries, signs the checksum file, and creates a GitHub
+# release. The Terraform registry picks up the new version from the GitHub
+# release event.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write   # goreleaser needs to create the GitHub release
+
+jobs:
+  goreleaser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # goreleaser uses git history for changelog/diff
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Import GPG key
+        id: import_gpg
+        uses: crazy-max/ghaction-import-gpg@v6
+        with:
+          gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
+          passphrase: ${{ secrets.PASSPHRASE }}
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: latest
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}

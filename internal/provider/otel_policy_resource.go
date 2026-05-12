@@ -7,11 +7,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -75,7 +79,13 @@ func (r *OtelPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Tenant OTEL policy — selects which telemetry signals (traces / metrics / logs) " +
 			"flow to which sinks, plus optional filtering / sampling. Nested processor / criteria configs " +
-			"are deferred to v0.2.",
+			"are deferred to v0.2.\n\n" +
+			"## Import\n\n" +
+			"Existing policies can be imported using `<tenant_id>/<policy_id>` " +
+			"(or `<policy_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_otel_policy.example <tenant_id>/<policy_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -91,11 +101,21 @@ func (r *OtelPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest,
 			"name":        schema.StringAttribute{Required: true},
 			"description": schema.StringAttribute{Optional: true, Computed: true},
 			"priority":    schema.Int64Attribute{Optional: true, Computed: true},
-			"enabled":     schema.BoolAttribute{Optional: true, Computed: true},
+			"enabled": schema.BoolAttribute{
+				MarkdownDescription: "Whether the policy is enforced. Default `true`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(true),
+			},
 			"signals": schema.ListAttribute{
-				MarkdownDescription: "Signal types this policy applies to. Allowed: `traces`, `metrics`, `logs`.",
-				Optional:            true, Computed: true,
+				MarkdownDescription: "Signal types this policy applies to. Allowed values per element: " +
+					"`traces`, `metrics`, `logs`.",
+				Optional:    true,
+				Computed:    true,
 				ElementType: types.StringType,
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(stringvalidator.OneOf("traces", "metrics", "logs")),
+				},
 			},
 			"sink_ids": schema.ListAttribute{
 				MarkdownDescription: "UUIDs of sinks that receive matching telemetry. Pull from " +
@@ -140,7 +160,7 @@ func (r *OtelPolicyResource) Create(ctx context.Context, req resource.CreateRequ
 
 	pol, err := r.sdk.OtelPolicies().Create(ctx, tenantID, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create OTEL policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create OTEL policy", err)
 		return
 	}
 	state := otelPolicyToModel(tenantID, pol)
@@ -160,7 +180,7 @@ func (r *OtelPolicyResource) Read(ctx context.Context, req resource.ReadRequest,
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read OTEL policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read OTEL policy", err)
 		return
 	}
 	refreshed := otelPolicyToModel(tenantID, pol)
@@ -195,7 +215,7 @@ func (r *OtelPolicyResource) Update(ctx context.Context, req resource.UpdateRequ
 	v := strconv.FormatInt(0, 10) // OTEL policy doesn't expose version; send empty If-Match
 	pol, err := r.sdk.OtelPolicies().Update(ctx, tenantID, state.PolicyID.ValueString(), v, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update OTEL policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update OTEL policy", err)
 		return
 	}
 	refreshed := otelPolicyToModel(tenantID, pol)
@@ -211,7 +231,7 @@ func (r *OtelPolicyResource) Delete(ctx context.Context, req resource.DeleteRequ
 	tenantID := r.resolveTenant(state.TenantID)
 	err := r.sdk.OtelPolicies().Delete(ctx, tenantID, state.PolicyID.ValueString(), "")
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
-		resp.Diagnostics.AddError("Failed to delete OTEL policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete OTEL policy", err)
 	}
 }
 
@@ -262,4 +282,3 @@ func otelPolicyToModel(tenantID string, pol *adminapi.OtelPolicy) OtelPolicyReso
 	m.SinkIDs = stringSliceToList(pol.SinkIds)
 	return m
 }
-

@@ -1,0 +1,52 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck       # unchecked errors
+    - govet          # standard checks
+    - ineffassign    # ineffectual assignments
+    - staticcheck    # broad correctness + style
+    - unused         # unused symbols
+    - misspell       # American-English typos
+    - gocritic       # diagnostic-style checks
+    - revive         # configurable replacement for golint
+    - copyloopvar    # post-Go-1.22 loopvar safety
+    - bodyclose      # http.Response.Body must Close
+    - errorlint      # %w wrapping correctness
+
+  settings:
+    gocritic:
+      disabled-checks:
+        # tfsdk struct tags + framework conventions trip this one
+        - exitAfterDefer
+    revive:
+      rules:
+        - name: var-naming
+          disabled: true   # generated SDK aliases (gen.OidcClient → OIDCClientRow) violate this
+
+  exclusions:
+    rules:
+      # Generated code: don't lint the oapi-codegen output.
+      - path: pkg/adminapi/gen/
+        linters: [errcheck, govet, staticcheck, unused, misspell, gocritic, revive, errorlint]
+      # Acceptance tests skip without TF_ACC; helpers are intentionally light.
+      - path: _acc_test\.go$
+        linters: [errcheck]
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/ferentin-net/terraform-provider-ferentin

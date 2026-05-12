@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -35,16 +38,16 @@ type MCPProviderResourceModel struct {
 	DisplayName types.String `tfsdk:"display_name"`
 
 	// Optional
-	Slug                 types.String `tfsdk:"slug"` // input maps to mcp_slug; computed-output is also Slug
-	Description          types.String `tfsdk:"description"`
-	Icon                 types.String `tfsdk:"icon"`
-	Owner                types.String `tfsdk:"owner"`
-	Contact              types.String `tfsdk:"contact"`
-	DefaultURL           types.String `tfsdk:"default_url"`
-	Transport            types.String `tfsdk:"transport"`
-	Category             types.String `tfsdk:"category"`
-	AllowEndpointOverride types.Bool  `tfsdk:"allow_endpoint_override"`
-	EnabledScopes        types.List   `tfsdk:"enabled_scopes"`
+	Slug                  types.String `tfsdk:"slug"` // input maps to mcp_slug; computed-output is also Slug
+	Description           types.String `tfsdk:"description"`
+	Icon                  types.String `tfsdk:"icon"`
+	Owner                 types.String `tfsdk:"owner"`
+	Contact               types.String `tfsdk:"contact"`
+	DefaultURL            types.String `tfsdk:"default_url"`
+	Transport             types.String `tfsdk:"transport"`
+	Category              types.String `tfsdk:"category"`
+	AllowEndpointOverride types.Bool   `tfsdk:"allow_endpoint_override"`
+	EnabledScopes         types.List   `tfsdk:"enabled_scopes"`
 
 	// Computed
 	ProviderID        types.String `tfsdk:"provider_id"`
@@ -88,7 +91,13 @@ func (r *MCPProviderResource) Schema(_ context.Context, _ resource.SchemaRequest
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A tenant-custom MCP provider definition. Use to publish your own MCP server " +
 			"into the tenant catalog (vs `data \"ferentin_mcp_provider\"` which reads the global catalog). " +
-			"v0.1 exposes flat fields; nested auth/scopes/setup configs are v0.2.",
+			"v0.1 exposes flat fields; nested auth/scopes/setup configs are v0.2.\n\n" +
+			"## Import\n\n" +
+			"Existing providers can be imported using `<tenant_id>/<provider_id>` " +
+			"(or `<provider_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_mcp_provider.example <tenant_id>/<provider_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -101,16 +110,27 @@ func (r *MCPProviderResource) Schema(_ context.Context, _ resource.SchemaRequest
 					stringplanmodifier.RequiresReplace(),
 				},
 			},
-			"display_name":             schema.StringAttribute{Required: true},
-			"slug":                     schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "URL slug; if unset, derived from display_name."},
-			"description":              schema.StringAttribute{Optional: true, Computed: true},
-			"icon":                     schema.StringAttribute{Optional: true, Computed: true},
-			"owner":                    schema.StringAttribute{Optional: true, Computed: true},
-			"contact":                  schema.StringAttribute{Optional: true, Computed: true},
-			"default_url":              schema.StringAttribute{Optional: true, Computed: true},
-			"transport":                schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Transport (`stdio`, `sse`, `streamable_http`)."},
-			"category":                 schema.StringAttribute{Optional: true, Computed: true},
-			"allow_endpoint_override": schema.BoolAttribute{Optional: true, Computed: true},
+			"display_name": schema.StringAttribute{Required: true},
+			"slug":         schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "URL slug; if unset, derived from display_name."},
+			"description":  schema.StringAttribute{Optional: true, Computed: true},
+			"icon":         schema.StringAttribute{Optional: true, Computed: true},
+			"owner":        schema.StringAttribute{Optional: true, Computed: true},
+			"contact":      schema.StringAttribute{Optional: true, Computed: true},
+			"default_url":  schema.StringAttribute{Optional: true, Computed: true},
+			"transport": schema.StringAttribute{
+				Optional: true, Computed: true,
+				MarkdownDescription: "Transport. Allowed: `stdio`, `sse`, `http`.",
+				Validators: []validator.String{
+					stringvalidator.OneOf("stdio", "sse", "http"),
+				},
+			},
+			"category": schema.StringAttribute{Optional: true, Computed: true},
+			"allow_endpoint_override": schema.BoolAttribute{
+				MarkdownDescription: "When true, downstream `mcp_server` instances may override the catalog endpoint URL. Default `false`.",
+				Optional:            true,
+				Computed:            true,
+				Default:             booldefault.StaticBool(false),
+			},
 			"enabled_scopes": schema.ListAttribute{
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
@@ -144,7 +164,7 @@ func (r *MCPProviderResource) Create(ctx context.Context, req resource.CreateReq
 
 	prov, err := r.sdk.MCPProviders().Create(ctx, tenantID, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create MCP provider", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create MCP provider", err)
 		return
 	}
 	state := mcpProviderToModel(tenantID, prov)
@@ -164,7 +184,7 @@ func (r *MCPProviderResource) Read(ctx context.Context, req resource.ReadRequest
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read MCP provider", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read MCP provider", err)
 		return
 	}
 	refreshed := mcpProviderToModel(tenantID, prov)
@@ -211,7 +231,7 @@ func (r *MCPProviderResource) Update(ctx context.Context, req resource.UpdateReq
 	// MCPProviderResponseDto doesn't expose Version; send empty If-Match.
 	prov, err := r.sdk.MCPProviders().Update(ctx, tenantID, state.ProviderID.ValueString(), "", body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to update MCP provider", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update MCP provider", err)
 		return
 	}
 	refreshed := mcpProviderToModel(tenantID, prov)
@@ -227,7 +247,7 @@ func (r *MCPProviderResource) Delete(ctx context.Context, req resource.DeleteReq
 	tenantID := r.resolveTenant(state.TenantID)
 	err := r.sdk.MCPProviders().Delete(ctx, tenantID, state.ProviderID.ValueString(), "")
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
-		resp.Diagnostics.AddError("Failed to delete MCP provider", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete MCP provider", err)
 	}
 }
 

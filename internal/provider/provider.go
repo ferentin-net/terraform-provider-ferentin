@@ -7,7 +7,9 @@ package provider
 import (
 	"context"
 	"os"
+	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/providervalidator"
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -19,14 +21,17 @@ import (
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 )
 
-// envEndpoint, envTenantID, envToken, envInsecure are the standard
-// environment-variable fallbacks for SDKOptions equivalents on the provider
-// block. Matches §3.2 of the design doc.
+// envEndpoint, envTenantID, envToken, envInsecure, envClientID, envClientSecret,
+// envAuthURL are the standard environment-variable fallbacks for SDKOptions
+// equivalents on the provider block. Matches §3.2 of the design doc.
 const (
-	envEndpoint = "FERENTIN_ENDPOINT"
-	envTenantID = "FERENTIN_TENANT_ID"
-	envToken    = "FERENTIN_TOKEN"
-	envInsecure = "FERENTIN_INSECURE_SKIP_VERIFY"
+	envEndpoint     = "FERENTIN_ENDPOINT"
+	envTenantID     = "FERENTIN_TENANT_ID"
+	envToken        = "FERENTIN_TOKEN"
+	envInsecure     = "FERENTIN_INSECURE_SKIP_VERIFY"
+	envClientID     = "FERENTIN_CLIENT_ID"
+	envClientSecret = "FERENTIN_CLIENT_SECRET"
+	envAuthURL      = "FERENTIN_AUTH_URL"
 )
 
 // FerentinProvider is the provider's main type. `version` is set by main.go
@@ -40,10 +45,17 @@ type FerentinProvider struct {
 // optional in the schema; missing fields fall back to env vars (handled in
 // Configure). The framework treats `types.String` as "may be Null / Unknown",
 // so we always check IsNull / IsUnknown before reading.
+//
+// `Token` and `ClientSecret` are Sensitive (redacted in logs and plan output).
+// Provider-level attributes are never persisted to state, so they don't need
+// the resource-level WriteOnly mechanic.
 type FerentinProviderModel struct {
 	Endpoint           types.String `tfsdk:"endpoint"`
 	TenantID           types.String `tfsdk:"tenant_id"`
 	Token              types.String `tfsdk:"token"`
+	ClientID           types.String `tfsdk:"client_id"`
+	ClientSecret       types.String `tfsdk:"client_secret"`
+	AuthURL            types.String `tfsdk:"auth_url"`
 	InsecureSkipVerify types.Bool   `tfsdk:"insecure_skip_verify"`
 }
 
@@ -63,12 +75,41 @@ func New(version string) func() provider.Provider {
 	}
 }
 
-// Compile-time assertion that we satisfy the framework interface.
-var _ provider.Provider = (*FerentinProvider)(nil)
+// Compile-time assertion that we satisfy the framework interfaces.
+var (
+	_ provider.Provider                     = (*FerentinProvider)(nil)
+	_ provider.ProviderWithConfigValidators = (*FerentinProvider)(nil)
+)
 
 func (p *FerentinProvider) Metadata(_ context.Context, _ provider.MetadataRequest, resp *provider.MetadataResponse) {
 	resp.TypeName = "ferentin"
 	resp.Version = p.version
+}
+
+// ConfigValidators declares plan-time invariants between provider attributes.
+// Catches conflicting / incomplete auth blocks before any HTTP request, with
+// proper attribute paths shown in `terraform plan` output.
+//
+// These are belt-and-suspenders alongside the runtime checks in Configure():
+// the runtime checks still cover the env-var fallback paths (which the
+// framework can't see at plan time).
+func (p *FerentinProvider) ConfigValidators(_ context.Context) []provider.ConfigValidator {
+	return []provider.ConfigValidator{
+		// token is mutually exclusive with the client_credentials pair.
+		providervalidator.Conflicting(
+			path.MatchRoot("token"),
+			path.MatchRoot("client_id"),
+		),
+		providervalidator.Conflicting(
+			path.MatchRoot("token"),
+			path.MatchRoot("client_secret"),
+		),
+		// If either half of the client_credentials pair is set, both must be.
+		providervalidator.RequiredTogether(
+			path.MatchRoot("client_id"),
+			path.MatchRoot("client_secret"),
+		),
+	}
 }
 
 func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
@@ -87,12 +128,32 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Optional: true,
 			},
 			"token": schema.StringAttribute{
-				MarkdownDescription: "Pre-minted bearer access token. Suitable for tests and CI; production " +
-					"deployments should use the `ferentin admin clients` workflow to mint a service-account " +
-					"client and rely on the upcoming client-credentials refresh path. Falls back to env " +
-					"`FERENTIN_TOKEN`. Marked sensitive so it does not appear in plan/apply output.",
+				MarkdownDescription: "Pre-minted bearer access token. Marked **Sensitive** so it's redacted " +
+					"in plan output and logs. Provider-level attributes never enter persistent Terraform state " +
+					"(they're configuration, not managed objects), so a leaked state file does NOT expose the " +
+					"token. Suitable for tests and CI; production deployments should prefer the client-credentials " +
+					"auth block (auto-refresh; see `client_id` / `client_secret`). Falls back to env `FERENTIN_TOKEN`.",
 				Optional:  true,
 				Sensitive: true,
+			},
+			"client_id": schema.StringAttribute{
+				MarkdownDescription: "OAuth2 client_id for service-account auth (client_credentials grant). " +
+					"Mutually exclusive with `token`. Pair with `client_secret`. Falls back to env " +
+					"`FERENTIN_CLIENT_ID`.",
+				Optional: true,
+			},
+			"client_secret": schema.StringAttribute{
+				MarkdownDescription: "OAuth2 client_secret. **Sensitive** — redacted in logs and plan output. " +
+					"Provider config does not persist to state. Pair with `client_id`. " +
+					"Falls back to env `FERENTIN_CLIENT_SECRET`.",
+				Optional:  true,
+				Sensitive: true,
+			},
+			"auth_url": schema.StringAttribute{
+				MarkdownDescription: "Authorization server base URL (used with `client_id` / `client_secret`). " +
+					"Falls back to env `FERENTIN_AUTH_URL`. Defaults to `endpoint` with `auth.` substituted " +
+					"for `api.` (e.g. `https://auth.ferentin.net` for endpoint `https://api.ferentin.net`).",
+				Optional: true,
 			},
 			"insecure_skip_verify": schema.BoolAttribute{
 				MarkdownDescription: "Skip TLS verification. Local-dev only; do NOT set in production. " +
@@ -113,6 +174,9 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	endpoint := stringOrEnv(data.Endpoint, envEndpoint)
 	tenantID := stringOrEnv(data.TenantID, envTenantID)
 	token := stringOrEnv(data.Token, envToken)
+	clientID := stringOrEnv(data.ClientID, envClientID)
+	clientSecret := stringOrEnv(data.ClientSecret, envClientSecret)
+	authURL := stringOrEnv(data.AuthURL, envAuthURL)
 	insecure := boolOrEnv(data.InsecureSkipVerify, envInsecure)
 
 	if endpoint == "" {
@@ -120,14 +184,6 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 			path.Root("endpoint"),
 			"Missing admin-api endpoint",
 			"Set the `endpoint` attribute on the provider block, or export FERENTIN_ENDPOINT.",
-		)
-	}
-	if token == "" {
-		resp.Diagnostics.AddAttributeError(
-			path.Root("token"),
-			"Missing bearer token",
-			"Set the `token` attribute on the provider block, or export FERENTIN_TOKEN. "+
-				"Token-source-based auth (NewWithClientCredentials) is on the roadmap.",
 		)
 	}
 	if tenantID == "" {
@@ -138,13 +194,38 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 				"Individual resources may also set `tenant_id` to override this default.",
 		)
 	}
+
+	// Auth-mode resolution: client_credentials beats static token when both
+	// halves of CC are present. Mixing token + (client_id|client_secret) is
+	// ambiguous — fail closed.
+	ccPresent := clientID != "" || clientSecret != ""
+	if token != "" && ccPresent {
+		resp.Diagnostics.AddError(
+			"Conflicting auth configuration",
+			"Set either `token` (static / pre-minted) or `client_id`+`client_secret` "+
+				"(OAuth2 client_credentials) — not both.",
+		)
+	}
+	if !ccPresent && token == "" {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("token"),
+			"Missing auth credentials",
+			"Configure either `token` (static bearer; FERENTIN_TOKEN) or "+
+				"`client_id`+`client_secret` (OAuth2; FERENTIN_CLIENT_ID / FERENTIN_CLIENT_SECRET).",
+		)
+	}
+	if ccPresent && (clientID == "" || clientSecret == "") {
+		resp.Diagnostics.AddError(
+			"Incomplete client_credentials configuration",
+			"Both `client_id` and `client_secret` are required when using OAuth2 client_credentials auth.",
+		)
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
-	sdk, err := adminapi.NewWithToken(adminapi.SDKOptions{
+	opts := adminapi.SDKOptions{
 		Endpoint:  endpoint,
-		Token:     token,
 		SkipTLS:   insecure,
 		UserAgent: "terraform-provider-ferentin/" + p.version,
 		OnRateLimit: func(s adminapi.RateLimitState) {
@@ -155,7 +236,42 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 				"policy":    s.Policy,
 			})
 		},
-	})
+	}
+
+	var (
+		sdk      *adminapi.SDKClient
+		err      error
+		authMode string
+	)
+	if ccPresent {
+		// Default auth_url: derive from endpoint by swapping `api.` → `auth.`.
+		// This is the platform's canonical pairing (api.ferentin.net pairs
+		// with auth.ferentin.net). If the user wants something else, they
+		// can set auth_url explicitly.
+		if authURL == "" {
+			authURL = deriveAuthURL(endpoint)
+		}
+		if authURL == "" {
+			resp.Diagnostics.AddAttributeError(
+				path.Root("auth_url"),
+				"Cannot derive auth URL from endpoint",
+				"Set `auth_url` explicitly, or export FERENTIN_AUTH_URL. "+
+					"Endpoint did not contain `api.` for the default `api.→auth.` substitution.",
+			)
+			return
+		}
+		opts.UserAgent += " (client_credentials)"
+		sdk, err = adminapi.NewWithClientCredentials(opts, adminapi.ClientCredentialsOptions{
+			AuthURL:      authURL,
+			ClientID:     clientID,
+			ClientSecret: clientSecret,
+		})
+		authMode = "client_credentials"
+	} else {
+		opts.Token = token
+		sdk, err = adminapi.NewWithToken(opts)
+		authMode = "static_token"
+	}
 	if err != nil {
 		resp.Diagnostics.AddError("Failed to build admin-api SDK client", err.Error())
 		return
@@ -168,7 +284,20 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	tflog.Info(ctx, "Ferentin provider configured", map[string]any{
 		"endpoint":  endpoint,
 		"tenant_id": tenantID,
+		"auth_mode": authMode,
 	})
+}
+
+// deriveAuthURL returns the platform's canonical auth-server URL for a given
+// admin-api endpoint by substituting `api.` with `auth.`. Returns "" if the
+// substitution doesn't apply — e.g. localhost endpoints or non-standard hosts
+// require an explicit `auth_url`.
+func deriveAuthURL(endpoint string) string {
+	const marker = "://api."
+	if i := strings.Index(endpoint, marker); i >= 0 {
+		return endpoint[:i] + "://auth." + endpoint[i+len(marker):]
+	}
+	return ""
 }
 
 func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resource {

@@ -7,12 +7,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -31,7 +34,7 @@ import (
 //   - CC federated overrides (`cc_federated_*`)
 //   - Per-server provider config / rate-limit / constraint maps
 //     (complex nested map<string, map<string, interface{}>> — would require
-//      a `dynamic` attribute or per-key schema)
+//     a `dynamic` attribute or per-key schema)
 //   - Mint-failure tracking / encryption-key versioning (operational telemetry)
 //   - Discovery internals (last_discovered_at, validation_status, etc.)
 type MCPServerResource struct {
@@ -57,11 +60,11 @@ type MCPServerResourceModel struct {
 	Priority             types.Int64  `tfsdk:"priority"`
 	HealthCheckURL       types.String `tfsdk:"health_check_url"`
 	EdgeSiteID           types.String `tfsdk:"edge_site_id"`
-	DeploymentMode      types.String `tfsdk:"deployment_mode"`
+	DeploymentMode       types.String `tfsdk:"deployment_mode"`
 	UpstreamAuthStrategy types.String `tfsdk:"upstream_auth_strategy"`
 	TransportType        types.String `tfsdk:"transport_type"`
 	EnabledScopes        types.List   `tfsdk:"enabled_scopes"` // []string
-	Tags                 types.Map    `tfsdk:"tags"`            // map[string]string
+	Tags                 types.Map    `tfsdk:"tags"`           // map[string]string
 
 	// Computed-only: ProviderAuthType is inferred by the platform from the
 	// upstream_auth_strategy + provider config; not user-settable through this
@@ -119,7 +122,13 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A tenant-scoped MCP server — a binding of an MCP provider (catalog entry, see " +
 			"`ferentin_mcp_provider`) to a specific endpoint / credential set / routing config. Multiple servers " +
-			"per provider are allowed (e.g., per-region, per-env).",
+			"per provider are allowed (e.g., per-region, per-env).\n\n" +
+			"## Import\n\n" +
+			"Existing servers can be imported using `<tenant_id>/<server_id>` " +
+			"(or `<server_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_mcp_server.example <tenant_id>/<server_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -171,9 +180,10 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			},
 			"enabled": schema.BoolAttribute{
 				MarkdownDescription: "When false, the server is registered but skipped by routing. " +
-					"Equivalent to the platform's Enable / Disable verbs at runtime.",
+					"Equivalent to the platform's Enable / Disable verbs at runtime. Default `true`.",
 				Optional: true,
 				Computed: true,
+				Default:  booldefault.StaticBool(true),
 			},
 			"priority": schema.Int64Attribute{
 				MarkdownDescription: "Routing priority (lower is higher).",
@@ -196,24 +206,37 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"or null (cloud default).",
 				Optional: true,
 				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("public", "edge_routed"),
+				},
 			},
 			"provider_auth_type": schema.StringAttribute{
 				MarkdownDescription: "Computed: authentication type the platform inferred for the provider. " +
 					"Not directly user-settable; influenced by `upstream_auth_strategy` and the provider's catalog config.",
-				Computed: true,
+				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"upstream_auth_strategy": schema.StringAttribute{
-				MarkdownDescription: "Strategy for authenticating to the upstream server. Allowed: `none`, " +
-					"`oauth2_per_user`, `oauth2_shared`, `cc_federated`.",
+				MarkdownDescription: "Strategy for authenticating to the upstream MCP server. Allowed: " +
+					"`none`, `oauth2_user`, `cc_federated`, `custom_headers`, `static_bearer`, " +
+					"`xaa_federated`, `xaa_local`.",
 				Optional: true,
 				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf(
+						"none", "oauth2_user", "cc_federated", "custom_headers",
+						"static_bearer", "xaa_federated", "xaa_local",
+					),
+				},
 			},
 			"transport_type": schema.StringAttribute{
-				MarkdownDescription: "MCP transport type (`stdio`, `sse`, `streamable_http`). Defaults to the " +
-					"provider catalog entry.",
+				MarkdownDescription: "MCP transport type. Allowed: `sse`, `stdio_tunnel`, `streamable_http`. " +
+					"Defaults to the provider catalog entry.",
 				Optional: true,
 				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("sse", "stdio_tunnel", "streamable_http"),
+				},
 			},
 			"enabled_scopes": schema.ListAttribute{
 				MarkdownDescription: "Allowlist of MCP scopes this server is permitted to use. Restricts the " +
@@ -320,7 +343,7 @@ func (r *MCPServerResource) Create(ctx context.Context, req resource.CreateReque
 
 	srv, err := r.sdk.MCPServers().Create(ctx, tenantID, body)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create MCP server", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create MCP server", err)
 		return
 	}
 
@@ -344,7 +367,7 @@ func (r *MCPServerResource) Read(ctx context.Context, req resource.ReadRequest, 
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read MCP server", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read MCP server", err)
 		return
 	}
 
@@ -372,15 +395,7 @@ func (r *MCPServerResource) Update(ctx context.Context, req resource.UpdateReque
 
 	srv, err := r.sdk.MCPServers().Update(ctx, tenantID, serverID, version, body)
 	if err != nil {
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError(
-				"MCP server changed since last refresh",
-				"The server's version on the platform differs from Terraform state. "+
-					"Run `terraform refresh` and re-plan.",
-			)
-			return
-		}
-		resp.Diagnostics.AddError("Failed to update MCP server", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update MCP server", err)
 		return
 	}
 
@@ -404,12 +419,7 @@ func (r *MCPServerResource) Delete(ctx context.Context, req resource.DeleteReque
 		if errors.Is(err, adminapi.ErrNotFound) {
 			return
 		}
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError("MCP server changed since last refresh",
-				"Refresh and re-plan.")
-			return
-		}
-		resp.Diagnostics.AddError("Failed to delete MCP server", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete MCP server", err)
 	}
 }
 

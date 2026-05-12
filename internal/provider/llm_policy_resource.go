@@ -7,11 +7,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -54,7 +57,7 @@ type LLMPolicyResourceModel struct {
 
 	ProviderInstances types.List `tfsdk:"provider_instances"` // []string
 
-	Limits   *LLMPolicyLimitsModel   `tfsdk:"limits"`
+	Limits   *LLMPolicyLimitsModel    `tfsdk:"limits"`
 	Criteria []LLMPolicyCriteriaModel `tfsdk:"criteria"`
 
 	// Computed / server-set
@@ -88,9 +91,9 @@ type LLMPolicyLimitsModel struct {
 
 // LLMPolicyCriteriaModel mirrors PolicyCriteria.
 type LLMPolicyCriteriaModel struct {
-	Operator    types.String                       `tfsdk:"operator"`
-	Type        types.String                       `tfsdk:"type"`
-	Description types.String                       `tfsdk:"description"`
+	Operator    types.String                      `tfsdk:"operator"`
+	Type        types.String                      `tfsdk:"type"`
+	Description types.String                      `tfsdk:"description"`
 	Conditions  []LLMPolicyCriteriaConditionModel `tfsdk:"conditions"`
 }
 
@@ -138,7 +141,13 @@ func (r *LLMPolicyResource) Configure(_ context.Context, req resource.ConfigureR
 func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "An ABAC-style LLM governance policy. Combines targeting (criteria), enforcement " +
-			"(limits, prompts), and routing (provider_instances). See §6.4 of the design doc for an example.",
+			"(limits, prompts), and routing (provider_instances). See §6.4 of the design doc for an example.\n\n" +
+			"## Import\n\n" +
+			"Existing policies can be imported using `<tenant_id>/<policy_id>` " +
+			"(or `<policy_id>` alone when the provider's default `tenant_id` matches):\n\n" +
+			"```\n" +
+			"terraform import ferentin_llm_policy.example <tenant_id>/<policy_id>\n" +
+			"```",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -173,9 +182,10 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Computed: true,
 			},
 			"enabled": schema.BoolAttribute{
-				MarkdownDescription: "Whether the policy is enforced. Disable to stage changes without applying.",
+				MarkdownDescription: "Whether the policy is enforced. Default `true`. Set to `false` to stage changes without applying.",
 				Optional:            true,
 				Computed:            true,
+				Default:             booldefault.StaticBool(true),
 			},
 			"system_prompt": schema.StringAttribute{
 				MarkdownDescription: "System prompt injected ahead of the user's prompt. Often loaded with `file()`.",
@@ -285,6 +295,9 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 						"operator": schema.StringAttribute{
 							MarkdownDescription: "Logical operator joining the conditions: `AND` or `OR`.",
 							Required:            true,
+							Validators: []validator.String{
+								stringvalidator.OneOf("AND", "OR"),
+							},
 						},
 						"type": schema.StringAttribute{
 							MarkdownDescription: "Criteria type. Typically `user` or `request`. Server default applies if unset.",
@@ -396,7 +409,7 @@ func (r *LLMPolicyResource) Create(ctx context.Context, req resource.CreateReque
 
 	pol, err := r.sdk.LLMPolicies().Create(ctx, tenantID, create)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to create LLM policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to create LLM policy", err)
 		return
 	}
 
@@ -420,7 +433,7 @@ func (r *LLMPolicyResource) Read(ctx context.Context, req resource.ReadRequest, 
 			resp.State.RemoveResource(ctx)
 			return
 		}
-		resp.Diagnostics.AddError("Failed to read LLM policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to read LLM policy", err)
 		return
 	}
 
@@ -448,15 +461,7 @@ func (r *LLMPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 
 	pol, err := r.sdk.LLMPolicies().Update(ctx, tenantID, policyID, version, update)
 	if err != nil {
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError(
-				"LLM policy changed since last refresh",
-				"The policy's version on the platform differs from Terraform state. "+
-					"Run `terraform refresh` and re-plan to pick up out-of-band edits.",
-			)
-			return
-		}
-		resp.Diagnostics.AddError("Failed to update LLM policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to update LLM policy", err)
 		return
 	}
 
@@ -480,12 +485,7 @@ func (r *LLMPolicyResource) Delete(ctx context.Context, req resource.DeleteReque
 		if errors.Is(err, adminapi.ErrNotFound) {
 			return
 		}
-		if errors.Is(err, adminapi.ErrPreconditionFailed) {
-			resp.Diagnostics.AddError("LLM policy changed since last refresh",
-				"Refresh and re-plan.")
-			return
-		}
-		resp.Diagnostics.AddError("Failed to delete LLM policy", err.Error())
+		addSDKError(&resp.Diagnostics, "Failed to delete LLM policy", err)
 	}
 }
 
