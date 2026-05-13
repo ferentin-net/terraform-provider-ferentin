@@ -44,9 +44,9 @@ jobs:
           cache: true
       - name: Configure access to private modules
         run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v9
         with:
-          version: latest
+          version: v2.12.2
 
   test:
     name: Unit tests
