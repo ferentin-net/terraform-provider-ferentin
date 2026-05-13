@@ -386,8 +386,14 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	// is redundant when we can read it off the bearer. Works for all three
 	// auth modes (static token, client_credentials, profile) because every
 	// admin-api JWT carries `tid` regardless of grant type.
+	//
+	// We pull the source via sdk.TokenSource() rather than opts.Source: the
+	// SDK's NewWithClientCredentials sets the source on its own internal
+	// copy of opts (Go pass-by-value), so the provider's local opts.Source
+	// stays nil in CC mode. The accessor returns whichever source the SDK
+	// actually wired up, regardless of which constructor we took.
 	if tenantID == "" {
-		bearer, terr := resolveBearer(ctx, token, opts.Source)
+		bearer, terr := resolveBearer(ctx, token, sdk.TokenSource())
 		if terr != nil {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("tenant_id"),
