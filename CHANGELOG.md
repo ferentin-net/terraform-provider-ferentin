@@ -7,6 +7,15 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **`managed_by` provenance now reads `"iac"` instead of `"console"`.** The
+  SDK transport now stamps `X-Ferentin-Managed-By: iac` and
+  `X-Ferentin-Managed-By-Module: terraform-provider-ferentin/<version>` on
+  every mutating request (POST/PUT/PATCH/DELETE; reads are skipped — the
+  server doesn't persist headers on GETs). Without this, the platform
+  fell back to `"console"` and out-of-band edits from the admin console
+  didn't surface as drift. Platform #651.
+
 ### Added
 - **`examples/mcp-server-from-card/`** — drives a `ferentin_mcp_provider` +
   `ferentin_mcp_server` pair from a discovered MCP `server-card.json`

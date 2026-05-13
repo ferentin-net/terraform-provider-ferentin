@@ -308,6 +308,13 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 		Endpoint:  endpoint,
 		SkipTLS:   insecure,
 		UserAgent: "terraform-provider-ferentin/" + p.version,
+		// Platform #651 provenance. "iac" is the platform's enum value for
+		// Terraform / OpenTofu / CC-token automation; ManagedByModule is
+		// free-form, identifies which provider build wrote the row so
+		// `managed_by_module` surfaces drift cleanly across provider
+		// versions.
+		ManagedBy:       "iac",
+		ManagedByModule: "terraform-provider-ferentin/" + p.version,
 		OnRateLimit: func(s adminapi.RateLimitState) {
 			tflog.Debug(ctx, "admin-api rate limit", map[string]any{
 				"limit":     s.Limit,
