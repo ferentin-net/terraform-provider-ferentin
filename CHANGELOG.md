@@ -7,6 +7,14 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- **`model_constraints` on `ferentin_llm_provider_instance`** — nested
+  `{ mode = "allowlist", models = [...] }` attribute that pins an
+  instance to a specific set of catalog models. Persisted on the
+  platform as `provider_config.model_constraints` (JSONB); echoed back
+  on Read so drift detection works. See the resource example for a
+  GPT-5.5-only configuration.
+
 ### Fixed
 - **`managed_by` provenance now reads `"iac"` instead of `"console"`.** The
   SDK transport now stamps `X-Ferentin-Managed-By: iac` and

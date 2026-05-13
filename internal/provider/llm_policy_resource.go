@@ -228,8 +228,11 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Computed:            true,
 			},
 			"provider_instances": schema.ListAttribute{
-				MarkdownDescription: "List of `instance_name`s (from `ferentin_llm_provider_instance.instance_name`) " +
-					"this policy routes to. Order determines failover order at runtime.",
+				MarkdownDescription: "List of provider-instance **UUIDs** (from `ferentin_llm_provider_instance.instance_id`) " +
+					"this policy routes to. Order determines failover order at runtime.\n\n" +
+					"Note: the platform's input contract historically accepted `instance_name` strings too — but " +
+					"on the response side it always normalizes to UUIDs, which means a name-based config would " +
+					"diff every plan. Always pass `instance_id`.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
@@ -331,8 +334,9 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 										Optional:            true,
 									},
 									"case_sensitive": schema.BoolAttribute{
-										MarkdownDescription: "For string operations.",
+										MarkdownDescription: "For string operations. Platform defaults to `true` when omitted.",
 										Optional:            true,
+										Computed:            true,
 									},
 									"description": schema.StringAttribute{
 										MarkdownDescription: "Optional description.",

@@ -8,12 +8,15 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -43,22 +46,23 @@ type LLMProviderInstanceResourceModel struct {
 	InstanceName types.String `tfsdk:"instance_name"`
 
 	// Optional user-supplied
-	DisplayName                    types.String `tfsdk:"display_name"`
-	Description                    types.String `tfsdk:"description"`
-	APIKey                         types.String `tfsdk:"api_key"`            // WriteOnly
-	APIKeyWOVersion                types.Int64  `tfsdk:"api_key_wo_version"` // companion to api_key
-	AuthType                       types.String `tfsdk:"auth_type"`
-	Credentials                    types.String `tfsdk:"credentials"` // WriteOnly
-	CredentialsWOVersion           types.Int64  `tfsdk:"credentials_wo_version"`
-	HealthCheckURL                 types.String `tfsdk:"health_check_url"`
-	Enabled                        types.Bool   `tfsdk:"enabled"`
-	Priority                       types.Int64  `tfsdk:"priority"`
-	ImpersonateServiceAccountEmail types.String `tfsdk:"impersonate_service_account_email"`
-	AWSRegion                      types.String `tfsdk:"aws_region"`
-	RoleARN                        types.String `tfsdk:"role_arn"`
-	ExternalID                     types.String `tfsdk:"external_id"` // WriteOnly
-	ExternalIDWOVersion            types.Int64  `tfsdk:"external_id_wo_version"`
-	SessionDurationMinutes         types.Int64  `tfsdk:"session_duration_minutes"`
+	DisplayName                    types.String              `tfsdk:"display_name"`
+	Description                    types.String              `tfsdk:"description"`
+	APIKey                         types.String              `tfsdk:"api_key"`            // WriteOnly
+	APIKeyWOVersion                types.Int64               `tfsdk:"api_key_wo_version"` // companion to api_key
+	AuthType                       types.String              `tfsdk:"auth_type"`
+	Credentials                    types.String              `tfsdk:"credentials"` // WriteOnly
+	CredentialsWOVersion           types.Int64               `tfsdk:"credentials_wo_version"`
+	HealthCheckURL                 types.String              `tfsdk:"health_check_url"`
+	Enabled                        types.Bool                `tfsdk:"enabled"`
+	Priority                       types.Int64               `tfsdk:"priority"`
+	ImpersonateServiceAccountEmail types.String              `tfsdk:"impersonate_service_account_email"`
+	AWSRegion                      types.String              `tfsdk:"aws_region"`
+	RoleARN                        types.String              `tfsdk:"role_arn"`
+	ExternalID                     types.String              `tfsdk:"external_id"` // WriteOnly
+	ExternalIDWOVersion            types.Int64               `tfsdk:"external_id_wo_version"`
+	SessionDurationMinutes         types.Int64               `tfsdk:"session_duration_minutes"`
+	ModelConstraints               *LLMModelConstraintsModel `tfsdk:"model_constraints"`
 
 	// Computed / server-set
 	InstanceID          types.String `tfsdk:"instance_id"` // server-generated UUID
@@ -72,6 +76,15 @@ type LLMProviderInstanceResourceModel struct {
 	ManagedByClientID   types.String `tfsdk:"managed_by_client_id"`
 	ManagedByModule     types.String `tfsdk:"managed_by_module"`
 	LastModifiedBy      types.String `tfsdk:"last_modified_by"`
+}
+
+// LLMModelConstraintsModel maps to provider_config.model_constraints on the
+// wire (a JSONB nested object). The platform reads
+// provider_config->model_constraints->models when filtering instances by
+// model availability at runtime.
+type LLMModelConstraintsModel struct {
+	Mode   types.String `tfsdk:"mode"`   // all | allowlist | blocklist
+	Models types.List   `tfsdk:"models"` // []string
 }
 
 func NewLLMProviderInstanceResource() resource.Resource {
@@ -251,6 +264,32 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 				Optional:            true,
 				Computed:            true,
 			},
+			"model_constraints": schema.SingleNestedAttribute{
+				MarkdownDescription: "Restrict which catalog models this instance exposes to runtime requests. " +
+					"Pair `mode = \"allowlist\"` with an explicit `models` list to deny requests for any model " +
+					"not in the set — the most common pattern when an instance should pin to a single OpenAI / " +
+					"Anthropic model (e.g. `gpt-5.5`, `claude-sonnet-4`). Persisted on the platform as " +
+					"`provider_config.model_constraints` (JSONB); echoed back on Read so drift detection works.",
+				Optional: true,
+				Attributes: map[string]schema.Attribute{
+					"mode": schema.StringAttribute{
+						MarkdownDescription: "Set to `\"allowlist\"` and provide `models`. The platform " +
+							"accepts other modes for advanced use cases but `allowlist` is the supported shape " +
+							"for the Terraform provider.",
+						Required: true,
+						Validators: []validator.String{
+							stringvalidator.OneOf("all", "allowlist", "blocklist"),
+						},
+					},
+					"models": schema.ListAttribute{
+						MarkdownDescription: "Model IDs that this instance is permitted to serve. " +
+							"E.g. `[\"gpt-5.5\"]` to pin a single model, or `[\"gpt-5.5\", \"gpt-4o\"]` to " +
+							"allow a small set.",
+						Optional:    true,
+						ElementType: types.StringType,
+					},
+				},
+			},
 
 			// Computed / server-set
 			"instance_id": schema.StringAttribute{
@@ -321,7 +360,13 @@ func (r *LLMProviderInstanceResource) Create(ctx context.Context, req resource.C
 
 	tenantID := r.resolveTenant(plan.TenantID)
 
-	create := adminapi.LLMProviderInstanceCreate{}
+	create := adminapi.LLMProviderInstanceCreate{
+		// provider_type is a REQUIRED field on the wire (gen.ProviderInstanceCreateRequest.ProviderType
+		// is a plain string, not a pointer). Earlier comment claimed it
+		// wasn't on the create DTO — that was wrong; the platform 400s with
+		// `fieldErrors:{providerType:"Provider type is required"}` without it.
+		ProviderType: plan.ProviderType.ValueString(),
+	}
 	v := plan.InstanceName.ValueString()
 	create.InstanceName = &v
 	setStringPtr(plan.DisplayName, &create.DisplayName)
@@ -338,6 +383,12 @@ func (r *LLMProviderInstanceResource) Create(ctx context.Context, req resource.C
 	setBoolPtr(plan.Enabled, &create.Enabled)
 	setInt32Ptr(plan.Priority, &create.Priority)
 	setInt32Ptr(plan.SessionDurationMinutes, &create.SessionDurationMinutes)
+	if pc, err := buildProviderConfig(ctx, plan.ModelConstraints); err != nil {
+		resp.Diagnostics.AddError("Invalid model_constraints", err.Error())
+		return
+	} else if pc != nil {
+		create.ProviderConfig = pc
+	}
 
 	inst, err := r.sdk.LLMProviderInstances().Create(ctx, tenantID, create)
 	if err != nil {
@@ -345,7 +396,7 @@ func (r *LLMProviderInstanceResource) Create(ctx context.Context, req resource.C
 		return
 	}
 
-	state := llmInstanceToModel(tenantID, plan.ProviderType, inst)
+	state := llmInstanceToModel(tenantID, plan, inst)
 	// Plan-only attrs that the wire doesn't echo: carry forward the user's
 	// last values so a no-op plan stays no-op. WriteOnly attrs (api_key,
 	// credentials, external_id) are NOT carried — they're config-only.
@@ -375,7 +426,7 @@ func (r *LLMProviderInstanceResource) Read(ctx context.Context, req resource.Rea
 		return
 	}
 
-	refreshed := llmInstanceToModel(tenantID, state.ProviderType, inst)
+	refreshed := llmInstanceToModel(tenantID, state, inst)
 	// Carry forward the WO version companions — they live in state but the
 	// server doesn't echo them; preserving keeps the plan a no-op.
 	refreshed.APIKeyWOVersion = state.APIKeyWOVersion
@@ -406,6 +457,12 @@ func (r *LLMProviderInstanceResource) Update(ctx context.Context, req resource.U
 	setStringPtr(plan.ImpersonateServiceAccountEmail, &update.ImpersonateServiceAccountEmail)
 	setBoolPtr(plan.Enabled, &update.Enabled)
 	setInt32Ptr(plan.Priority, &update.Priority)
+	if pc, err := buildProviderConfig(ctx, plan.ModelConstraints); err != nil {
+		resp.Diagnostics.AddError("Invalid model_constraints", err.Error())
+		return
+	} else if pc != nil {
+		update.ProviderConfig = pc
+	}
 
 	// WriteOnly secrets are only sent when the user bumped the companion
 	// *_wo_version. Otherwise we leave them nil and the server preserves
@@ -424,7 +481,7 @@ func (r *LLMProviderInstanceResource) Update(ctx context.Context, req resource.U
 		return
 	}
 
-	refreshed := llmInstanceToModel(tenantID, plan.ProviderType, inst)
+	refreshed := llmInstanceToModel(tenantID, plan, inst)
 	refreshed.APIKeyWOVersion = plan.APIKeyWOVersion
 	refreshed.CredentialsWOVersion = plan.CredentialsWOVersion
 	refreshed.ExternalIDWOVersion = plan.ExternalIDWOVersion
@@ -487,14 +544,46 @@ func (r *LLMProviderInstanceResource) resolveTenant(perResource types.String) st
 // (api_key, credentials, external_id) are not written to state by design —
 // state holds Null for them; their *_wo_version companions track rotation
 // intent and are carried over by the caller.
+//
+// `prior` is the plan (on Create/Update) or state (on Read). The mapper
+// carries forward any Optional+Computed field the platform doesn't echo
+// back (auth_type, aws_region, role_arn, session_duration_minutes,
+// impersonate_service_account_email). Without this, Terraform's framework
+// rejects the apply with "Provider produced inconsistent result after
+// apply: was X, but now null" the moment the user sets any of these and
+// the platform omits them from its response.
 func llmInstanceToModel(
 	tenantID string,
-	providerType types.String,
+	prior LLMProviderInstanceResourceModel,
 	inst *adminapi.LLMProviderInstance,
 ) LLMProviderInstanceResourceModel {
+	// fallbackStr returns the server value when non-nil, else carries the
+	// prior model value (plan on Create/Update, state on Read). Unknown
+	// is demoted to Null because Computed fields the user didn't set show
+	// up as Unknown in the plan and the framework rejects Unknown in
+	// post-apply state with "all values must be known after apply".
+	fallbackStr := func(server *string, fallback types.String) types.String {
+		if server != nil {
+			return types.StringValue(*server)
+		}
+		if fallback.IsUnknown() {
+			return types.StringNull()
+		}
+		return fallback
+	}
+	fallbackInt64 := func(server *int32, fallback types.Int64) types.Int64 {
+		if server != nil {
+			return types.Int64Value(int64(*server))
+		}
+		if fallback.IsUnknown() {
+			return types.Int64Null()
+		}
+		return fallback
+	}
+
 	m := LLMProviderInstanceResourceModel{
 		TenantID:     types.StringValue(tenantID),
-		ProviderType: providerType,
+		ProviderType: prior.ProviderType,
 		APIKey:       types.StringNull(),
 		Credentials:  types.StringNull(),
 		ExternalID:   types.StringNull(),
@@ -515,17 +604,17 @@ func llmInstanceToModel(
 	m.InstanceName = strPtrToTF(inst.InstanceName)
 	m.DisplayName = strPtrToTF(inst.DisplayName)
 	m.Description = strPtrToTF(inst.Description)
-	m.AuthType = strPtrToTF(inst.AuthType)
+	m.AuthType = fallbackStr(inst.AuthType, prior.AuthType)
 	m.HealthCheckURL = strPtrToTF(inst.HealthCheckUrl)
 	m.Enabled = boolPtrOrDefault(inst.Enabled)
 	m.Priority = int32PtrToTF(inst.Priority)
-	m.ImpersonateServiceAccountEmail = strPtrToTF(inst.ImpersonateServiceAccountEmail)
-	// AWS-region / role-arn / external-id / session-duration are user-set but
-	// the response doesn't echo them back; leave Null in state to round-trip
-	// the user's last-set value.
-	m.AWSRegion = types.StringNull()
-	m.RoleARN = types.StringNull()
-	m.SessionDurationMinutes = types.Int64Null()
+	m.ImpersonateServiceAccountEmail = fallbackStr(inst.ImpersonateServiceAccountEmail, prior.ImpersonateServiceAccountEmail)
+	// AWS-region / role-arn / session-duration are user-set fields the
+	// response doesn't echo back. Use the helpers so unset (Unknown) values
+	// land as Null rather than Unknown.
+	m.AWSRegion = fallbackStr(nil, prior.AWSRegion)
+	m.RoleARN = fallbackStr(nil, prior.RoleARN)
+	m.SessionDurationMinutes = fallbackInt64(nil, prior.SessionDurationMinutes)
 
 	m.APIKeyConfigured = boolPtrOrDefault(inst.ApiKeyConfigured)
 	m.HealthStatus = enumPtrToTF(inst.HealthStatus)
@@ -536,5 +625,72 @@ func llmInstanceToModel(
 	m.ManagedByClientID = strPtrToTF(inst.ManagedByClientId)
 	m.ManagedByModule = strPtrToTF(inst.ManagedByModule)
 	m.LastModifiedBy = enumPtrToTF(inst.LastModifiedBy)
+
+	// model_constraints lives under provider_config.model_constraints on the
+	// wire. Reverse-decode if the platform echoed it; otherwise carry the
+	// prior model's value forward.
+	m.ModelConstraints = readModelConstraintsFromProviderConfig(inst.ProviderConfig, prior.ModelConstraints)
+
 	return m
+}
+
+// buildProviderConfig converts the user-facing model_constraints attribute
+// into the platform's provider_config JSONB shape. Returns nil when the
+// user didn't set the attribute — callers leave provider_config unset so
+// the platform retains existing config on Update.
+func buildProviderConfig(ctx context.Context, mc *LLMModelConstraintsModel) (*map[string]map[string]interface{}, error) {
+	if mc == nil {
+		return nil, nil
+	}
+	inner := map[string]interface{}{
+		"mode": mc.Mode.ValueString(),
+	}
+	if !mc.Models.IsNull() && !mc.Models.IsUnknown() {
+		var models []string
+		diags := mc.Models.ElementsAs(ctx, &models, false)
+		if diags.HasError() {
+			return nil, fmt.Errorf("models: %s", diags.Errors()[0].Detail())
+		}
+		inner["models"] = models
+	}
+	pc := map[string]map[string]interface{}{
+		"model_constraints": inner,
+	}
+	return &pc, nil
+}
+
+// readModelConstraintsFromProviderConfig pulls the user-facing nested model
+// out of the platform's provider_config JSONB. JSON unmarshaling lands the
+// `models` array as []interface{}, so we coerce element-by-element back to
+// strings. When the server omits the section, carry forward the prior
+// model so Optional+Computed semantics hold.
+func readModelConstraintsFromProviderConfig(
+	pc *map[string]map[string]interface{},
+	prior *LLMModelConstraintsModel,
+) *LLMModelConstraintsModel {
+	if pc == nil {
+		return prior
+	}
+	mc, ok := (*pc)["model_constraints"]
+	if !ok {
+		return prior
+	}
+	out := &LLMModelConstraintsModel{
+		Mode:   types.StringNull(),
+		Models: types.ListNull(types.StringType),
+	}
+	if v, ok := mc["mode"].(string); ok {
+		out.Mode = types.StringValue(v)
+	}
+	if raw, ok := mc["models"].([]interface{}); ok {
+		elems := make([]attr.Value, 0, len(raw))
+		for _, x := range raw {
+			if s, ok := x.(string); ok {
+				elems = append(elems, types.StringValue(s))
+			}
+		}
+		lv, _ := types.ListValue(types.StringType, elems)
+		out.Models = lv
+	}
+	return out
 }
