@@ -13,6 +13,9 @@ on:
 permissions:
   contents: write   # goreleaser needs to create the GitHub release
 
+env:
+  GOPRIVATE: github.com/ferentin-net/*
+
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
@@ -24,6 +27,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
       - name: Import GPG key
         id: import_gpg
         uses: crazy-max/ghaction-import-gpg@v6

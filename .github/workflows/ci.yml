@@ -13,6 +13,11 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# ferentin-cli-app is a private module, so every job that resolves Go
+# dependencies needs GOPRIVATE plus a PAT with read access to that repo.
+env:
+  GOPRIVATE: github.com/ferentin-net/*
+
 jobs:
   build:
     name: Build
@@ -23,6 +28,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
       - run: go mod download
       - run: go build -v ./...
 
@@ -35,6 +42,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
       - uses: golangci/golangci-lint-action@v6
         with:
           version: latest
@@ -48,6 +57,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
       - run: go mod download
       - run: go test -v -count=1 -timeout 5m ./...
 
@@ -60,6 +71,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
       - name: Regenerate docs/ and diff
         run: |
           go run github.com/hashicorp/terraform-plugin-docs/cmd/tfplugindocs \

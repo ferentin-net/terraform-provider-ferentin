@@ -15,6 +15,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOPRIVATE: github.com/ferentin-net/*
+
 jobs:
   testacc:
     name: TF_ACC=1 (live platform)
@@ -26,6 +29,8 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
       - name: Run acceptance tests
         env:
           TF_ACC: '1'
