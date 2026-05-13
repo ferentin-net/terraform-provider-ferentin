@@ -7,8 +7,7 @@ order is implicit from attribute references.
 ## Try it
 
 ```sh
-export TF_VAR_endpoint="https://api.ferentin.net"
-export TF_VAR_tenant_id="<your-tenant-uuid>"
+# endpoint and tenant_id auto-default — only the credentials are required.
 export TF_VAR_client_id="<service-account-client-id>"
 export TF_VAR_client_secret="<service-account-client-secret>"
 export TF_VAR_anthropic_api_key="<your-anthropic-key>"
@@ -16,6 +15,19 @@ export TF_VAR_anthropic_api_key="<your-anthropic-key>"
 terraform init
 terraform plan
 terraform apply
+```
+
+### CI / hot-loop tip
+
+In `client_credentials` mode, the provider mints a fresh IdP token during
+`Configure()` to auto-resolve `tenant_id` from the JWT's `tid` claim. That
+adds one IdP round-trip per `terraform plan` and per `apply`. For
+scheduled CI pipelines that re-plan every few minutes, set the
+`FERENTIN_TENANT_ID` env var (or the `tenant_id` attribute on the
+provider block) explicitly to skip the lookup:
+
+```sh
+export FERENTIN_TENANT_ID="<your-tenant-uuid>"
 ```
 
 ## What it builds

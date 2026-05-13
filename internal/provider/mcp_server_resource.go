@@ -66,6 +66,15 @@ type MCPServerResourceModel struct {
 	EnabledScopes        types.List   `tfsdk:"enabled_scopes"` // []string
 	Tags                 types.Map    `tfsdk:"tags"`           // map[string]string
 
+	// CC-federation overrides — only meaningful when
+	// upstream_auth_strategy = "cc_federated". The FK points at a
+	// ferentin_workload_oauth_client; the *_override fields narrow that
+	// client's `default_*` per-server.
+	CcFederatedWorkloadClientID types.String `tfsdk:"cc_federated_workload_client_id"`
+	CcFederatedAudienceOverride types.String `tfsdk:"cc_federated_audience_override"`
+	CcFederatedResourceOverride types.String `tfsdk:"cc_federated_resource_override"`
+	CcFederatedScopesOverride   types.String `tfsdk:"cc_federated_scopes_override"`
+
 	// Computed-only: ProviderAuthType is inferred by the platform from the
 	// upstream_auth_strategy + provider config; not user-settable through this
 	// input DTO. The response exposes it; v0.1 surfaces it as read-only.
@@ -250,6 +259,34 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Optional:            true,
 				Computed:            true,
 				ElementType:         types.StringType,
+			},
+
+			// Client-credentials federation — only set these when
+			// upstream_auth_strategy = "cc_federated".
+			"cc_federated_workload_client_id": schema.StringAttribute{
+				MarkdownDescription: "UUID of the `ferentin_workload_oauth_client` whose credentials the platform " +
+					"uses to mint upstream tokens. Required when `upstream_auth_strategy = cc_federated`; " +
+					"ignored otherwise.",
+				Optional: true,
+				Computed: true,
+			},
+			"cc_federated_audience_override": schema.StringAttribute{
+				MarkdownDescription: "Per-server `audience` value sent at mint time. Narrows the workload OAuth " +
+					"client's `default_audience` for just this server. Only meaningful with `cc_federated`.",
+				Optional: true,
+				Computed: true,
+			},
+			"cc_federated_resource_override": schema.StringAttribute{
+				MarkdownDescription: "Per-server RFC 8707 `resource` value. Narrows the workload OAuth client's " +
+					"`default_resource` for just this server. Only meaningful with `cc_federated`.",
+				Optional: true,
+				Computed: true,
+			},
+			"cc_federated_scopes_override": schema.StringAttribute{
+				MarkdownDescription: "Per-server space-delimited scopes. Narrows the workload OAuth client's " +
+					"`default_scopes` for just this server. Only meaningful with `cc_federated`.",
+				Optional: true,
+				Computed: true,
 			},
 
 			// Computed
@@ -501,6 +538,17 @@ func (m *MCPServerResourceModel) toCreateBody(ctx context.Context) (adminapi.MCP
 		_ = m.Tags.ElementsAs(ctx, &tags, false)
 		body.Tags = &tags
 	}
+	if !m.CcFederatedWorkloadClientID.IsNull() && !m.CcFederatedWorkloadClientID.IsUnknown() && m.CcFederatedWorkloadClientID.ValueString() != "" {
+		id, err := uuid.Parse(m.CcFederatedWorkloadClientID.ValueString())
+		if err != nil {
+			return body, fmt.Errorf("cc_federated_workload_client_id %q is not a UUID: %w", m.CcFederatedWorkloadClientID.ValueString(), err)
+		}
+		u := openapi_types.UUID(id)
+		body.CcFederatedWorkloadClientId = &u
+	}
+	setStringPtr(m.CcFederatedAudienceOverride, &body.CcFederatedAudienceOverride)
+	setStringPtr(m.CcFederatedResourceOverride, &body.CcFederatedResourceOverride)
+	setStringPtr(m.CcFederatedScopesOverride, &body.CcFederatedScopesOverride)
 	return body, nil
 }
 
@@ -537,6 +585,17 @@ func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCP
 		_ = m.Tags.ElementsAs(ctx, &tags, false)
 		body.Tags = &tags
 	}
+	if !m.CcFederatedWorkloadClientID.IsNull() && !m.CcFederatedWorkloadClientID.IsUnknown() && m.CcFederatedWorkloadClientID.ValueString() != "" {
+		id, err := uuid.Parse(m.CcFederatedWorkloadClientID.ValueString())
+		if err != nil {
+			return body, fmt.Errorf("cc_federated_workload_client_id %q is not a UUID: %w", m.CcFederatedWorkloadClientID.ValueString(), err)
+		}
+		u := openapi_types.UUID(id)
+		body.CcFederatedWorkloadClientId = &u
+	}
+	setStringPtr(m.CcFederatedAudienceOverride, &body.CcFederatedAudienceOverride)
+	setStringPtr(m.CcFederatedResourceOverride, &body.CcFederatedResourceOverride)
+	setStringPtr(m.CcFederatedScopesOverride, &body.CcFederatedScopesOverride)
 	return body, nil
 }
 
@@ -612,6 +671,18 @@ func mcpServerToModel(tenantID string, srv *adminapi.MCPServer) MCPServerResourc
 	} else {
 		m.Tags = types.MapNull(types.StringType)
 	}
+
+	// cc_federated_* fields. The FK is only populated when the platform's
+	// upstream_auth_strategy is cc_federated; otherwise these read as null.
+	if srv.CcFederatedWorkloadClientId != nil {
+		m.CcFederatedWorkloadClientID = types.StringValue(srv.CcFederatedWorkloadClientId.String())
+	} else {
+		m.CcFederatedWorkloadClientID = types.StringNull()
+	}
+	m.CcFederatedAudienceOverride = strPtrToTF(srv.CcFederatedAudienceOverride)
+	m.CcFederatedResourceOverride = strPtrToTF(srv.CcFederatedResourceOverride)
+	m.CcFederatedScopesOverride = strPtrToTF(srv.CcFederatedScopesOverride)
+
 	return m
 }
 

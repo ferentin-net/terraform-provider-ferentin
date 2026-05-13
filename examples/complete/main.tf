@@ -13,8 +13,9 @@ terraform {
 }
 
 provider "ferentin" {
+  # endpoint defaults to https://api.ferentin.net; override only for non-prod.
+  # tenant_id auto-resolves from the JWT's tid claim — set only to override.
   endpoint      = var.endpoint
-  tenant_id     = var.tenant_id
   client_id     = var.client_id
   client_secret = var.client_secret
 }

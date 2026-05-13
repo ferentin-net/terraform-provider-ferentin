@@ -1,11 +1,7 @@
 variable "endpoint" {
   type        = string
-  description = "Ferentin admin-api endpoint, e.g. https://api.ferentin.net"
-}
-
-variable "tenant_id" {
-  type        = string
-  description = "Target tenant UUID"
+  description = "Ferentin admin-api endpoint. Empty (the default) uses https://api.ferentin.net; set for local-dev or staging."
+  default     = ""
 }
 
 variable "client_id" {

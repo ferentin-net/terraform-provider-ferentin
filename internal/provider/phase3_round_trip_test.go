@@ -40,31 +40,35 @@ func TestMcpServerToModel_RoundTrip(t *testing.T) {
 	srvID := mustParseUUID(t, "11111111-1111-4111-8111-111111111111")
 	provID := mustParseUUID(t, "22222222-2222-4222-8222-222222222222")
 	transport := gen.McpServerResponseDtoDeploymentMode("public")
+	workloadClientID := mustParseUUID(t, "44444444-4444-4444-8444-444444444444")
 	srv := &adminapi.MCPServer{
-		Id:                    &srvID,
-		ProviderId:            &provID,
-		Name:                  strPtr("internal-search-us"),
-		Endpoint:              strPtr("https://search.example.com/mcp"),
-		DisplayName:           strPtr("Internal Search (US)"),
-		Description:           strPtr("US-region internal search"),
-		Icon:                  strPtr("search"),
-		Enabled:               boolPtr(true),
-		Priority:              int32Ptr(100),
-		Version:               int64Ptr(7),
-		Slug:                  strPtr("internal-search-us"),
-		AvailableForRouting:   boolPtr(true),
-		Healthy:               boolPtr(true),
-		HealthStatus:          strPtr("healthy"),
-		CredentialsConfigured: boolPtr(true),
-		CreatedAt:             &now,
-		CreatedBy:             strPtr("alice@example.com"),
-		UpdatedAt:             &now,
-		UpdatedBy:             strPtr("bob@example.com"),
-		ManagedByClientId:     strPtr("fc_abc123"),
-		ManagedByModule:       strPtr("terraform-prod"),
-		DeploymentMode:        &transport,
-		EnabledScopes:         &[]string{"search:read", "search:cite"},
-		Tags:                  &map[string]string{"env": "prod"},
+		Id:                          &srvID,
+		ProviderId:                  &provID,
+		Name:                        strPtr("internal-search-us"),
+		Endpoint:                    strPtr("https://search.example.com/mcp"),
+		DisplayName:                 strPtr("Internal Search (US)"),
+		Description:                 strPtr("US-region internal search"),
+		Icon:                        strPtr("search"),
+		Enabled:                     boolPtr(true),
+		Priority:                    int32Ptr(100),
+		Version:                     int64Ptr(7),
+		Slug:                        strPtr("internal-search-us"),
+		AvailableForRouting:         boolPtr(true),
+		Healthy:                     boolPtr(true),
+		HealthStatus:                strPtr("healthy"),
+		CredentialsConfigured:       boolPtr(true),
+		CreatedAt:                   &now,
+		CreatedBy:                   strPtr("alice@example.com"),
+		UpdatedAt:                   &now,
+		UpdatedBy:                   strPtr("bob@example.com"),
+		ManagedByClientId:           strPtr("fc_abc123"),
+		ManagedByModule:             strPtr("terraform-prod"),
+		DeploymentMode:              &transport,
+		EnabledScopes:               &[]string{"search:read", "search:cite"},
+		Tags:                        &map[string]string{"env": "prod"},
+		CcFederatedWorkloadClientId: &workloadClientID,
+		CcFederatedAudienceOverride: strPtr("https://search.example.com"),
+		CcFederatedScopesOverride:   strPtr("search:read"),
 	}
 
 	m := mcpServerToModel(fixtureTenantID, srv)
@@ -101,6 +105,16 @@ func TestMcpServerToModel_RoundTrip(t *testing.T) {
 	_ = m.Tags.ElementsAs(context.Background(), &tags, false)
 	if tags["env"] != "prod" {
 		t.Errorf("tags = %v", tags)
+	}
+	// cc_federated_* fields
+	if got := m.CcFederatedWorkloadClientID.ValueString(); got != "44444444-4444-4444-8444-444444444444" {
+		t.Errorf("CcFederatedWorkloadClientID = %q", got)
+	}
+	if m.CcFederatedAudienceOverride.ValueString() != "https://search.example.com" {
+		t.Errorf("CcFederatedAudienceOverride = %q", m.CcFederatedAudienceOverride.ValueString())
+	}
+	if m.CcFederatedScopesOverride.ValueString() != "search:read" {
+		t.Errorf("CcFederatedScopesOverride = %q", m.CcFederatedScopesOverride.ValueString())
 	}
 }
 
