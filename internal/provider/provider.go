@@ -463,7 +463,7 @@ func deriveAuthURL(endpoint string) string {
 func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resource {
 	return []func() resource.Resource{
 		NewEdgeSiteResource,
-		NewLLMProviderInstanceResource,
+		NewLLMProviderResource,
 		NewLLMPolicyResource,
 		NewMCPServerResource,
 		NewMCPProviderResource,

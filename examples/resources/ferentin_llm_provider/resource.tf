@@ -4,7 +4,7 @@ data "ferentin_llm_provider" "anthropic" {
   slug = "anthropic"
 }
 
-resource "ferentin_llm_provider_instance" "anthropic_prod_us" {
+resource "ferentin_llm_provider" "anthropic_prod_us" {
   provider_type = data.ferentin_llm_provider.anthropic.slug
   instance_name = "anthropic-prod-us"
   display_name  = "Anthropic Production (US)"
@@ -25,7 +25,7 @@ variable "anthropic_api_key" {
 }
 
 output "anthropic_instance_id" {
-  value = ferentin_llm_provider_instance.anthropic_prod_us.instance_id
+  value = ferentin_llm_provider.anthropic_prod_us.instance_id
 }
 
 # --- Pinning a single model via model_constraints -----------------------
@@ -33,7 +33,7 @@ output "anthropic_instance_id" {
 # upstream, mirrored by an allowlist on the Ferentin side so runtime
 # requests for any other model are denied before they leave the platform.
 
-resource "ferentin_llm_provider_instance" "openai_gpt55_only" {
+resource "ferentin_llm_provider" "openai_gpt55_only" {
   provider_type = "openai"
   instance_name = "openai-gpt55-only"
   display_name  = "OpenAI (GPT-5.5 only)"

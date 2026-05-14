@@ -7,7 +7,7 @@ resource "ferentin_llm_policy" "engineering_default" {
   priority    = 100
   enabled     = true
 
-  # Routing — references an existing ferentin_llm_provider_instance.
+  # Routing — references an existing ferentin_llm_provider.
   provider_instances = ["anthropic-prod-us"]
 
   # Prompt injection.

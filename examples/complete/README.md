@@ -35,7 +35,7 @@ export FERENTIN_TENANT_ID="<your-tenant-uuid>"
 | Resource                          | Purpose                                                |
 | --------------------------------- | ------------------------------------------------------ |
 | `ferentin_edge_site`              | US-East edge site for routing                          |
-| `ferentin_llm_provider_instance`  | Anthropic prod binding (WriteOnly api_key)             |
+| `ferentin_llm_provider`           | Anthropic prod binding (WriteOnly api_key)             |
 | `ferentin_llm_policy`             | Internal-employees-only governance                     |
 | `ferentin_mcp_server`             | Federated Salesforce MCP, edge-routed via the site    |
 | `ferentin_mcp_policy`             | Read-only Salesforce allowlist with 120 req/min limit  |

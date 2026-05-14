@@ -22,7 +22,7 @@ import (
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 )
 
-// LLMProviderInstanceResource is the `ferentin_llm_provider_instance`
+// LLMProviderResource is the `ferentin_llm_provider`
 // Terraform resource — a tenant-scoped binding between an LLM provider
 // (catalog entry, e.g. "anthropic") and the credentials / config used to
 // reach it. See §6.4 of the design doc.
@@ -31,12 +31,12 @@ import (
 // WriteOnly — the value flows from config to the provider during apply but
 // is never written to state. To rotate a secret, bump the companion
 // `*_wo_version` integer.
-type LLMProviderInstanceResource struct {
+type LLMProviderResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
 }
 
-type LLMProviderInstanceResourceModel struct {
+type LLMProviderResourceModel struct {
 	// Identity
 	ID       types.String `tfsdk:"id"` // composite "<tenant>/<uuid>"
 	TenantID types.String `tfsdk:"tenant_id"`
@@ -87,19 +87,19 @@ type LLMModelConstraintsModel struct {
 	Models types.List   `tfsdk:"models"` // []string
 }
 
-func NewLLMProviderInstanceResource() resource.Resource {
-	return &LLMProviderInstanceResource{}
+func NewLLMProviderResource() resource.Resource {
+	return &LLMProviderResource{}
 }
 
 var (
-	_ resource.Resource                     = (*LLMProviderInstanceResource)(nil)
-	_ resource.ResourceWithConfigure        = (*LLMProviderInstanceResource)(nil)
-	_ resource.ResourceWithImportState      = (*LLMProviderInstanceResource)(nil)
-	_ resource.ResourceWithConfigValidators = (*LLMProviderInstanceResource)(nil)
+	_ resource.Resource                     = (*LLMProviderResource)(nil)
+	_ resource.ResourceWithConfigure        = (*LLMProviderResource)(nil)
+	_ resource.ResourceWithImportState      = (*LLMProviderResource)(nil)
+	_ resource.ResourceWithConfigValidators = (*LLMProviderResource)(nil)
 )
 
-func (r *LLMProviderInstanceResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
-	resp.TypeName = req.ProviderTypeName + "_llm_provider_instance"
+func (r *LLMProviderResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_llm_provider"
 }
 
 // ConfigValidators surfaces auth-shape mistakes at plan time.
@@ -107,7 +107,7 @@ func (r *LLMProviderInstanceResource) Metadata(_ context.Context, req resource.M
 //     one without the other is meaningless and would surface as an opaque
 //     platform 400 on apply.
 //   - `external_id` is only meaningful with `role_arn` (cross-account STS).
-func (r *LLMProviderInstanceResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+func (r *LLMProviderResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
 	return []resource.ConfigValidator{
 		resourcevalidator.RequiredTogether(
 			path.MatchRoot("aws_region"),
@@ -116,7 +116,7 @@ func (r *LLMProviderInstanceResource) ConfigValidators(_ context.Context) []reso
 	}
 }
 
-func (r *LLMProviderInstanceResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
+func (r *LLMProviderResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
 	if req.ProviderData == nil {
 		return
 	}
@@ -132,7 +132,7 @@ func (r *LLMProviderInstanceResource) Configure(_ context.Context, req resource.
 	r.tenantID = pd.TenantID
 }
 
-func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
+func (r *LLMProviderResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A tenant binding between an LLM provider (catalog entry — see `data \"ferentin_llm_provider\"`) " +
 			"and the credentials / configuration the platform uses to reach it. Multiple instances per provider " +
@@ -141,7 +141,7 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 			"Existing instances can be imported using `<tenant_id>/<instance_id>` " +
 			"(or `<instance_id>` alone when the provider's default `tenant_id` matches):\n\n" +
 			"```\n" +
-			"terraform import ferentin_llm_provider_instance.example <tenant_id>/<instance_id>\n" +
+			"terraform import ferentin_llm_provider.example <tenant_id>/<instance_id>\n" +
 			"```\n\n" +
 			"After import, set `api_key` (and any other WriteOnly attrs) and bump the `*_wo_version` " +
 			"companions to push the secret on the next apply.",
@@ -344,15 +344,15 @@ func (r *LLMProviderInstanceResource) Schema(_ context.Context, _ resource.Schem
 	}
 }
 
-func (r *LLMProviderInstanceResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
-	var plan LLMProviderInstanceResourceModel
+func (r *LLMProviderResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
+	var plan LLMProviderResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	// WriteOnly attrs are stripped from Plan; read them from Config.
-	var config LLMProviderInstanceResourceModel
+	var config LLMProviderResourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -406,8 +406,8 @@ func (r *LLMProviderInstanceResource) Create(ctx context.Context, req resource.C
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
-func (r *LLMProviderInstanceResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
-	var state LLMProviderInstanceResourceModel
+func (r *LLMProviderResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
+	var state LLMProviderResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -435,8 +435,8 @@ func (r *LLMProviderInstanceResource) Read(ctx context.Context, req resource.Rea
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
-func (r *LLMProviderInstanceResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state, config LLMProviderInstanceResourceModel
+func (r *LLMProviderResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
+	var plan, state, config LLMProviderResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
@@ -488,8 +488,8 @@ func (r *LLMProviderInstanceResource) Update(ctx context.Context, req resource.U
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
-func (r *LLMProviderInstanceResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
-	var state LLMProviderInstanceResourceModel
+func (r *LLMProviderResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
+	var state LLMProviderResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
 	if resp.Diagnostics.HasError() {
 		return
@@ -510,7 +510,7 @@ func (r *LLMProviderInstanceResource) Delete(ctx context.Context, req resource.D
 
 // ImportState accepts "<tenant_id>/<instance_id>" or just "<instance_id>"
 // (falling back to provider-level tenant_id).
-func (r *LLMProviderInstanceResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+func (r *LLMProviderResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	parts := strings.SplitN(req.ID, "/", 2)
 	var tenantID, instanceID string
 	switch len(parts) {
@@ -533,7 +533,7 @@ func (r *LLMProviderInstanceResource) ImportState(ctx context.Context, req resou
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), tenantID+"/"+instanceID)...)
 }
 
-func (r *LLMProviderInstanceResource) resolveTenant(perResource types.String) string {
+func (r *LLMProviderResource) resolveTenant(perResource types.String) string {
 	if !perResource.IsNull() && !perResource.IsUnknown() && perResource.ValueString() != "" {
 		return perResource.ValueString()
 	}
@@ -554,9 +554,9 @@ func (r *LLMProviderInstanceResource) resolveTenant(perResource types.String) st
 // the platform omits them from its response.
 func llmInstanceToModel(
 	tenantID string,
-	prior LLMProviderInstanceResourceModel,
+	prior LLMProviderResourceModel,
 	inst *adminapi.LLMProviderInstance,
-) LLMProviderInstanceResourceModel {
+) LLMProviderResourceModel {
 	// fallbackStr returns the server value when non-nil, else carries the
 	// prior model value (plan on Create/Update, state on Read). Unknown
 	// is demoted to Null because Computed fields the user didn't set show
@@ -581,7 +581,7 @@ func llmInstanceToModel(
 		return fallback
 	}
 
-	m := LLMProviderInstanceResourceModel{
+	m := LLMProviderResourceModel{
 		TenantID:     types.StringValue(tenantID),
 		ProviderType: prior.ProviderType,
 		APIKey:       types.StringNull(),

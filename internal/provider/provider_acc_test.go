@@ -88,10 +88,11 @@ func TestAccEdgeSite_basic(t *testing.T) {
 	})
 }
 
-// TestAccLLMProviderInstance_basic exercises WriteOnly secret handling:
-// Create with api_key in config, verify state never carries it, then
-// rotate via api_key_wo_version bump.
-func TestAccLLMProviderInstance_basic(t *testing.T) {
+// TestAccLLMProvider_basic exercises WriteOnly secret handling on the
+// ferentin_llm_provider resource (tenant-scoped binding). Create with
+// api_key in config, verify state never carries it, then rotate via
+// api_key_wo_version bump.
+func TestAccLLMProvider_basic(t *testing.T) {
 	name := "tf-acc-" + randomSuffix(t)
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
@@ -100,18 +101,18 @@ func TestAccLLMProviderInstance_basic(t *testing.T) {
 			{
 				Config: configLLMInstance(name, "test-key-v1", 1),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ferentin_llm_provider_instance.test", "instance_name", name),
-					resource.TestCheckResourceAttr("ferentin_llm_provider_instance.test", "api_key_configured", "true"),
-					resource.TestCheckResourceAttr("ferentin_llm_provider_instance.test", "api_key_wo_version", "1"),
+					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "instance_name", name),
+					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "api_key_configured", "true"),
+					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "api_key_wo_version", "1"),
 					// WriteOnly: state must NOT carry the literal value.
-					resource.TestCheckNoResourceAttr("ferentin_llm_provider_instance.test", "api_key"),
+					resource.TestCheckNoResourceAttr("ferentin_llm_provider.test", "api_key"),
 				),
 			},
 			{
 				// Rotate: same instance, bump version → secret re-sent.
 				Config: configLLMInstance(name, "test-key-v2", 2),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ferentin_llm_provider_instance.test", "api_key_wo_version", "2"),
+					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "api_key_wo_version", "2"),
 				),
 			},
 		},
@@ -184,7 +185,7 @@ resource "ferentin_edge_site" "test" {
 
 func configLLMInstance(name, secret string, woVersion int) string {
 	return providerBlock() + fmt.Sprintf(`
-resource "ferentin_llm_provider_instance" "test" {
+resource "ferentin_llm_provider" "test" {
   provider_type      = "anthropic"
   instance_name      = %q
   api_key            = %q

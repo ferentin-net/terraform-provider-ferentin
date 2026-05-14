@@ -49,7 +49,7 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | Resource | Purpose |
 | --- | --- |
 | `ferentin_edge_site` | Logical region/datacenter for service-edge enrollment. |
-| `ferentin_llm_provider_instance` | Tenant binding for an LLM provider (Anthropic, OpenAI, Vertex, …). WriteOnly `api_key`. |
+| `ferentin_llm_provider` | Tenant binding for an LLM provider (Anthropic, OpenAI, Vertex, …). WriteOnly `api_key`. Distinct from the `data "ferentin_llm_provider"` global-catalog source — same noun, different block type. |
 | `ferentin_llm_policy` | ABAC governance for LLM traffic with nested criteria + conditions. |
 | `ferentin_mcp_provider` | Tenant-custom MCP provider definition. |
 | `ferentin_mcp_server` | Tenant binding of an MCP provider to a specific endpoint / credential set. |

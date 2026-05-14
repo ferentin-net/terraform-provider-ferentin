@@ -34,7 +34,7 @@ resource "ferentin_llm_policy" "engineering_default" {
   priority    = 100
   enabled     = true
 
-  # Routing — references an existing ferentin_llm_provider_instance.
+  # Routing — references an existing ferentin_llm_provider.
   provider_instances = ["anthropic-prod-us"]
 
   # Prompt injection.
@@ -93,7 +93,7 @@ resource "ferentin_llm_policy" "engineering_default" {
 - `message` (String) Optional explanation surfaced to the agent when the policy applies.
 - `priority` (Number) Evaluation priority. Lower number = higher priority. Conflicting policies are resolved by priority.
 - `prompt_cache_enabled` (Boolean) Enable prompt-cache routing (provider-dependent).
-- `provider_instances` (List of String) List of provider-instance **UUIDs** (from `ferentin_llm_provider_instance.instance_id`) this policy routes to. Order determines failover order at runtime.
+- `provider_instances` (List of String) List of provider-instance **UUIDs** (from `ferentin_llm_provider.instance_id`) this policy routes to. Order determines failover order at runtime.
 
 Note: the platform's input contract historically accepted `instance_name` strings too — but on the response side it always normalizes to UUIDs, which means a name-based config would diff every plan. Always pass `instance_id`.
 - `summary_enabled` (Boolean) Enable post-response summarization.

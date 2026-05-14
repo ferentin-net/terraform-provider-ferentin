@@ -34,12 +34,15 @@ resource "ferentin_edge_site" "primary" {
   bundle_cloud_mcp    = true
 }
 
-# --- LLM provider instance ----------------------------------------------
+# --- LLM provider (tenant-scoped binding) -------------------------------
+# Note: same noun as the data source above — Terraform's `resource` vs
+# `data` block types disambiguate. The data source returns the global
+# catalog entry (read-only); the resource manages the tenant's binding.
 data "ferentin_llm_provider" "anthropic" {
   slug = "anthropic"
 }
 
-resource "ferentin_llm_provider_instance" "anthropic_prod" {
+resource "ferentin_llm_provider" "anthropic_prod" {
   provider_type = data.ferentin_llm_provider.anthropic.slug
   instance_name = "anthropic-prod-us"
   display_name  = "Anthropic (US prod)"
@@ -73,7 +76,7 @@ resource "ferentin_llm_policy" "default" {
     }
   ]
 
-  provider_instances = [ferentin_llm_provider_instance.anthropic_prod.instance_name]
+  provider_instances = [ferentin_llm_provider.anthropic_prod.instance_name]
 }
 
 # --- MCP server (federated OAuth upstream) ------------------------------

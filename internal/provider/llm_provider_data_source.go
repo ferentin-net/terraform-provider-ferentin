@@ -20,10 +20,14 @@ import (
 //	  slug = "anthropic"
 //	}
 //
-//	resource "ferentin_llm_provider_instance" "anthropic_prod" {
+//	resource "ferentin_llm_provider" "anthropic_prod" {
 //	  provider_type = data.ferentin_llm_provider.anthropic.slug
 //	  ...
 //	}
+//
+// Resource and data source share the noun `ferentin_llm_provider` — they
+// live in distinct Terraform namespaces (the block type disambiguates),
+// the same pattern AWS uses for `aws_iam_policy`.
 //
 // The platform exposes a much richer DTO (LlmProviderDto with nested
 // Capabilities / DataGovernance / EnterpriseReadiness / Identity / Operational
