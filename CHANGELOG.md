@@ -12,17 +12,38 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   The longer name was awkward in CLI/HCL alike; the new noun matches
   the `admin llm-providers` CLI surface and the same parallel as
   `ferentin_mcp_provider` (resource) vs `data "ferentin_mcp_provider"`
-  (data source). The new name collides with the existing data source
+  (data source). Companion to ferentin-cli-app commit
+  [`f7cc682`](https://github.com/ferentin-net/ferentin-cli-app/commit/f7cc682),
+  which renames the CLI noun `admin llm-provider-instances` →
+  `admin llm-providers` and frees the MCP tool `list_llm_providers` for
+  tenant-scoped use (the global catalog tool is now
+  `list_catalog_llm_providers`).
+
+  The new name collides with the existing data source
   `ferentin_llm_provider` only at the symbol level — Terraform's block
   type disambiguates `resource` from `data` (same pattern AWS uses for
-  `aws_iam_policy`). Migration:
+  `aws_iam_policy`).
+
+  Migration:
   1. Update HCL blocks from `resource "ferentin_llm_provider_instance"`
      to `resource "ferentin_llm_provider"`.
   2. Update interpolation refs from `ferentin_llm_provider_instance.X`
      to `ferentin_llm_provider.X`.
   3. Run `terraform state mv 'ferentin_llm_provider_instance.X'
      'ferentin_llm_provider.X'` for each renamed resource.
+     - For resources with `count =`, append `[i]` on both sides:
+       `terraform state mv 'ferentin_llm_provider_instance.X[0]'
+       'ferentin_llm_provider.X[0]'`.
+     - For `for_each =`, append `["key"]` on both sides.
+     - For module-nested resources, prefix `module.NAME.` on both
+       sides.
   4. Run `terraform plan` to confirm no diff.
+  5. Maintainers / fork operators: re-run `tfplugindocs generate` after
+     pulling this change so the stale `docs/resources/llm_provider_
+     instance.md` ghost is removed from local working copies (the file
+     was renamed via `git mv`; a clean checkout doesn't need this, but
+     in-place rebases can leave the old path behind).
+
   No schema attributes changed; the underlying REST URL
   (`/admin/tenants/{tid}/provider-instances`) and DB table
   (`llm_provider_instances`) are unchanged. SDK type

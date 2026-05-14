@@ -99,7 +99,7 @@ func TestAccLLMProvider_basic(t *testing.T) {
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: configLLMInstance(name, "test-key-v1", 1),
+				Config: configLLMProvider(name, "test-key-v1", 1),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "instance_name", name),
 					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "api_key_configured", "true"),
@@ -110,7 +110,7 @@ func TestAccLLMProvider_basic(t *testing.T) {
 			},
 			{
 				// Rotate: same instance, bump version → secret re-sent.
-				Config: configLLMInstance(name, "test-key-v2", 2),
+				Config: configLLMProvider(name, "test-key-v2", 2),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ferentin_llm_provider.test", "api_key_wo_version", "2"),
 				),
@@ -183,7 +183,7 @@ resource "ferentin_edge_site" "test" {
 `
 }
 
-func configLLMInstance(name, secret string, woVersion int) string {
+func configLLMProvider(name, secret string, woVersion int) string {
 	return providerBlock() + fmt.Sprintf(`
 resource "ferentin_llm_provider" "test" {
   provider_type      = "anthropic"

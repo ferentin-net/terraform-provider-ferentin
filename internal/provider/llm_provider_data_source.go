@@ -71,7 +71,10 @@ func (d *LLMProviderDataSource) Configure(_ context.Context, req datasource.Conf
 
 func (d *LLMProviderDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Look up an entry in the global LLM provider catalog by slug. Read-only.",
+		MarkdownDescription: "Look up an entry in the global LLM provider catalog by slug. Read-only.\n\n" +
+			"**See also:** the [`ferentin_llm_provider` resource](../resources/llm_provider.md) — the tenant-scoped " +
+			"binding that consumes this slug via `provider_type`. Resource and data source share the noun; " +
+			"Terraform disambiguates them by block type (`resource` vs `data`).",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{

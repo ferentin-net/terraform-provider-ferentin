@@ -137,6 +137,9 @@ func (r *LLMProviderResource) Schema(_ context.Context, _ resource.SchemaRequest
 		MarkdownDescription: "A tenant binding between an LLM provider (catalog entry — see `data \"ferentin_llm_provider\"`) " +
 			"and the credentials / configuration the platform uses to reach it. Multiple instances per provider " +
 			"are allowed (e.g., per-region, per-environment).\n\n" +
+			"**See also:** the [`ferentin_llm_provider` data source](../data-sources/llm_provider.md) returns the " +
+			"global catalog entry by slug. Resource and data source share the noun; Terraform disambiguates them " +
+			"by block type (`resource` vs `data`).\n\n" +
 			"## Import\n\n" +
 			"Existing instances can be imported using `<tenant_id>/<instance_id>` " +
 			"(or `<instance_id>` alone when the provider's default `tenant_id` matches):\n\n" +
