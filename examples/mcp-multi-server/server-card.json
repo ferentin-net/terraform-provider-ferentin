@@ -1,0 +1,78 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json",
+  "name": "net.ferentin.mcp/threat-intel",
+  "title": "Threat Intel",
+  "version": "0.1.0",
+  "description": "Local IP enrichment MCP server. Exposes GeoIP, ASN, Tor/VPN detection, threat-intel IOC lookup, and impossible-travel detection for log analysis. Fully offline — no outbound network calls.",
+  "remotes": [
+    {
+      "type": "streamable-http",
+      "url": "http://mac.sahuhaus.local:8765/mcp",
+      "supportedProtocolVersions": ["2025-11-25"]
+    }
+  ],
+  "_meta": {
+    "net.ferentin": {
+      "discovered_at": "2026-04-28T04:16:57.773632+00:00",
+      "discovered_from": "http://mac.sahuhaus.local:8765/mcp",
+      "server_card_fetched": true,
+      "server_name": "threat-intel",
+      "server_version": "0.1.0",
+      "protocol_version": "2025-11-25",
+      "auth": {
+        "oauth2": false,
+        "dcr": false,
+        "scopes": []
+      },
+      "transport": {
+        "auth_type": "bearer",
+        "auth_binding": "tenant",
+        "agent_auth_type": "bearer",
+        "agent_auth_binding": "tenant",
+        "client_registration_method": "manual",
+        "credential_inheritance": "REQUIRE_TENANT"
+      },
+      "curation": {
+        "category": "developer",
+        "status": "published",
+        "credential_fields": [
+          {
+            "name": "BEARER_TOKEN",
+            "label": "Bearer Token",
+            "type": "secret",
+            "required": true,
+            "help_text": "Static bearer token expected in the Authorization header."
+          }
+        ],
+        "agent_credential_fields": [
+          {
+            "name": "BEARER_TOKEN",
+            "label": "Agent Bearer Token",
+            "type": "secret",
+            "required": true
+          }
+        ]
+      },
+      "capabilities": {
+        "tools": [
+          {
+            "name": "enrich_ip",
+            "description": "Return GeoIP, ASN, threat-intel flags, and reputation for a single IP."
+          },
+          {
+            "name": "enrich_ips",
+            "description": "Batch variant of enrich_ip. Accepts up to 50 IPs per call."
+          },
+          {
+            "name": "check_indicators",
+            "description": "Check IOCs (IPs, domains, SHA-256 hashes) against local threat-intel feeds."
+          },
+          {
+            "name": "detect_impossible_travel",
+            "description": "Flag sign-in pairs whose implied travel speed exceeds plausible limits."
+          }
+        ]
+      }
+    }
+  }
+}
