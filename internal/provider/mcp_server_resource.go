@@ -444,10 +444,9 @@ func (r *MCPServerResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	state := mcpServerToModel(tenantID, srv)
-	// auth_mode and env aren't echoed by the response DTO — carry the
-	// planned values forward into state so TF doesn't report
-	// "inconsistent result after apply".
-	state.AuthMode = plan.AuthMode
+	// auth_mode now arrives from the wire (post platform#856). env and
+	// bearer_token are write-only and never echoed — carry the planned
+	// values forward so TF doesn't report "inconsistent result after apply".
 	state.BearerToken = plan.BearerToken
 	state.Env = plan.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -474,9 +473,9 @@ func (r *MCPServerResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	refreshed := mcpServerToModel(tenantID, srv)
-	// auth_mode and env aren't echoed by the response DTO — preserve
-	// prior state so they don't drift to null on every refresh.
-	refreshed.AuthMode = state.AuthMode
+	// env / bearer_token are write-only and never echoed — preserve prior
+	// state so they don't drift to null on every refresh. auth_mode
+	// arrives from the wire post platform#856 and the mapper populates it.
 	refreshed.BearerToken = state.BearerToken
 	refreshed.Env = state.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
@@ -507,8 +506,8 @@ func (r *MCPServerResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	refreshed := mcpServerToModel(tenantID, srv)
-	// auth_mode + bearer_token + env carry-forward — see Create handler.
-	refreshed.AuthMode = plan.AuthMode
+	// bearer_token + env carry-forward — see Create handler. auth_mode
+	// flows from the wire post platform#856.
 	refreshed.BearerToken = plan.BearerToken
 	refreshed.Env = plan.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
@@ -737,10 +736,11 @@ func mcpServerToModel(tenantID string, srv *adminapi.MCPServer) MCPServerResourc
 	m.DeploymentMode = enumPtrToTF(srv.DeploymentMode)
 	m.ProviderAuthType = enumPtrToTF(srv.ProviderAuthType)
 	m.UpstreamAuthStrategy = enumPtrToTF(srv.UpstreamAuthStrategy)
+	m.AuthMode = enumPtrToTF(srv.AuthMode)
 	m.TransportType = strPtrToTF(srv.TransportType)
-	// auth_mode and env aren't echoed by the response DTO. Create / Read
-	// / Update carry the plan or prior-state value forward into state
-	// (see the handlers above); mapper leaves both untouched here.
+	// env is write-only on the wire (encrypted at rest, never echoed) —
+	// callers must carry the plan / prior-state value forward in their
+	// handlers; mapper leaves it untouched here.
 
 	m.Slug = strPtrToTF(srv.Slug)
 	m.AvailableForRouting = boolPtrOrDefault(srv.AvailableForRouting)

@@ -62,24 +62,25 @@ func (authModeAutoDefaultPlanModifier) PlanModifyString(ctx context.Context, req
 //	planAuth Known (not Unknown) →  return planAuth unchanged
 //	                                  (user set it, or UseStateForUnknown
 //	                                   copied state into plan)
-//	planAuth Unknown, strategy Unknown →  return Unknown
-//	                                  (let create-time fallback decide)
 //	planAuth Unknown, strategy in non-interactive set → return "agent"
-//	                                  (mig 845)
-//	planAuth Unknown, any other strategy → return Null
-//	                                  (platform infers; Null is known so
-//	                                   the Computed contract is satisfied)
+//	                                  (mig 845 — we can predict what the
+//	                                   platform will write, so we name it
+//	                                   in the plan diff)
+//	planAuth Unknown, anything else → return Unknown
+//	                                  (let the wire response fill it post
+//	                                   ferentin-platform#856; the response
+//	                                   DTO now echoes auth_mode)
 func resolveAuthModeDefault(planAuth, strategy types.String) types.String {
 	if !planAuth.IsUnknown() {
 		return planAuth
 	}
-	if strategy.IsUnknown() {
+	if strategy.IsUnknown() || strategy.IsNull() {
 		return planAuth
 	}
 	switch strategy.ValueString() {
 	case "static_bearer", "custom_headers", "cc_federated":
 		return types.StringValue("agent")
 	default:
-		return types.StringNull()
+		return planAuth
 	}
 }
