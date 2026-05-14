@@ -118,14 +118,22 @@ func (r *MCPServerResource) Metadata(_ context.Context, req resource.MetadataReq
 	resp.TypeName = req.ProviderTypeName + "_mcp_server"
 }
 
-// ConfigValidators — bearer_token is sugar for env={BEARER_TOKEN:...};
-// setting both is ambiguous, so reject at plan time.
+// ConfigValidators — two plan-time checks:
+//
+//  1. bearer_token vs env mutual exclusion (they express the same thing
+//     two ways; setting both is ambiguous about which BEARER_TOKEN value
+//     wins).
+//  2. endpoint / deployment_mode / edge_site_id interlock: HTTP, private,
+//     and unresolvable endpoints require deployment_mode = edge_routed +
+//     an edge_site_id. Otherwise the platform's SSRF guard fails the
+//     apply with an opaque 400 that doesn't name the fix.
 func (r *MCPServerResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
 	return []resource.ConfigValidator{
 		resourcevalidator.Conflicting(
 			path.MatchRoot("bearer_token"),
 			path.MatchRoot("env"),
 		),
+		mcpServerEndpointValidator{},
 	}
 }
 
