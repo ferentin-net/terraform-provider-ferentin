@@ -125,7 +125,9 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Default:             booldefault.StaticBool(true),
 			},
 			"provider_instances": schema.ListAttribute{
-				MarkdownDescription: "Instance names (`ferentin_mcp_server.*.name`) this policy applies to.",
+				MarkdownDescription: "MCP server UUIDs (`ferentin_mcp_server.*.server_id`) this policy applies to. " +
+					"The platform validates each entry is a valid UUID and stores + echoes UUIDs — passing names " +
+					"causes perpetual drift.",
 				Optional:            true, Computed: true,
 				ElementType: types.StringType,
 			},

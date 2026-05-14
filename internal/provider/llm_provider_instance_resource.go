@@ -638,7 +638,7 @@ func llmInstanceToModel(
 // into the platform's provider_config JSONB shape. Returns nil when the
 // user didn't set the attribute — callers leave provider_config unset so
 // the platform retains existing config on Update.
-func buildProviderConfig(ctx context.Context, mc *LLMModelConstraintsModel) (*map[string]map[string]interface{}, error) {
+func buildProviderConfig(ctx context.Context, mc *LLMModelConstraintsModel) (*map[string]interface{}, error) {
 	if mc == nil {
 		return nil, nil
 	}
@@ -653,7 +653,7 @@ func buildProviderConfig(ctx context.Context, mc *LLMModelConstraintsModel) (*ma
 		}
 		inner["models"] = models
 	}
-	pc := map[string]map[string]interface{}{
+	pc := map[string]interface{}{
 		"model_constraints": inner,
 	}
 	return &pc, nil
@@ -661,17 +661,22 @@ func buildProviderConfig(ctx context.Context, mc *LLMModelConstraintsModel) (*ma
 
 // readModelConstraintsFromProviderConfig pulls the user-facing nested model
 // out of the platform's provider_config JSONB. JSON unmarshaling lands the
-// `models` array as []interface{}, so we coerce element-by-element back to
+// inner map as map[string]interface{} and the `models` array as
+// []interface{}; we type-assert and coerce element-by-element back to
 // strings. When the server omits the section, carry forward the prior
 // model so Optional+Computed semantics hold.
 func readModelConstraintsFromProviderConfig(
-	pc *map[string]map[string]interface{},
+	pc *map[string]interface{},
 	prior *LLMModelConstraintsModel,
 ) *LLMModelConstraintsModel {
 	if pc == nil {
 		return prior
 	}
-	mc, ok := (*pc)["model_constraints"]
+	rawMC, ok := (*pc)["model_constraints"]
+	if !ok {
+		return prior
+	}
+	mc, ok := rawMC.(map[string]interface{})
 	if !ok {
 		return prior
 	}

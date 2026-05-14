@@ -62,9 +62,11 @@ type MCPServerResourceModel struct {
 	EdgeSiteID           types.String `tfsdk:"edge_site_id"`
 	DeploymentMode       types.String `tfsdk:"deployment_mode"`
 	UpstreamAuthStrategy types.String `tfsdk:"upstream_auth_strategy"`
+	AuthMode             types.String `tfsdk:"auth_mode"`
 	TransportType        types.String `tfsdk:"transport_type"`
 	EnabledScopes        types.List   `tfsdk:"enabled_scopes"` // []string
 	Tags                 types.Map    `tfsdk:"tags"`           // map[string]string
+	Env                  types.Map    `tfsdk:"env"`            // map[string]string — bearer tokens / API keys, encrypted server-side
 
 	// CC-federation overrides — only meaningful when
 	// upstream_auth_strategy = "cc_federated". The FK points at a
@@ -238,6 +240,26 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					),
 				},
 			},
+			"auth_mode": schema.StringAttribute{
+				MarkdownDescription: "Whether upstream credentials are agent-bound (`agent` — one tenant-shared " +
+					"credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity " +
+					"credential binding). When omitted, the provider auto-sends `agent` for non-interactive " +
+					"strategies (`static_bearer`, `custom_headers`, `cc_federated`) on the wire and the platform " +
+					"infers otherwise; state stays null so omission round-trips. Set explicitly to override. " +
+					"Allowed: `agent`, `user`.",
+				Optional: true,
+				Validators: []validator.String{
+					stringvalidator.OneOf("agent", "user"),
+				},
+			},
+			"env": schema.MapAttribute{
+				MarkdownDescription: "Plain-text upstream credentials (e.g. `BEARER_TOKEN`, API keys). Values are " +
+					"string-only — these are env-var assignments, not arbitrary structured data. Encrypted " +
+					"server-side at rest. Marked sensitive — redacted in logs and plan output.",
+				Optional:    true,
+				Sensitive:   true,
+				ElementType: types.StringType,
+			},
 			"transport_type": schema.StringAttribute{
 				MarkdownDescription: "MCP transport type. Allowed: `sse`, `stdio_tunnel`, `streamable_http`. " +
 					"Defaults to the provider catalog entry.",
@@ -385,6 +407,11 @@ func (r *MCPServerResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	state := mcpServerToModel(tenantID, srv)
+	// auth_mode and env aren't echoed by the response DTO — carry the
+	// planned values forward into state so TF doesn't report
+	// "inconsistent result after apply".
+	state.AuthMode = plan.AuthMode
+	state.Env = plan.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -409,6 +436,10 @@ func (r *MCPServerResource) Read(ctx context.Context, req resource.ReadRequest, 
 	}
 
 	refreshed := mcpServerToModel(tenantID, srv)
+	// auth_mode and env aren't echoed by the response DTO — preserve
+	// prior state so they don't drift to null on every refresh.
+	refreshed.AuthMode = state.AuthMode
+	refreshed.Env = state.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -437,6 +468,9 @@ func (r *MCPServerResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	refreshed := mcpServerToModel(tenantID, srv)
+	// auth_mode + env carry-forward — see Create handler.
+	refreshed.AuthMode = plan.AuthMode
+	refreshed.Env = plan.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -524,6 +558,26 @@ func (m *MCPServerResourceModel) toCreateBody(ctx context.Context) (adminapi.MCP
 		v := gen.McpServerCreateRequestUpstreamAuthStrategy(m.UpstreamAuthStrategy.ValueString())
 		body.UpstreamAuthStrategy = &v
 	}
+	// auth_mode/strategy interlock (ferentin-platform mig 845): a
+	// non-interactive strategy must pair with `agent`, never `user`. Take
+	// the user's value if set; otherwise auto-pick `agent` for the three
+	// non-interactive strategies so the demo doesn't need to know about
+	// the invariant.
+	if !m.AuthMode.IsNull() && !m.AuthMode.IsUnknown() {
+		v := gen.McpServerCreateRequestAuthMode(m.AuthMode.ValueString())
+		body.AuthMode = &v
+	} else if !m.UpstreamAuthStrategy.IsNull() && !m.UpstreamAuthStrategy.IsUnknown() {
+		switch m.UpstreamAuthStrategy.ValueString() {
+		case "static_bearer", "custom_headers", "cc_federated":
+			v := gen.McpServerCreateRequestAuthModeAgent
+			body.AuthMode = &v
+		}
+	}
+	if !m.Env.IsNull() && !m.Env.IsUnknown() {
+		var env map[string]string
+		_ = m.Env.ElementsAs(ctx, &env, false)
+		body.Env = &env
+	}
 	if !m.DeploymentMode.IsNull() && !m.DeploymentMode.IsUnknown() {
 		v := gen.McpServerCreateRequestDeploymentMode(m.DeploymentMode.ValueString())
 		body.DeploymentMode = &v
@@ -570,6 +624,22 @@ func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCP
 	if !m.UpstreamAuthStrategy.IsNull() && !m.UpstreamAuthStrategy.IsUnknown() {
 		v := gen.McpServerUpdateRequestUpstreamAuthStrategy(m.UpstreamAuthStrategy.ValueString())
 		body.UpstreamAuthStrategy = &v
+	}
+	if !m.AuthMode.IsNull() && !m.AuthMode.IsUnknown() {
+		v := gen.McpServerUpdateRequestAuthMode(m.AuthMode.ValueString())
+		body.AuthMode = &v
+	} else if !m.UpstreamAuthStrategy.IsNull() && !m.UpstreamAuthStrategy.IsUnknown() {
+		// Mirror toCreateBody — same auth_mode/strategy interlock.
+		switch m.UpstreamAuthStrategy.ValueString() {
+		case "static_bearer", "custom_headers", "cc_federated":
+			v := gen.McpServerUpdateRequestAuthModeAgent
+			body.AuthMode = &v
+		}
+	}
+	if !m.Env.IsNull() && !m.Env.IsUnknown() {
+		var env map[string]string
+		_ = m.Env.ElementsAs(ctx, &env, false)
+		body.Env = &env
 	}
 	if !m.DeploymentMode.IsNull() && !m.DeploymentMode.IsUnknown() {
 		v := gen.McpServerUpdateRequestDeploymentMode(m.DeploymentMode.ValueString())
@@ -631,7 +701,18 @@ func mcpServerToModel(tenantID string, srv *adminapi.MCPServer) MCPServerResourc
 	m.DeploymentMode = enumPtrToTF(srv.DeploymentMode)
 	m.ProviderAuthType = enumPtrToTF(srv.ProviderAuthType)
 	m.UpstreamAuthStrategy = enumPtrToTF(srv.UpstreamAuthStrategy)
-	m.TransportType = strPtrToTF(srv.TransportType)
+	// Platform echoes transport_type in UPPERCASE (STREAMABLE_HTTP, SSE)
+	// while the request shape and the enum values shipped in oapi-codegen
+	// are lowercase. Normalise here so plan/state agree and TF doesn't
+	// trip "inconsistent result after apply".
+	if srv.TransportType != nil {
+		m.TransportType = types.StringValue(strings.ToLower(*srv.TransportType))
+	} else {
+		m.TransportType = types.StringNull()
+	}
+	// auth_mode and env aren't echoed by the response DTO. Create / Read
+	// / Update carry the plan or prior-state value forward into state
+	// (see the handlers above); mapper leaves both untouched here.
 
 	m.Slug = strPtrToTF(srv.Slug)
 	m.AvailableForRouting = boolPtrOrDefault(srv.AvailableForRouting)

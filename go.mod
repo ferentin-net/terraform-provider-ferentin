@@ -94,3 +94,6 @@ require (
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
+
+// Local-dev replace — points at the working copy so SDK changes (post-#848 spec regen) are picked up without publishing a new tag. Drop and bump the pseudo-version above when the SDK is published.
+replace github.com/ferentin-net/ferentin-cli-app => /Users/maneeshsahu/Developer/ferentin-cli-app
