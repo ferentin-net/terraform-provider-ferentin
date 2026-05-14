@@ -553,20 +553,19 @@ func cardImportToModel(tenantID string, plan MCPServerFromCardResourceModel, out
 		m.DisplayName = types.StringNull()
 	}
 
+	// Post ferentin-platform#853 Instance arrives as McpServerResponseDto
+	// (DTO) — all fields pointer-typed, so we can use the standard helpers
+	// without the entity's required-field gymnastics.
 	if out.Instance != nil && out.Instance.Id != nil {
 		m.ServerID = types.StringValue(out.Instance.Id.String())
 		m.Endpoint = strPtrToTF(out.Instance.Endpoint)
-		// TransportType / UpstreamAuthStrategy on McpProviderInstance are
-		// non-pointer enums; cast to plain strings so callers see the same
-		// shape ferentin_mcp_server.upstream_auth_strategy emits.
-		m.TransportType = types.StringValue(string(out.Instance.TransportType))
-		m.UpstreamAuthStrategy = types.StringValue(string(out.Instance.UpstreamAuthStrategy))
-		m.Priority = types.Int64Value(int64(out.Instance.Priority))
+		m.TransportType = strPtrToTF(out.Instance.TransportType)
+		m.UpstreamAuthStrategy = enumPtrToTF(out.Instance.UpstreamAuthStrategy)
+		m.Priority = int32PtrToTF(out.Instance.Priority)
 		m.Enabled = boolPtrOrDefault(out.Instance.Enabled)
-		if out.Instance.EdgeSiteId != nil {
-			m.EdgeSiteID = types.StringValue(*out.Instance.EdgeSiteId)
-		}
-		m.InstanceName = types.StringValue(out.Instance.Name)
+		m.EdgeSiteID = strPtrToTF(out.Instance.EdgeSiteId)
+		m.InstanceName = strPtrToTF(out.Instance.Name)
+		m.ClientFacingURL = strPtrToTF(out.Instance.ClientFacingUrl)
 	} else {
 		m.ServerID = types.StringNull()
 		m.Endpoint = types.StringNull()
@@ -574,8 +573,8 @@ func cardImportToModel(tenantID string, plan MCPServerFromCardResourceModel, out
 		m.UpstreamAuthStrategy = types.StringNull()
 		m.Enabled = types.BoolNull()
 		m.Priority = types.Int64Null()
+		m.ClientFacingURL = types.StringNull()
 	}
-	m.ClientFacingURL = types.StringNull() // populated by enrichFromServer
 
 	m.ImportAction, m.ImportUnchanged = importActionFromResult(out.ImportResult)
 	m.ID = types.StringValue(tenantID + "/" + m.ProviderID.ValueString() + "/" + m.ServerID.ValueString())
