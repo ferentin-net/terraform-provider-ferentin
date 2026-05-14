@@ -157,7 +157,7 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				MarkdownDescription: "MCP server UUIDs (`ferentin_mcp_server.*.server_id`) this policy applies to. " +
 					"The platform validates each entry is a valid UUID and stores + echoes UUIDs — passing names " +
 					"causes perpetual drift.",
-				Optional:            true, Computed: true,
+				Optional: true, Computed: true,
 				ElementType: types.StringType,
 			},
 			"effect": schema.SingleNestedAttribute{

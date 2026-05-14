@@ -55,7 +55,7 @@ func (v mcpServerEndpointValidator) ValidateResource(ctx context.Context, req re
 		knownEmpty
 		unknown
 	)
-	edgeSiteState := unknown
+	var edgeSiteState tristate
 	switch {
 	case data.EdgeSiteID.IsUnknown():
 		edgeSiteState = unknown

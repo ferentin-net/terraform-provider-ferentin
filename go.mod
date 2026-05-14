@@ -3,7 +3,7 @@ module github.com/ferentin-net/terraform-provider-ferentin
 go 1.26.3
 
 require (
-	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260513223414-6fe4a1556c0f
+	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260514033037-ba4de62c7fe4
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/terraform-plugin-docs v0.25.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
@@ -94,6 +94,3 @@ require (
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
-// Local-dev replace — points at the working copy so SDK changes (post-#848 spec regen) are picked up without publishing a new tag. Drop and bump the pseudo-version above when the SDK is published.
-replace github.com/ferentin-net/ferentin-cli-app => /Users/maneeshsahu/Developer/ferentin-cli-app

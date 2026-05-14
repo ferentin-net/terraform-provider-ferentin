@@ -67,10 +67,11 @@ resource "ferentin_mcp_policy" "default_deny" {
 
 ### Optional
 
+- `criteria` (Attributes List) ABAC criteria for matching MCP requests. Each entry combines `conditions` with a logical operator (`AND` / `OR`); multiple criteria entries are ANDed together by the platform evaluator. Common shape: match on JWT claims (`client_id`, `sub_profile`, `email`) to scope the policy to a specific agent / service-account / user group. (see [below for nested schema](#nestedatt--criteria))
 - `description` (String)
 - `enabled` (Boolean) Whether the policy is enforced. Default `true`.
 - `priority` (Number)
-- `provider_instances` (List of String) Instance names (`ferentin_mcp_server.*.name`) this policy applies to.
+- `provider_instances` (List of String) MCP server UUIDs (`ferentin_mcp_server.*.server_id`) this policy applies to. The platform validates each entry is a valid UUID and stores + echoes UUIDs — passing names causes perpetual drift.
 - `tenant_id` (String)
 - `validate_arguments` (Boolean) When true, validate tool-call arguments against the policy schema. Default `true`.
 
@@ -96,3 +97,32 @@ Optional:
 - `grant_toolsets` (List of String)
 - `message` (String) Optional message surfaced to the agent when the policy applies.
 - `rate_limit_per_minute` (Number) Per-minute rate limit for matching traffic.
+
+
+<a id="nestedatt--criteria"></a>
+### Nested Schema for `criteria`
+
+Required:
+
+- `conditions` (Attributes List) Conditions evaluated under the parent `operator`. (see [below for nested schema](#nestedatt--criteria--conditions))
+- `operator` (String) Logical operator joining the conditions: `AND` or `OR`.
+
+Optional:
+
+- `description` (String) Optional human-readable description.
+- `type` (String) Criteria type. Allowed: `claims`, `context`, `request`, `time`. Server default applies if unset.
+
+<a id="nestedatt--criteria--conditions"></a>
+### Nested Schema for `criteria.conditions`
+
+Required:
+
+- `field` (String) Field path to evaluate (e.g. `client_id`, `sub_profile`, `email`).
+- `operator` (String) Comparison operator (`equals`, `in`, `lt`, `gt`, `ends_with`, …).
+
+Optional:
+
+- `case_sensitive` (Boolean) For string operations. Platform defaults to `true` when omitted.
+- `description` (String) Optional description.
+- `value` (String) JSON-encoded value to compare against. Examples: `jsonencode("service")`, `jsonencode(["a","b"])`, `jsonencode(100)`.
+- `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …).

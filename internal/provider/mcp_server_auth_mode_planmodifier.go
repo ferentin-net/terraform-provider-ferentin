@@ -19,7 +19,7 @@ import (
 //
 // This modifier fills the resolved value into the plan so the diff reads
 //
-//	+ auth_mode = "agent"
+//   - auth_mode = "agent"
 //
 // explicitly. Combined with stringplanmodifier.UseStateForUnknown
 // upstream of it, the interaction is:

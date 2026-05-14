@@ -139,6 +139,8 @@ output "salesforce_idp_reachable" {
 
 ### Optional
 
+- `auth_mode` (String) Whether upstream credentials are agent-bound (`agent` — one tenant-shared credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity credential binding). Resolved at plan time: the provider auto-selects `agent` for non-interactive strategies (`static_bearer`, `custom_headers`, `cc_federated`) to satisfy the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `xaa_*`) leave the value null and let the platform infer. Set explicitly to override. Allowed: `agent`, `user`.
+- `bearer_token` (String, Sensitive) Bearer token to forward to the upstream MCP when `upstream_auth_strategy = "static_bearer"`. Sugar for `env = { BEARER_TOKEN = ... }` — the common case where the upstream wants a single token in the `Authorization` header. Mutually exclusive with `env`. Sensitive — redacted in logs and plan output.
 - `cc_federated_audience_override` (String) Per-server `audience` value sent at mint time. Narrows the workload OAuth client's `default_audience` for just this server. Only meaningful with `cc_federated`.
 - `cc_federated_resource_override` (String) Per-server RFC 8707 `resource` value. Narrows the workload OAuth client's `default_resource` for just this server. Only meaningful with `cc_federated`.
 - `cc_federated_scopes_override` (String) Per-server space-delimited scopes. Narrows the workload OAuth client's `default_scopes` for just this server. Only meaningful with `cc_federated`.
@@ -149,6 +151,7 @@ output "salesforce_idp_reachable" {
 - `edge_site_id` (String) Edge site this server is bound to, when applicable. Pull from `ferentin_edge_site.us_east.site_id` for edge-routed servers.
 - `enabled` (Boolean) When false, the server is registered but skipped by routing. Equivalent to the platform's Enable / Disable verbs at runtime. Default `true`.
 - `enabled_scopes` (List of String) Allowlist of MCP scopes this server is permitted to use. Restricts the provider's full scope catalog to what this tenant's policies allow.
+- `env` (Map of String, Sensitive) Plain-text upstream credentials. Values are string-only — these are env-var assignments, not arbitrary structured data. Use `bearer_token` instead for the common single-token case. Encrypted server-side at rest; sensitive — redacted in logs and plan output.
 - `health_check_url` (String) Optional custom health-check URL.
 - `icon` (String) Icon identifier (Lucide / Simple Icons name) for console rendering.
 - `priority` (Number) Routing priority (lower is higher).

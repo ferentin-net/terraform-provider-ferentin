@@ -607,5 +607,3 @@ func enrichFromServer(m *MCPServerFromCardResourceModel, srv *adminapi.MCPServer
 		m.TransportType = strPtrToTF(srv.TransportType)
 	}
 }
-
-
