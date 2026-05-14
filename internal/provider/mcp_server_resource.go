@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/resourcevalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -66,6 +67,7 @@ type MCPServerResourceModel struct {
 	TransportType        types.String `tfsdk:"transport_type"`
 	EnabledScopes        types.List   `tfsdk:"enabled_scopes"` // []string
 	Tags                 types.Map    `tfsdk:"tags"`           // map[string]string
+	BearerToken          types.String `tfsdk:"bearer_token"`   // sugar for env = {BEARER_TOKEN: ...}
 	Env                  types.Map    `tfsdk:"env"`            // map[string]string — bearer tokens / API keys, encrypted server-side
 
 	// CC-federation overrides — only meaningful when
@@ -106,13 +108,25 @@ func NewMCPServerResource() resource.Resource {
 }
 
 var (
-	_ resource.Resource                = (*MCPServerResource)(nil)
-	_ resource.ResourceWithConfigure   = (*MCPServerResource)(nil)
-	_ resource.ResourceWithImportState = (*MCPServerResource)(nil)
+	_ resource.Resource                     = (*MCPServerResource)(nil)
+	_ resource.ResourceWithConfigure        = (*MCPServerResource)(nil)
+	_ resource.ResourceWithImportState      = (*MCPServerResource)(nil)
+	_ resource.ResourceWithConfigValidators = (*MCPServerResource)(nil)
 )
 
 func (r *MCPServerResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_mcp_server"
+}
+
+// ConfigValidators — bearer_token is sugar for env={BEARER_TOKEN:...};
+// setting both is ambiguous, so reject at plan time.
+func (r *MCPServerResource) ConfigValidators(_ context.Context) []resource.ConfigValidator {
+	return []resource.ConfigValidator{
+		resourcevalidator.Conflicting(
+			path.MatchRoot("bearer_token"),
+			path.MatchRoot("env"),
+		),
+	}
 }
 
 func (r *MCPServerResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
@@ -252,10 +266,19 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					stringvalidator.OneOf("agent", "user"),
 				},
 			},
+			"bearer_token": schema.StringAttribute{
+				MarkdownDescription: "Bearer token to forward to the upstream MCP when " +
+					"`upstream_auth_strategy = \"static_bearer\"`. Sugar for `env = { BEARER_TOKEN = ... }` " +
+					"— the common case where the upstream wants a single token in the `Authorization` " +
+					"header. Mutually exclusive with `env`. Sensitive — redacted in logs and plan output.",
+				Optional:  true,
+				Sensitive: true,
+			},
 			"env": schema.MapAttribute{
-				MarkdownDescription: "Plain-text upstream credentials (e.g. `BEARER_TOKEN`, API keys). Values are " +
-					"string-only — these are env-var assignments, not arbitrary structured data. Encrypted " +
-					"server-side at rest. Marked sensitive — redacted in logs and plan output.",
+				MarkdownDescription: "Plain-text upstream credentials. Values are string-only — these are " +
+					"env-var assignments, not arbitrary structured data. Use `bearer_token` instead for the " +
+					"common single-token case. Encrypted server-side at rest; sensitive — redacted in logs " +
+					"and plan output.",
 				Optional:    true,
 				Sensitive:   true,
 				ElementType: types.StringType,
@@ -411,6 +434,7 @@ func (r *MCPServerResource) Create(ctx context.Context, req resource.CreateReque
 	// planned values forward into state so TF doesn't report
 	// "inconsistent result after apply".
 	state.AuthMode = plan.AuthMode
+	state.BearerToken = plan.BearerToken
 	state.Env = plan.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
@@ -439,6 +463,7 @@ func (r *MCPServerResource) Read(ctx context.Context, req resource.ReadRequest, 
 	// auth_mode and env aren't echoed by the response DTO — preserve
 	// prior state so they don't drift to null on every refresh.
 	refreshed.AuthMode = state.AuthMode
+	refreshed.BearerToken = state.BearerToken
 	refreshed.Env = state.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
@@ -468,8 +493,9 @@ func (r *MCPServerResource) Update(ctx context.Context, req resource.UpdateReque
 	}
 
 	refreshed := mcpServerToModel(tenantID, srv)
-	// auth_mode + env carry-forward — see Create handler.
+	// auth_mode + bearer_token + env carry-forward — see Create handler.
 	refreshed.AuthMode = plan.AuthMode
+	refreshed.BearerToken = plan.BearerToken
 	refreshed.Env = plan.Env
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
@@ -573,10 +599,8 @@ func (m *MCPServerResourceModel) toCreateBody(ctx context.Context) (adminapi.MCP
 			body.AuthMode = &v
 		}
 	}
-	if !m.Env.IsNull() && !m.Env.IsUnknown() {
-		var env map[string]string
-		_ = m.Env.ElementsAs(ctx, &env, false)
-		body.Env = &env
+	if env := resolveEnv(ctx, m.BearerToken, m.Env); env != nil {
+		body.Env = env
 	}
 	if !m.DeploymentMode.IsNull() && !m.DeploymentMode.IsUnknown() {
 		v := gen.McpServerCreateRequestDeploymentMode(m.DeploymentMode.ValueString())
@@ -636,10 +660,8 @@ func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCP
 			body.AuthMode = &v
 		}
 	}
-	if !m.Env.IsNull() && !m.Env.IsUnknown() {
-		var env map[string]string
-		_ = m.Env.ElementsAs(ctx, &env, false)
-		body.Env = &env
+	if env := resolveEnv(ctx, m.BearerToken, m.Env); env != nil {
+		body.Env = env
 	}
 	if !m.DeploymentMode.IsNull() && !m.DeploymentMode.IsUnknown() {
 		v := gen.McpServerUpdateRequestDeploymentMode(m.DeploymentMode.ValueString())

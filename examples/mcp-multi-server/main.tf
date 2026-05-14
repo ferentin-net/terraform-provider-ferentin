@@ -56,57 +56,13 @@ resource "ferentin_mcp_server" "salesforce_prod" {
 }
 
 # --- 2. Threat Intel from a discovered server-card.json ------------------
-# server-card.json is the MCP-spec canonical description of a server.
-# Drive the catalog entry + binding off it so a refreshed card propagates
-# on the next apply.
+# `ferentin_mcp_server_from_card` wraps the platform's import-server-card
+# endpoint — slug, transport, auth-mode, default URL are all derived from
+# the card server-side. Bumping the card and re-applying refreshes the
+# pair; checksum-matched re-imports are no-ops.
 
-locals {
-  card = jsondecode(file("${path.module}/server-card.json"))
-
-  # The card's name is a slash-separated namespace like
-  # "net.ferentin.mcp/threat-intel" — use the last segment as the slug.
-  card_slug = element(split("/", local.card.name), length(split("/", local.card.name)) - 1)
-
-  # Two enums between the catalog-level transport hint and the per-instance
-  # selection (see examples/mcp-server-from-card/main.tf for the longer
-  # version with auth-type mapping too).
-  provider_transport_lookup = {
-    "stdio"           = "stdio"
-    "sse"             = "sse"
-    "streamable-http" = "http"
-  }
-  server_transport_lookup = {
-    "stdio"           = "stdio_tunnel"
-    "sse"             = "sse"
-    "streamable-http" = "streamable_http"
-  }
-  card_transport     = local.card.remotes[0].type
-  provider_transport = local.provider_transport_lookup[local.card_transport]
-  server_transport   = local.server_transport_lookup[local.card_transport]
-}
-
-resource "ferentin_mcp_provider" "threat_intel" {
-  display_name = local.card.title
-  slug         = local.card_slug
-  description  = local.card.description
-  default_url  = local.card.remotes[0].url
-  transport    = local.provider_transport
-  category     = local.card._meta["net.ferentin"].curation.category
-}
-
-resource "ferentin_mcp_server" "threat_intel" {
-  provider_id = ferentin_mcp_provider.threat_intel.provider_id
-
-  name        = local.card_slug
-  endpoint    = local.card.remotes[0].url
-  description = local.card.description
-
-  transport_type         = local.server_transport
-  upstream_auth_strategy = "static_bearer" # card._meta.net.ferentin.transport.auth_type == "bearer"
-  deployment_mode        = "public"
-
-  enabled  = true
-  priority = 100
+resource "ferentin_mcp_server_from_card" "threat_intel" {
+  card_json = file("${path.module}/server-card.json")
 }
 
 # --- 3. One policy that allows every tool on both servers ----------------
@@ -114,8 +70,8 @@ resource "ferentin_mcp_server" "threat_intel" {
 # to every tool the upstream MCP exposes. To narrow this in production, set
 # either of those lists on the effect (or layer a higher-priority `deny`).
 #
-# `provider_instances` references the *names* of the bound servers, not
-# their UUIDs — that's the contract on this resource.
+# `provider_instances` takes the server UUIDs — the platform validates
+# each entry is a UUID at create time (passing names causes drift).
 
 resource "ferentin_mcp_policy" "mcp_full_access" {
   name        = "mcp-full-access"
@@ -124,8 +80,8 @@ resource "ferentin_mcp_policy" "mcp_full_access" {
   enabled     = true
 
   provider_instances = [
-    ferentin_mcp_server.salesforce_prod.name,
-    ferentin_mcp_server.threat_intel.name,
+    ferentin_mcp_server.salesforce_prod.server_id,
+    ferentin_mcp_server_from_card.threat_intel.server_id,
   ]
 
   effect = {
@@ -143,7 +99,7 @@ output "salesforce_url" {
 
 output "threat_intel_url" {
   description = "Client-facing URL agents will connect to for Threat Intel."
-  value       = ferentin_mcp_server.threat_intel.client_facing_url
+  value       = ferentin_mcp_server_from_card.threat_intel.client_facing_url
 }
 
 output "policy_id" {
@@ -151,7 +107,7 @@ output "policy_id" {
   value       = ferentin_mcp_policy.mcp_full_access.policy_id
 }
 
-output "threat_intel_tools" {
-  description = "Tool names the Threat Intel card advertises (informational)."
-  value       = [for t in local.card._meta["net.ferentin"].capabilities.tools : t.name]
+output "threat_intel_import_action" {
+  description = "What the last threat-intel import did — created / refreshed / unchanged."
+  value       = ferentin_mcp_server_from_card.threat_intel.import_action
 }

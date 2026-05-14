@@ -1,66 +1,74 @@
 # MCP server from a server-card.json
 
-Configure a `ferentin_mcp_provider` + `ferentin_mcp_server` pair from a
-discovered [MCP server-card](https://modelcontextprotocol.io). The card is
-the canonical, machine-readable description of an MCP server — identity,
-transport, credentials, capabilities — so driving Terraform off it keeps
-the two in sync without copy-paste.
+Stamp out a tenant-custom `ferentin_mcp_provider` + `ferentin_mcp_server`
+pair from a discovered [MCP server-card](https://modelcontextprotocol.io)
+in a single resource. The card is the canonical, machine-readable
+description of an MCP server — identity, transport, credentials,
+capabilities — so driving Terraform off it keeps the two in sync without
+copy-paste.
 
 ## Layout
 
 ```
 examples/mcp-server-from-card/
 ├── README.md
-├── main.tf            # parses server-card.json, stamps out provider + server
+├── main.tf            # the resource block + edge_site + outputs
 └── server-card.json   # the reference threat-intel server card
 ```
 
 ## How it works
 
-1. **Read the card.** `jsondecode(file("./server-card.json"))` gives a single
-   source of truth. Replace the file path with the location of your card.
-2. **Map MCP-spec fields → Ferentin fields.** Lookup maps handle the two
-   convention deltas:
-   - Transport: spec uses `streamable-http`, the API uses `streamable_http`.
-   - Auth: the card's `_meta.net.ferentin.transport.auth_type` maps to
-     Ferentin's `upstream_auth_strategy` enum:
+[`ferentin_mcp_server_from_card`](../../docs/resources/mcp_server_from_card.md)
+wraps the platform's
+`POST /admin/tenants/{tenantId}/mcp-providers/import-server-card`
+endpoint:
 
-     | Card `auth_type`               | Ferentin `upstream_auth_strategy` |
-     | ------------------------------ | --------------------------------- |
-     | `none`                         | `none`                            |
-     | `bearer`                       | `static_bearer`                   |
-     | `oauth2_client_credentials`    | `cc_federated`                    |
-     | `oauth2_authorization_code`    | `oauth2_user`                     |
+1. Operator commits the card JSON next to the Terraform.
+2. The platform parses the card server-side, maps the MCP-spec transport /
+   auth-type fields to Ferentin's `transport_type` /
+   `upstream_auth_strategy` enums, creates the provider catalog entry,
+   and binds an instance.
+3. The resource owns BOTH the provider entry and the instance binding as
+   one lifecycle unit — `terraform destroy` removes both.
 
-   When the resolved strategy is `cc_federated`, the example conditionally
-   provisions a `ferentin_workload_oauth_client` (`count = 0`/`1`) and wires
-   its UUID into the MCP server's `cc_federated_workload_client_id`. The
-   IdP coordinates (issuer, JWKS, token endpoint, client_id, client_secret)
-   are tenant-side concerns the operator supplies via the variables at the
-   bottom of `main.tf` — the card doesn't and shouldn't embed them.
-3. **Publish the catalog entry.** `ferentin_mcp_provider` records the
-   server's identity in the tenant catalog (title, slug, description,
-   transport, default endpoint).
-4. **Bind the instance.** `ferentin_mcp_server` ties that catalog entry
-   to a specific URL — usually the same `card.remotes[0].url`, but you'd
-   point at a different per-region endpoint when running multiple
-   instances of the same logical server.
+Re-applying with the same card is cheap: the platform computes a
+checksum over the raw card bytes, compares with the previous import, and
+returns `action = "unchanged"` with zero writes. Bumping the card (new
+version, new auth shape, new tools) propagates on the next apply and the
+`import_result.tools_added` / `tools_updated` / `tools_removed` outputs
+tell CI what changed.
 
-## Rotation
+## When NOT to use this resource
 
-When the upstream server bumps a version or adds a tool, run `ferentin mcp
-discover <url> > server-card.json` to refresh, then `terraform apply`.
-Any fields driven from the card flow through automatically. Fields not in
-the card (`enabled`, `priority`, `edge_site_id`, …) keep their HCL values.
+When you need to override fields the card can't express — custom slug,
+different `transport_type`, more than one instance per provider — drop
+to the standalone `ferentin_mcp_provider` + `ferentin_mcp_server`
+resources. The `ferentin_mcp_server_from_card` resource is the
+shortest-path for the common workflow; not a general replacement.
+
+## Credentials
+
+The card declares the credential field names the upstream expects under
+`_meta.net.ferentin.curation.credential_fields[]`. Pass them via the
+resource's `env` map:
+
+```hcl
+env = {
+  BEARER_TOKEN = var.threat_intel_bearer_token
+}
+```
+
+`env` is marked sensitive and never appears in plan output.
 
 ## Try it
 
 ```sh
+export TF_VAR_threat_intel_bearer_token=dev-secret
 terraform init
 terraform plan
 terraform apply
 ```
 
-The default config in `main.tf` uses the `prod` shared profile for auth —
-edit the `provider` block to use whichever auth path fits your environment
-(see [../../README.md](../../README.md) for options).
+The default config in `main.tf` uses the `prod` shared profile for
+auth — edit the `provider` block to use whichever auth path fits your
+environment (see [../../README.md](../../README.md) for options).
