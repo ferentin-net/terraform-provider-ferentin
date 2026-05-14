@@ -701,15 +701,7 @@ func mcpServerToModel(tenantID string, srv *adminapi.MCPServer) MCPServerResourc
 	m.DeploymentMode = enumPtrToTF(srv.DeploymentMode)
 	m.ProviderAuthType = enumPtrToTF(srv.ProviderAuthType)
 	m.UpstreamAuthStrategy = enumPtrToTF(srv.UpstreamAuthStrategy)
-	// Platform echoes transport_type in UPPERCASE (STREAMABLE_HTTP, SSE)
-	// while the request shape and the enum values shipped in oapi-codegen
-	// are lowercase. Normalise here so plan/state agree and TF doesn't
-	// trip "inconsistent result after apply".
-	if srv.TransportType != nil {
-		m.TransportType = types.StringValue(strings.ToLower(*srv.TransportType))
-	} else {
-		m.TransportType = types.StringNull()
-	}
+	m.TransportType = strPtrToTF(srv.TransportType)
 	// auth_mode and env aren't echoed by the response DTO. Create / Read
 	// / Update carry the plan or prior-state value forward into state
 	// (see the handlers above); mapper leaves both untouched here.
