@@ -1,0 +1,19 @@
+# Snyk (https://snyk.io) policy file
+version: v1.25.0
+ignore:
+  SNYK-GOLANG-GITHUBCOMVMIHAILENCOMSGPACKV5-15702238:
+    - '*':
+        reason: >-
+          CVE-2026-2454 describes a DoS via malformed msgpack frames over
+          websockets. This provider does not expose msgpack to untrusted input:
+          the only call path is terraform-plugin-framework -> terraform-plugin-go/tftypes,
+          which uses msgpack to serialize Terraform plugin protocol RPC messages
+          over a local gRPC channel between Terraform CLI and the provider
+          process. There is no network-facing or websocket surface.
+          Upstream (vmihailenco/msgpack) has had no commits since 2023-10-26 and
+          Snyk's advisory explicitly states there is no fixed version, so an
+          upgrade is not available. Re-evaluate when HashiCorp swaps the
+          serializer or a maintained fork appears.
+        expires: '2026-08-11T00:00:00.000Z'
+        created: '2026-05-13T00:00:00.000Z'
+patch: {}
