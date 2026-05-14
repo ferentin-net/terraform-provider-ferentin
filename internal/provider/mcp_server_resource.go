@@ -265,11 +265,17 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"auth_mode": schema.StringAttribute{
 				MarkdownDescription: "Whether upstream credentials are agent-bound (`agent` — one tenant-shared " +
 					"credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity " +
-					"credential binding). When omitted, the provider auto-sends `agent` for non-interactive " +
-					"strategies (`static_bearer`, `custom_headers`, `cc_federated`) on the wire and the platform " +
-					"infers otherwise; state stays null so omission round-trips. Set explicitly to override. " +
-					"Allowed: `agent`, `user`.",
+					"credential binding). Resolved at plan time: the provider auto-selects `agent` for " +
+					"non-interactive strategies (`static_bearer`, `custom_headers`, `cc_federated`) to satisfy " +
+					"the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `xaa_*`) leave " +
+					"the value null and let the platform infer. Set explicitly to override. Allowed: `agent`, " +
+					"`user`.",
 				Optional: true,
+				Computed: true,
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+					authModeAutoDefaultPlanModifier{},
+				},
 				Validators: []validator.String{
 					stringvalidator.OneOf("agent", "user"),
 				},
