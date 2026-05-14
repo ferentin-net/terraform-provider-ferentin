@@ -38,23 +38,39 @@ func (v mcpServerEndpointValidator) ValidateResource(ctx context.Context, req re
 	}
 
 	// Unknown values flow in when an attribute is interpolated from another
-	// resource's computed output. Skip checks against Unknowns — they get
-	// re-validated on the next plan when the value resolves.
-	deploymentKnown := !data.DeploymentMode.IsNull() && !data.DeploymentMode.IsUnknown()
-	edgeSiteKnown := !data.EdgeSiteID.IsNull() && !data.EdgeSiteID.IsUnknown()
-	endpointKnown := !data.Endpoint.IsNull() && !data.Endpoint.IsUnknown()
-
+	// resource's computed output (e.g. `edge_site_id =
+	// ferentin_edge_site.foo.site_id` before that site has been created).
+	// Defer the check in those cases — apply-time re-evaluates and the
+	// server-side validation is the ultimate backstop. Only fire when
+	// we're CERTAIN the user's config is wrong.
 	deploymentMode := ""
-	if deploymentKnown {
+	if !data.DeploymentMode.IsNull() && !data.DeploymentMode.IsUnknown() {
 		deploymentMode = data.DeploymentMode.ValueString()
 	}
-	hasEdgeSite := edgeSiteKnown && data.EdgeSiteID.ValueString() != ""
+
+	// edgeSiteState: KNOWN_SET / KNOWN_EMPTY / UNKNOWN
+	type tristate int
+	const (
+		knownSet tristate = iota
+		knownEmpty
+		unknown
+	)
+	edgeSiteState := unknown
+	switch {
+	case data.EdgeSiteID.IsUnknown():
+		edgeSiteState = unknown
+	case data.EdgeSiteID.IsNull() || data.EdgeSiteID.ValueString() == "":
+		edgeSiteState = knownEmpty
+	default:
+		edgeSiteState = knownSet
+	}
 
 	// Check 1: edge_routed requires edge_site_id.
-	// Fires only when deployment_mode is concretely "edge_routed". When
-	// it's unset or Unknown, skip — the user may be relying on the
-	// platform's default (which today is `public`).
-	if deploymentMode == "edge_routed" && !hasEdgeSite {
+	// Fires only when deployment_mode is concretely "edge_routed" AND
+	// edge_site_id is known-empty (not Unknown — Unknown means "bound
+	// to another resource that hasn't been created yet, will resolve
+	// at apply").
+	if deploymentMode == "edge_routed" && edgeSiteState == knownEmpty {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("edge_site_id"),
 			"edge_site_id is required when deployment_mode = \"edge_routed\"",
@@ -66,7 +82,7 @@ func (v mcpServerEndpointValidator) ValidateResource(ctx context.Context, req re
 	// Checks 2 + 3: HTTP scheme or private/unresolvable hostname require
 	// deployment_mode = "edge_routed". For both we need to parse the
 	// endpoint URL; do that once and reuse.
-	if !endpointKnown {
+	if data.Endpoint.IsNull() || data.Endpoint.IsUnknown() {
 		return
 	}
 	endpoint := data.Endpoint.ValueString()
@@ -81,7 +97,11 @@ func (v mcpServerEndpointValidator) ValidateResource(ctx context.Context, req re
 		return
 	}
 
-	isEdgeMode := deploymentMode == "edge_routed" || hasEdgeSite
+	// "in edge mode" — be optimistic about Unknown: a not-yet-created
+	// edge site is a perfectly reasonable plan-time state. Only deny
+	// when we're sure the config places the server in a public mode
+	// with no edge binding.
+	isEdgeMode := deploymentMode == "edge_routed" || edgeSiteState == knownSet || edgeSiteState == unknown
 
 	if strings.EqualFold(u.Scheme, "http") && !isEdgeMode {
 		resp.Diagnostics.AddAttributeError(
