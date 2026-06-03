@@ -80,13 +80,14 @@ resource "ferentin_llm_policy" "default" {
 }
 
 # --- MCP server (federated OAuth upstream) ------------------------------
-data "ferentin_mcp_provider" "salesforce" {
-  slug = "salesforce"
-}
+# The singular ferentin_mcp_provider data source looks up by provider_id
+# (a UUID); to resolve the catalog entry by its stable slug, filter the
+# plural data source instead.
+data "ferentin_mcp_providers" "all" {}
 
 resource "ferentin_mcp_server" "salesforce_us" {
   name        = "salesforce-prod-us"
-  provider_id = data.ferentin_mcp_provider.salesforce.id
+  provider_id = one([for p in data.ferentin_mcp_providers.all.providers : p.provider_id if p.slug == "salesforce"])
   endpoint    = "https://mcp.salesforce.example.com/sse"
 
   transport_type         = "streamable_http"
