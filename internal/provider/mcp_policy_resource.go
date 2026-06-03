@@ -229,8 +229,10 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 										Optional: true,
 									},
 									"value_type": schema.StringAttribute{
-										MarkdownDescription: "Optional type hint for the value (`string`, `int`, `list`, …).",
-										Optional:            true,
+										MarkdownDescription: "Optional type hint for the value (`string`, `int`, `list`, …). " +
+											"The platform defaults it to `string` when unset.",
+										Optional: true,
+										Computed: true,
 									},
 									"case_sensitive": schema.BoolAttribute{
 										MarkdownDescription: "For string operations. Platform defaults to `true` when omitted.",
