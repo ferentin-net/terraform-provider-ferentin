@@ -1,8 +1,8 @@
 # Complete example
 
 End-to-end Ferentin tenant configuration: edge site + LLM provider + LLM
-policy + MCP server + MCP policy + OTEL sink + OTEL policy + AI agent. Apply
-order is implicit from attribute references.
+policy + MCP server + MCP policy + data protection policy + OTEL sink + OTEL
+policy + AI agent. Apply order is implicit from attribute references.
 
 ## Try it
 
@@ -39,6 +39,7 @@ export FERENTIN_TENANT_ID="<your-tenant-uuid>"
 | `ferentin_llm_policy`             | Internal-employees-only governance                     |
 | `ferentin_mcp_server`             | Federated Salesforce MCP, edge-routed via the site    |
 | `ferentin_mcp_policy`             | Read-only Salesforce allowlist with 120 req/min limit  |
+| `ferentin_data_protection_policy` | Tokenize US PII + log exfiltration URLs (DLP)          |
 | `ferentin_otel_sink`              | Honeycomb OTLP/HTTP destination                        |
 | `ferentin_otel_policy`            | Trace forwarding to Honeycomb                          |
 | `ferentin_ai_agent`               | Claude-platform team assistant (OIDC client)           |

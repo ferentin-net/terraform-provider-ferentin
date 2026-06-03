@@ -113,6 +113,39 @@ resource "ferentin_mcp_policy" "salesforce_allow" {
   provider_instances = [ferentin_mcp_server.salesforce_us.name]
 }
 
+# --- Data & Content Protection (DLP) policy -----------------------------
+# Tokenize US PII and log exfiltration URLs across LLM and MCP traffic. The
+# profile name is pulled from the catalog data source for typo-safety.
+data "ferentin_data_protection_profile" "us_pii" {
+  name = "US_PII"
+}
+
+resource "ferentin_data_protection_policy" "baseline" {
+  name        = "baseline-data-protection"
+  description = "Tokenize US PII; log exfiltration URLs on responses"
+  priority    = 100
+  enabled     = true
+
+  enabled_profiles = [
+    data.ferentin_data_protection_profile.us_pii.name,
+    "EXFILTRATION_DEFENSE",
+  ]
+
+  effects = {
+    "US_SSN"           = "tokenize"
+    "EXFILTRATION_URL" = "log"
+  }
+  default_effect = "redact"
+
+  # FPE key is required by the platform whenever an effect is "tokenize".
+  fpe_key_id  = "dlp-fpe-prod"
+  tweak_scope = "conversation"
+
+  apply_to_llm_input  = true
+  apply_to_llm_output = true
+  apply_to_mcp_output = true
+}
+
 # --- OTEL sink + policy --------------------------------------------------
 resource "ferentin_otel_sink" "honeycomb" {
   name        = "honeycomb-prod"
