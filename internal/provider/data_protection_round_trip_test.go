@@ -8,6 +8,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
 
 // Round-trip test for the data-protection policy SDK-response -> model mapper,
@@ -38,11 +39,24 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 		ApplyToLlmOutput:   boolPtr(true),
 		ApplyToMcpInput:    boolPtr(false),
 		ApplyToMcpOutput:   boolPtr(true),
-		ProfileCount:       int32Ptr(2),
-		CreatedAt:          &now,
-		CreatedBy:          strPtr("alice@example.com"),
-		UpdatedAt:          &now,
-		UpdatedBy:          strPtr("bob@example.com"),
+		Criteria: &[]gen.PolicyCriteria{
+			{
+				Operator: gen.PolicyCriteriaOperator("AND"),
+				Type:     gen.PolicyCriteriaType("claims"),
+				Conditions: []gen.CriteriaCondition{
+					{
+						Field:    "department",
+						Operator: gen.CriteriaConditionOperator("equals"),
+						Value:    &map[string]interface{}{"value": "legal"},
+					},
+				},
+			},
+		},
+		ProfileCount: int32Ptr(2),
+		CreatedAt:    &now,
+		CreatedBy:    strPtr("alice@example.com"),
+		UpdatedAt:    &now,
+		UpdatedBy:    strPtr("bob@example.com"),
 	}
 
 	var diags diag.Diagnostics
@@ -121,5 +135,25 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 	_ = m.DetectorConfigs.ElementsAs(ctx, &configs, false)
 	if configs["EXFILTRATION_URL"] != `{"minConfidenceScore":0.5}` {
 		t.Errorf("detector_configs[EXFILTRATION_URL] = %q", configs["EXFILTRATION_URL"])
+	}
+
+	// criteria — nested ABAC, with the {"value":...} envelope unwrapped to a
+	// jsonencode-style string.
+	if len(m.Criteria) != 1 {
+		t.Fatalf("criteria len = %d; want 1", len(m.Criteria))
+	}
+	cr := m.Criteria[0]
+	if cr.Operator.ValueString() != "AND" || cr.Type.ValueString() != "claims" {
+		t.Errorf("criteria[0] operator/type = %q/%q", cr.Operator.ValueString(), cr.Type.ValueString())
+	}
+	if len(cr.Conditions) != 1 {
+		t.Fatalf("criteria[0].conditions len = %d; want 1", len(cr.Conditions))
+	}
+	cond := cr.Conditions[0]
+	if cond.Field.ValueString() != "department" || cond.Operator.ValueString() != "equals" {
+		t.Errorf("condition field/op = %q/%q", cond.Field.ValueString(), cond.Operator.ValueString())
+	}
+	if cond.Value.ValueString() != `"legal"` {
+		t.Errorf("condition value = %q; want %q", cond.Value.ValueString(), `"legal"`)
 	}
 }

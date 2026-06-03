@@ -10,6 +10,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
 
 // Conversion helpers for the data-protection policy resource. The entity
@@ -174,10 +175,115 @@ func dataProtectionPolicyToModel(tenantID string, pol *adminapi.DataProtectionPo
 	m.ApplyToMcpInput = boolPtrOrDefault(pol.ApplyToMcpInput)
 	m.ApplyToMcpOutput = boolPtrOrDefault(pol.ApplyToMcpOutput)
 
+	m.Criteria = dpCriteriaFromSDK(pol.Criteria)
+
 	m.ProfileCount = int32PtrToTF(pol.ProfileCount)
 	m.CreatedAt = timePtrToTF(pol.CreatedAt)
 	m.CreatedBy = strPtrToTF(pol.CreatedBy)
 	m.UpdatedAt = timePtrToTF(pol.UpdatedAt)
 	m.UpdatedBy = strPtrToTF(pol.UpdatedBy)
 	return m
+}
+
+// -------------------------------------------------------------------------
+// Criteria (ABAC) conversions — same shape as the LLM/MCP policies, both
+// directions target gen.PolicyCriteria / gen.CriteriaCondition. Reuses the
+// package-level valueMapToJSONString helper for the {"value": ...} envelope.
+// -------------------------------------------------------------------------
+
+func dpCriteriaToSDK(in []DataProtectionPolicyCriteriaModel) ([]gen.PolicyCriteria, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	if len(in) == 0 {
+		return nil, diags
+	}
+	out := make([]gen.PolicyCriteria, 0, len(in))
+	for i, c := range in {
+		conv, d := c.toSDK(fmt.Sprintf("criteria[%d]", i))
+		diags.Append(d...)
+		if !d.HasError() {
+			out = append(out, conv)
+		}
+	}
+	return out, diags
+}
+
+func (c *DataProtectionPolicyCriteriaModel) toSDK(pathHint string) (gen.PolicyCriteria, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	out := gen.PolicyCriteria{
+		Operator: gen.PolicyCriteriaOperator(c.Operator.ValueString()),
+	}
+	if !c.Type.IsNull() && !c.Type.IsUnknown() && c.Type.ValueString() != "" {
+		out.Type = gen.PolicyCriteriaType(c.Type.ValueString())
+	}
+	if !c.Description.IsNull() && !c.Description.IsUnknown() {
+		v := c.Description.ValueString()
+		out.Description = &v
+	}
+	for i, cond := range c.Conditions {
+		conv, d := cond.toSDK(fmt.Sprintf("%s.conditions[%d]", pathHint, i))
+		diags.Append(d...)
+		if !d.HasError() {
+			out.Conditions = append(out.Conditions, conv)
+		}
+	}
+	return out, diags
+}
+
+func (c *DataProtectionPolicyCriteriaConditionModel) toSDK(pathHint string) (gen.CriteriaCondition, diag.Diagnostics) {
+	var diags diag.Diagnostics
+	out := gen.CriteriaCondition{
+		Field:    c.Field.ValueString(),
+		Operator: gen.CriteriaConditionOperator(c.Operator.ValueString()),
+	}
+	if !c.CaseSensitive.IsNull() && !c.CaseSensitive.IsUnknown() {
+		v := c.CaseSensitive.ValueBool()
+		out.CaseSensitive = &v
+	}
+	if !c.Description.IsNull() && !c.Description.IsUnknown() {
+		v := c.Description.ValueString()
+		out.Description = &v
+	}
+	if !c.ValueType.IsNull() && !c.ValueType.IsUnknown() {
+		v := gen.CriteriaConditionValueType(c.ValueType.ValueString())
+		out.ValueType = &v
+	}
+	if !c.Value.IsNull() && !c.Value.IsUnknown() && c.Value.ValueString() != "" {
+		var decoded interface{}
+		if err := json.Unmarshal([]byte(c.Value.ValueString()), &decoded); err != nil {
+			diags.AddError(
+				"Invalid JSON in criteria condition value",
+				fmt.Sprintf("%s.value must be valid JSON (e.g. `jsonencode(\"legal\")`): %v", pathHint, err),
+			)
+			return out, diags
+		}
+		mp := map[string]interface{}{"value": decoded}
+		out.Value = &mp
+	}
+	return out, diags
+}
+
+func dpCriteriaFromSDK(in *[]gen.PolicyCriteria) []DataProtectionPolicyCriteriaModel {
+	if in == nil || len(*in) == 0 {
+		return nil
+	}
+	out := make([]DataProtectionPolicyCriteriaModel, 0, len(*in))
+	for _, c := range *in {
+		cm := DataProtectionPolicyCriteriaModel{
+			Operator:    types.StringValue(string(c.Operator)),
+			Type:        types.StringValue(string(c.Type)),
+			Description: strPtrToTF(c.Description),
+		}
+		for _, cond := range c.Conditions {
+			cm.Conditions = append(cm.Conditions, DataProtectionPolicyCriteriaConditionModel{
+				Field:         types.StringValue(cond.Field),
+				Operator:      types.StringValue(string(cond.Operator)),
+				CaseSensitive: boolPtrOrDefault(cond.CaseSensitive),
+				Description:   strPtrToTF(cond.Description),
+				ValueType:     enumPtrToTF(cond.ValueType),
+				Value:         valueMapToJSONString(cond.Value),
+			})
+		}
+		out = append(out, cm)
+	}
+	return out
 }

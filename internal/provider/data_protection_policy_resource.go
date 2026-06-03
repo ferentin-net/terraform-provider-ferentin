@@ -31,9 +31,6 @@ import (
 // Naming tracks the backend (`data_protection_*`, `/data-protection-policies`),
 // NOT the console's "Data & Content Protection" label — the #1060 rename is
 // UX-only.
-//
-// v0.1 defers `criteria` (ABAC conditional application, shared with the LLM/MCP
-// policies) to a follow-up; everything else on the entity is exposed.
 type DataProtectionPolicyResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
@@ -66,11 +63,37 @@ type DataProtectionPolicyResourceModel struct {
 	ApplyToMcpInput  types.Bool `tfsdk:"apply_to_mcp_input"`
 	ApplyToMcpOutput types.Bool `tfsdk:"apply_to_mcp_output"`
 
+	Criteria []DataProtectionPolicyCriteriaModel `tfsdk:"criteria"`
+
 	ProfileCount types.Int64  `tfsdk:"profile_count"`
 	CreatedAt    types.String `tfsdk:"created_at"`
 	CreatedBy    types.String `tfsdk:"created_by"`
 	UpdatedAt    types.String `tfsdk:"updated_at"`
 	UpdatedBy    types.String `tfsdk:"updated_by"`
+}
+
+// DataProtectionPolicyCriteriaModel mirrors gen.PolicyCriteria — the same
+// ABAC matching shape the LLM/MCP policies use. Conditions are combined via
+// the per-criterion operator (AND/OR); multiple criteria entries are
+// themselves ANDed by the platform evaluator.
+type DataProtectionPolicyCriteriaModel struct {
+	Operator    types.String                                 `tfsdk:"operator"`
+	Type        types.String                                 `tfsdk:"type"`
+	Description types.String                                 `tfsdk:"description"`
+	Conditions  []DataProtectionPolicyCriteriaConditionModel `tfsdk:"conditions"`
+}
+
+// DataProtectionPolicyCriteriaConditionModel mirrors gen.CriteriaCondition.
+// The `value` attribute is a JSON-encoded string (`value = jsonencode(...)`),
+// decoded and wrapped as `{"value": <decoded>}` for the platform's
+// map[string]interface{} wire shape — same trick as the LLM/MCP policies.
+type DataProtectionPolicyCriteriaConditionModel struct {
+	Field         types.String `tfsdk:"field"`
+	Operator      types.String `tfsdk:"operator"`
+	Value         types.String `tfsdk:"value"`
+	ValueType     types.String `tfsdk:"value_type"`
+	CaseSensitive types.Bool   `tfsdk:"case_sensitive"`
+	Description   types.String `tfsdk:"description"`
 }
 
 func NewDataProtectionPolicyResource() resource.Resource { return &DataProtectionPolicyResource{} }
@@ -105,7 +128,7 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 		MarkdownDescription: "Tenant data-protection (DLP / \"Data & Content Protection\") policy. Selects " +
 			"sensitive-data and security detectors (via profiles and/or individual detectors), assigns a " +
 			"per-detector or default effect (`tokenize` / `redact` / `block` / `log`), and scopes enforcement " +
-			"to LLM and/or MCP input/output. `criteria` (conditional application) is deferred to a later version.\n\n" +
+			"to LLM and/or MCP input/output. Optional `criteria` apply the policy conditionally (ABAC).\n\n" +
 			"## Import\n\n" +
 			"```\n" +
 			"terraform import ferentin_data_protection_policy.example <tenant_id>/<policy_id>\n" +
@@ -207,6 +230,64 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 			"apply_to_mcp_input":  schema.BoolAttribute{MarkdownDescription: "Scan MCP tool-call arguments. Default `false`.", Optional: true, Computed: true},
 			"apply_to_mcp_output": schema.BoolAttribute{MarkdownDescription: "Scan MCP tool-call results. Default `false`.", Optional: true, Computed: true},
 
+			"criteria": schema.ListNestedAttribute{
+				MarkdownDescription: "ABAC criteria for conditional application. Each entry combines `conditions` " +
+					"with a logical operator (`AND`/`OR`); multiple criteria entries are themselves ANDed.",
+				Optional: true,
+				NestedObject: schema.NestedAttributeObject{
+					Attributes: map[string]schema.Attribute{
+						"operator": schema.StringAttribute{
+							MarkdownDescription: "Logical operator joining the conditions: `AND` or `OR`.",
+							Required:            true,
+							Validators:          []validator.String{stringvalidator.OneOf("AND", "OR")},
+						},
+						"type": schema.StringAttribute{
+							MarkdownDescription: "Criteria type. Allowed: `claims`, `context`, `request`, `time`. Server default applies if unset.",
+							Optional:            true,
+							Computed:            true,
+						},
+						"description": schema.StringAttribute{
+							MarkdownDescription: "Optional human-readable description.",
+							Optional:            true,
+						},
+						"conditions": schema.ListNestedAttribute{
+							MarkdownDescription: "Conditions evaluated under the parent `operator`.",
+							Required:            true,
+							NestedObject: schema.NestedAttributeObject{
+								Attributes: map[string]schema.Attribute{
+									"field": schema.StringAttribute{
+										MarkdownDescription: "Field path to evaluate (e.g. `client_id`, `department`, `email`).",
+										Required:            true,
+									},
+									"operator": schema.StringAttribute{
+										MarkdownDescription: "Comparison operator (`equals`, `in`, `lt`, `gt`, `ends_with`, …).",
+										Required:            true,
+									},
+									"value": schema.StringAttribute{
+										MarkdownDescription: "JSON-encoded value to compare against. Examples: " +
+											"`jsonencode(\"legal\")`, `jsonencode([\"a\",\"b\"])`, `jsonencode(100)`.",
+										Optional: true,
+									},
+									"value_type": schema.StringAttribute{
+										MarkdownDescription: "Optional type hint for the value (`string`, `int`, `list`, …).",
+										Optional:            true,
+									},
+									"case_sensitive": schema.BoolAttribute{
+										MarkdownDescription: "For string operations. Platform defaults to `true` when omitted.",
+										Optional:            true,
+										Computed:            true,
+									},
+									"description": schema.StringAttribute{
+										MarkdownDescription: "Optional description.",
+										Optional:            true,
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+
 			"profile_count": schema.Int64Attribute{Computed: true},
 			"created_at":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"created_by":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
@@ -260,6 +341,10 @@ func (r *DataProtectionPolicyResource) Create(ctx context.Context, req resource.
 	setBoolPtr(plan.ApplyToLlmOutput, &body.ApplyToLlmOutput)
 	setBoolPtr(plan.ApplyToMcpInput, &body.ApplyToMcpInput)
 	setBoolPtr(plan.ApplyToMcpOutput, &body.ApplyToMcpOutput)
+	if crits, d := dpCriteriaToSDK(plan.Criteria); len(plan.Criteria) > 0 {
+		resp.Diagnostics.Append(d...)
+		body.Criteria = &crits
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -327,6 +412,10 @@ func (r *DataProtectionPolicyResource) Update(ctx context.Context, req resource.
 	setBoolPtr(plan.ApplyToLlmOutput, &body.ApplyToLlmOutput)
 	setBoolPtr(plan.ApplyToMcpInput, &body.ApplyToMcpInput)
 	setBoolPtr(plan.ApplyToMcpOutput, &body.ApplyToMcpOutput)
+	if crits, d := dpCriteriaToSDK(plan.Criteria); len(plan.Criteria) > 0 {
+		resp.Diagnostics.Append(d...)
+		body.Criteria = &crits
+	}
 	if resp.Diagnostics.HasError() {
 		return
 	}
