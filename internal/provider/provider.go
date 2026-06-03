@@ -474,6 +474,7 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewAIAgentResource,
 		NewWorkloadOAuthClientResource,
 		NewWorkloadIdentityProviderResource,
+		NewDataProtectionPolicyResource,
 	}
 }
 
@@ -486,6 +487,10 @@ func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.Da
 		NewOtelSinkProviderDataSource,
 		NewWorkloadOAuthClientTestDataSource,
 		NewWorkloadIdentityProviderTestDataSource,
+		NewDataProtectionProfilesDataSource,
+		NewDataProtectionProfileDataSource,
+		NewDataProtectionDetectorsDataSource,
+		NewDataProtectionDetectorDataSource,
 	}
 }
 
