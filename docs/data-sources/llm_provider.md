@@ -4,7 +4,7 @@ page_title: "ferentin_llm_provider Data Source - Ferentin"
 subcategory: ""
 description: |-
   Look up an entry in the global LLM provider catalog by slug. Read-only.
-  See also: the ferentin_llm_provider resource (../resources/llm_provider.md) — the tenant-scoped binding that consumes this slug via provider_type. Resource and data source share the noun; Terraform disambiguates them by block type (resource vs data).
+  See also: the ferentin_llm_provider resource ../resources/llm_provider.md — the tenant-scoped binding that consumes this slug via provider_type. Resource and data source share the noun; Terraform disambiguates them by block type (resource vs data).
 ---
 
 # ferentin_llm_provider (Data Source)
