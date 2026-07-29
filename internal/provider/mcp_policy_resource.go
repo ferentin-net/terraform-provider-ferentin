@@ -50,6 +50,7 @@ type MCPPolicyResourceModel struct {
 	PolicyID  types.String `tfsdk:"policy_id"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+	Version   types.Int64  `tfsdk:"version"` // for If-Match
 }
 
 // MCPPolicyEffectModel mirrors gen.McpEffectDto.
@@ -250,6 +251,13 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				},
 			},
 
+			"version": schema.Int64Attribute{
+				MarkdownDescription: "Optimistic-concurrency version (platform #649). Threaded as `If-Match` on " +
+					"Update so a concurrent console edit is rejected with 412 instead of being silently " +
+					"clobbered. Read-only.",
+				Computed: true,
+			},
+
 			"policy_id":  schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"created_at": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"updated_at": schema.StringAttribute{Computed: true},
@@ -355,7 +363,11 @@ func (r *MCPPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 		body.Criteria = &crits
 	}
 
-	v := strconv.FormatInt(0, 10)
+	// The version MUST come from state. This previously hardcoded 0, which sent
+	// `If-Match: W/"0"` on every update — correct for a freshly-created policy and a
+	// guaranteed 412 for every policy that had already been updated once
+	// (McpPolicyService enforces the precondition). See ferentin-platform#2038.
+	v := strconv.FormatInt(state.Version.ValueInt64(), 10)
 	pol, err := r.sdk.MCPPolicies().Update(ctx, tenantID, state.PolicyID.ValueString(), v, body)
 	if err != nil {
 		addSDKError(&resp.Diagnostics, "Failed to update MCP policy", err)
@@ -453,6 +465,7 @@ func mcpPolicyToModel(tenantID string, pol *adminapi.MCPPolicy) MCPPolicyResourc
 	m.ValidateArguments = boolPtrOrDefault(pol.ValidateArguments)
 	m.CreatedAt = timePtrToTF(pol.CreatedAt)
 	m.UpdatedAt = timePtrToTF(pol.UpdatedAt)
+	m.Version = int64PtrToTF(pol.Version)
 	m.ProviderInstances = stringSliceToList(pol.ProviderInstances)
 
 	if pol.Effect != nil {

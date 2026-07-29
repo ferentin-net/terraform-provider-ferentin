@@ -49,7 +49,67 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (`llm_provider_instances`) are unchanged. SDK type
   `LLMProviderInstancesAPI` keeps its name for platform alignment.
 
+### Security
+- **Upgraded two modules with reachable vulnerabilities**, both confirmed by
+  `govulncheck` as reachable from this provider's own call graph (not merely
+  present in the module graph):
+  - `google.golang.org/grpc` 1.81.1 → 1.82.1 — [GO-2026-6061](https://pkg.go.dev/vuln/GO-2026-6061),
+    xDS RBAC authorization engine + HTTP/2 handling. Reached via
+    `providerserver.Serve` → `transport.http2Server`, i.e. the plugin's own
+    gRPC listener.
+  - `golang.org/x/text` 0.38.0 → 0.40.0 — [GO-2026-5970](https://pkg.go.dev/vuln/GO-2026-5970),
+    infinite loop on invalid input in `norm`. Reached via `fmt.Sprintf` in the
+    DLP profile data source.
+
+  `golang.org/x/net` (0.56.0 → 0.57.0) and `golang.org/x/crypto`
+  (0.53.0 → 0.54.0) came along as transitive requirements of those two.
+  `govulncheck ./...` now reports **no vulnerabilities**.
+
 ### Added
+- **Three endpoint-policy resources** — governance for AI traffic on managed
+  devices via the macOS endpoint agent. Platform #2038 (built on #2010 / #2018).
+  - **`ferentin_device_group`** — the policy-scoping unit the other two target.
+    Added first so `device_group_ids` can be a reference
+    (`ferentin_device_group.contractors.group_id`) rather than a hardcoded UUID
+    that is unreferenceable, unimportable, and stale the moment a group is
+    recreated. Note: `device_groups` carries no `version` column, so this
+    resource has no optimistic concurrency — writes are last-write-wins.
+    Requires `devices:groups:rw` (narrow, group-CRUD-only — held by the
+    seeded `ferentin.iac.operator` role as of platform migration 1215) or the
+    broad `devices:rw`. Prefer the narrow scope: `devices:rw` also grants
+    device status transitions, per-serial certificate revocation, and forced
+    re-enrollment.
+  - **`ferentin_endpoint_destination_rule`** — allow / block / steer per AI
+    provider or explicit host, scoped by macOS app code identity
+    (`app_bundle_ids` / `app_signing_ids` / `app_team_ids`) and device group.
+    Full CRUD with `If-Match` optimistic concurrency and the four `managed_by*`
+    provenance attributes. Cross-field rules (`ai_provider` ⇒ `catalog_slug`,
+    `host` ⇒ `destination_hosts`, `steer` ⇒ `steer_to_url`, https-only URLs)
+    are validated at **plan** time via `ValidateConfig` rather than surfacing as
+    an opaque 400 at apply.
+  - **`ferentin_endpoint_policy_settings`** — endpoint posture, either the
+    tenant default (omit `device_group_id`) or a per-group override. The
+    platform API is upsert-only, which drives three documented deviations:
+    Create may **adopt** a pre-existing row (`managed_by` still reports the
+    original creator, so adoption shows as drift); Read lists `/settings` and
+    filters on `device_group_id` because there is no GET-by-id; and
+    `terraform destroy` on the tenant-default row is a **no-op that drops it
+    from state and leaves it enforcing**, because the platform refuses to delete
+    a row every device — including ungrouped ones — resolves through. A warning
+    diagnostic names the still-active posture and the explicit two-step needed
+    to stand enforcement down.
+
+    This is fail-closed on purpose. Resetting to the permissive defaults would
+    be reachable by ordinary refactoring — removing a resource block or dropping
+    a module runs Delete just as `terraform destroy` does — and would silently
+    move a fleet from "quarantine unapproved MCP servers, allowlist AI
+    destinations" to "observe only", arriving on-device as a routine bundle
+    update. It follows the precedent for adopted singletons a provider cannot
+    delete: `aws_default_vpc` drops state and touches nothing;
+    `aws_default_security_group` resets to *maximally restrictive*. Neither
+    resets to permissive. A group override, which the platform *can* delete, is
+    genuinely deleted and the group falls back to the tenant default.
+
 - **`model_constraints` on `ferentin_llm_provider`** — nested
   `{ mode = "allowlist", models = [...] }` attribute that pins an
   instance to a specific set of catalog models. Persisted on the
@@ -58,6 +118,26 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   GPT-5.5-only configuration.
 
 ### Fixed
+- **`ferentin_mcp_policy` updates no longer 412 after the first one.** Update
+  hardcoded `If-Match: W/"0"` regardless of the row's real version. That is
+  correct exactly once — for a freshly-created policy — and a guaranteed 412 for
+  every policy that had already been updated, because the platform's
+  `McpPolicyService` does enforce the precondition. The version now comes from
+  state via a new computed `version` attribute. Found while auditing the same
+  pattern for the endpoint-policy resources; platform #2038.
+
+- **`make docs-check` could never pass.** `--rendered-website-dir` is resolved
+  relative to the provider directory, so the absolute `mktemp` path made
+  `tfplugindocs` write a stray `./var/folders/...` tree into the repo while the
+  diff target never existed. Now uses a repo-relative scratch dir and cleans up
+  on both success and failure. (The committed docs for
+  `data_protection_policy` / `llm_policy` were stale as a result and have been
+  regenerated.)
+
+- **`README.md` resource tables were missing shipped resources** —
+  `ferentin_data_protection_policy`, `ferentin_mcp_server_from_card`, and the
+  four DLP data sources were never added.
+
 - **`managed_by` provenance now reads `"iac"` instead of `"console"`.** The
   SDK transport now stamps `X-Ferentin-Managed-By: iac` and
   `X-Ferentin-Managed-By-Module: terraform-provider-ferentin/<version>` on

@@ -81,6 +81,7 @@ resource "ferentin_mcp_policy" "default_deny" {
 - `id` (String) The ID of this resource.
 - `policy_id` (String)
 - `updated_at` (String)
+- `version` (Number) Optimistic-concurrency version (platform #649). Threaded as `If-Match` on Update so a concurrent console edit is rejected with 412 instead of being silently clobbered. Read-only.
 
 <a id="nestedatt--effect"></a>
 ### Nested Schema for `effect`
@@ -125,4 +126,4 @@ Optional:
 - `case_sensitive` (Boolean) For string operations. Platform defaults to `true` when omitted.
 - `description` (String) Optional description.
 - `value` (String) JSON-encoded value to compare against. Examples: `jsonencode("service")`, `jsonencode(["a","b"])`, `jsonencode(100)`.
-- `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …).
+- `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …). The platform defaults it to `string` when unset.

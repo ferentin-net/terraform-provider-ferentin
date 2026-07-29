@@ -19,6 +19,32 @@ env:
   GOPRIVATE: github.com/ferentin-net/*
 
 jobs:
+  # Release guard. The SDK lives in a sibling repo, so local development is
+  # tempting to unblock with `replace ... => ../ferentin-cli-app`. A committed
+  # replace directive breaks both CI (the sibling path does not exist in a
+  # checkout) and the registry build, and the failure only surfaces at publish
+  # time. Local dev uses go.work instead — see DEVELOPMENT.md.
+  no-replace:
+    name: No replace directives
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - name: Assert go.mod has no replace directive
+        run: |
+          if grep -qE '^replace ' go.mod; then
+            echo "::error file=go.mod::go.mod contains a replace directive. Local multi-repo development must use go.work (gitignored), not a committed replace. See DEVELOPMENT.md."
+            grep -nE '^replace ' go.mod
+            exit 1
+          fi
+          echo "ok: no replace directives"
+      - name: Assert go.work is not committed
+        run: |
+          if git ls-files --error-unmatch go.work >/dev/null 2>&1; then
+            echo "::error file=go.work::go.work must not be committed — it pins a local filesystem layout. It is gitignored on purpose."
+            exit 1
+          fi
+          echo "ok: go.work is not tracked"
+
   build:
     name: Build
     runs-on: ubuntu-latest

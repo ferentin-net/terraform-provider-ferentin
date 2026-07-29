@@ -53,12 +53,17 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_llm_policy` | ABAC governance for LLM traffic with nested criteria + conditions. |
 | `ferentin_mcp_provider` | Tenant-custom MCP provider definition. |
 | `ferentin_mcp_server` | Tenant binding of an MCP provider to a specific endpoint / credential set. |
+| `ferentin_mcp_server_from_card` | Tenant MCP server installed from a community server-card (`data "ferentin_mcp_server_card"`). |
 | `ferentin_mcp_policy` | Allow/deny ABAC governance for MCP traffic with optional rate limits. |
+| `ferentin_data_protection_policy` | DLP governance — detector/profile selection, redact / tokenize / block effects. |
 | `ferentin_otel_sink` | Telemetry destination (Datadog, Honeycomb, OTLP). |
 | `ferentin_otel_policy` | Signals → sinks routing. |
 | `ferentin_ai_agent` | AI-agent OIDC client (constrained to the macro-scope allowlist). |
 | `ferentin_workload_oauth_client` | Outbound OAuth credentials for `cc_federated` MCP upstreams. WriteOnly secrets. |
 | `ferentin_workload_identity_provider` | Inbound trust config for cloud-issued workload JWTs (AWS / GCP / Azure / GitHub …). |
+| `ferentin_device_group` | Device group — the policy-scoping unit endpoint policy targets. |
+| `ferentin_endpoint_destination_rule` | Allow / block / steer rule for AI traffic on managed devices (macOS endpoint agent). |
+| `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved-MCP action, gateway target, DNS/QUIC flags. Tenant default or per-device-group override. |
 
 | Data source | Purpose |
 | --- | --- |
@@ -66,6 +71,8 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_mcp_provider` / `ferentin_mcp_providers` | Global MCP provider catalog (single / list). |
 | `ferentin_mcp_server_card` | Community MCP server-card catalog. |
 | `ferentin_otel_sink_provider` | Global OTEL sink catalog entry. |
+| `ferentin_data_protection_profiles` / `ferentin_data_protection_profile` | Built-in DLP profile catalog (list / single). |
+| `ferentin_data_protection_detectors` / `ferentin_data_protection_detector` | Built-in DLP detector catalog (list / single). |
 | `ferentin_workload_oauth_client_test` | Re-runs the IdP probe on every plan; surfaces `overall_pass` + error categories. |
 | `ferentin_workload_identity_provider_test` | Re-runs the trust-config probe; returns raw JSON for `jsondecode()`. |
 

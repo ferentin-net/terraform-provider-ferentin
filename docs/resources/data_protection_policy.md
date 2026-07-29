@@ -139,4 +139,4 @@ Optional:
 - `case_sensitive` (Boolean) For string operations. Platform defaults to `true` when omitted.
 - `description` (String) Optional description.
 - `value` (String) JSON-encoded value to compare against. Examples: `jsonencode("legal")`, `jsonencode(["a","b"])`, `jsonencode(100)`.
-- `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …).
+- `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …). The platform defaults it to `string` when unset.

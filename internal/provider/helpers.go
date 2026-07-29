@@ -9,8 +9,10 @@ package provider
 
 import (
 	"context"
+	"regexp"
 	"time"
 
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -146,6 +148,83 @@ func stringSliceToList(p *[]string) types.List {
 	elems := make([]attr.Value, 0, len(*p))
 	for _, s := range *p {
 		elems = append(elems, types.StringValue(s))
+	}
+	lv, _ := types.ListValue(types.StringType, elems)
+	return lv
+}
+
+// httpsOnlyURL matches an absolute https:// URL. Used by the endpoint-policy
+// resources for `steer_to_url` and `mcp_gateway_url`: both are targets the
+// managed-device fleet is pointed AT, so an http:// value would silently
+// downgrade every steered flow / governed MCP session to cleartext. The
+// platform rejects http:// server-side; this makes it a plan-time failure.
+var httpsOnlyURL = regexp.MustCompile(`^https://\S+$`)
+
+// isUnsetString reports whether a config value is absent for validation
+// purposes. Unknown counts as "set" — an unresolved interpolation must not
+// trigger a required-field error at plan time for an otherwise valid config.
+func isUnsetString(v types.String) bool {
+	return v.IsNull() || (!v.IsUnknown() && v.ValueString() == "")
+}
+
+// isUnsetList is the list analogue of isUnsetString: null or explicitly empty
+// counts as unset; unknown counts as set.
+func isUnsetList(v types.List) bool {
+	return v.IsNull() || (!v.IsUnknown() && len(v.Elements()) == 0)
+}
+
+// setStringListPtr copies a types.List of strings into a **[]string, leaving
+// the target nil when the list is null/unknown. Distinct from stringListToSDK,
+// which always returns a slice — for a PUT body we need to be able to send
+// nothing at all rather than an empty array, because on these resources an
+// empty scoping list means "matches everything" while absent means the same but
+// reads more honestly on the wire.
+func setStringListPtr(ctx context.Context, in types.List, out **[]string) {
+	if in.IsNull() || in.IsUnknown() {
+		return
+	}
+	s := stringListToSDK(ctx, in)
+	*out = &s
+}
+
+// setUUIDListPtr is setStringListPtr for a list of UUID-typed strings.
+//
+// A malformed entry is a hard ERROR, never skipped. Skipping is fail-OPEN on
+// exactly the attributes this is used for: an empty device-group target list
+// means "every device in the tenant", so dropping the single bad id in
+// `device_group_ids = ["typo"]` would silently widen a rule scoped to one group
+// into a fleet-wide rule. Returning the bad values lets the caller surface an
+// attribute-anchored diagnostic instead.
+func setUUIDListPtr(ctx context.Context, in types.List, out **[]adminapi.UUID) (invalid []string) {
+	if in.IsNull() || in.IsUnknown() {
+		return nil
+	}
+	raw := stringListToSDK(ctx, in)
+	ids := make([]adminapi.UUID, 0, len(raw))
+	for _, s := range raw {
+		u, err := uuid.Parse(s)
+		if err != nil {
+			invalid = append(invalid, s)
+			continue
+		}
+		ids = append(ids, u)
+	}
+	if len(invalid) > 0 {
+		return invalid
+	}
+	*out = &ids
+	return nil
+}
+
+// uuidSliceToList is stringSliceToList for a *[]UUID, rendering each id in its
+// canonical string form so state matches what the user wrote in HCL.
+func uuidSliceToList(p *[]adminapi.UUID) types.List {
+	if p == nil {
+		return types.ListNull(types.StringType)
+	}
+	elems := make([]attr.Value, 0, len(*p))
+	for _, u := range *p {
+		elems = append(elems, types.StringValue(u.String()))
 	}
 	lv, _ := types.ListValue(types.StringType, elems)
 	return lv

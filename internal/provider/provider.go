@@ -475,6 +475,9 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewWorkloadOAuthClientResource,
 		NewWorkloadIdentityProviderResource,
 		NewDataProtectionPolicyResource,
+		NewDeviceGroupResource,
+		NewEndpointDestinationRuleResource,
+		NewEndpointPolicySettingsResource,
 	}
 }
 

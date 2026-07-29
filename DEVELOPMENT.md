@@ -4,7 +4,14 @@
 
 - Go 1.26+ (Go 1.24+ for the `tool` directive in `go.mod`)
 - Terraform 1.10+ for any `terraform` commands
-- A local checkout of [`ferentin-cli-app`](https://github.com/ferentin-net/ferentin-cli-app) **alongside** this repo (`../ferentin-cli-app/`) — the provider's `go.mod` has a `replace` directive pointing at it. The SDK has not yet been published as a standalone module.
+- A local checkout of [`ferentin-cli-app`](https://github.com/ferentin-net/ferentin-cli-app) **alongside** this repo (`../ferentin-cli-app/`). The SDK is not published as a standalone module; see [Module path quirks](#module-path-quirks) for the `go.work` setup that wires the two together.
+- `GOPRIVATE` configured for the org, once per machine:
+
+  ```sh
+  go env -w GOPRIVATE='github.com/ferentin-net/*'
+  ```
+
+  Without it Go tries to verify the private SDK module against `sum.golang.org` and fails with a 404 — **even in workspace mode**, where it never needs to download the module at all. CI sets the same value (see the `GOPRIVATE` env block in `.github/workflows/ci.yml`).
 
 ## Build & install for local Terraform
 
@@ -73,4 +80,31 @@ Attach delve to the running process by PID.
 
 ## Module path quirks
 
-The cli-app SDK module is `github.com/ferentin-net/ferentin-cli-app/pkg/adminapi`. The `replace` directive in `go.mod` makes Go pick up your local checkout instead of resolving against `github.com`. Drop the `replace` line when both repos are publicly tagged and CI builds from upstream.
+The cli-app SDK module is `github.com/ferentin-net/ferentin-cli-app/pkg/adminapi`.
+
+### Use `go.work`, never a committed `replace`
+
+To develop against your local SDK checkout, create a Go workspace **inside this repo**:
+
+```sh
+go work init . ../ferentin-cli-app
+```
+
+`go.work` and `go.work.sum` are gitignored. Nothing else changes — `go build`, `go test`, and `make install` all pick up the sibling checkout automatically. `GOWORK=off` restores proxy resolution if you need to reproduce a CI failure locally.
+
+**Do not add `replace github.com/ferentin-net/ferentin-cli-app => ../ferentin-cli-app` to `go.mod`.** A committed `replace`:
+
+- breaks CI, where `../ferentin-cli-app` does not exist in the checkout;
+- breaks the registry build the same way, and that failure only surfaces at publish time;
+- is easy to forget, because it makes local builds pass.
+
+The `no-replace` job in `.github/workflows/ci.yml` fails the build if one is present, and also fails if `go.work` is ever committed.
+
+### Landing a change that spans both repos
+
+When a provider change consumes SDK code that doesn't exist upstream yet, the provider branch **cannot** go green until the SDK side lands. That is the intended signal, not something to route around. The merge train:
+
+1. Merge the `ferentin-cli-app` PR.
+2. Here: `go get github.com/ferentin-net/ferentin-cli-app@<merge-sha>`. This produces a pseudo-version (e.g. `v0.4.6-0.20260616165901-4f510243e4fe`) — **no tag is required**, which is how the current requirement was pinned.
+3. Commit the `go.mod` / `go.sum` change and push. CI now resolves the real module and goes green.
+4. Merge the provider PR.

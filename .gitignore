@@ -43,3 +43,6 @@ terraform-provider-ferentin_v*
 !examples/**/*.tfvars.example
 
 # Dev install dir hint (not actually committed; this is here for IDE hints)
+
+# Scratch dir used by `make docs-check` (see GNUmakefile).
+.docs-check-tmp/
