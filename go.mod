@@ -3,13 +3,7 @@ module github.com/ferentin-net/terraform-provider-ferentin
 go 1.26.4
 
 require (
-	// MUST BE BUMPED before this branch can build in CI: the endpoint-policy /
-	// device-group resources consume adminapi sub-clients added by platform#2038 that
-	// are not in this commit. After the ferentin-cli-app PR merges, run:
-	//   go get github.com/ferentin-net/ferentin-cli-app@<merge-sha>
-	// Local development resolves the sibling checkout via go.work (gitignored) — do NOT
-	// reintroduce a `replace` directive; ci.yml fails the build if one is present.
-	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260616165901-4f510243e4fe
+	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260729085126-10cd7b6111de
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/terraform-plugin-docs v0.25.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
@@ -100,4 +94,3 @@ require (
 	gopkg.in/yaml.v2 v2.3.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
-
