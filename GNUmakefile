@@ -12,7 +12,7 @@ VERSION     := dev
 OS_ARCH     := $(shell go env GOOS)_$(shell go env GOARCH)
 INSTALL_DIR := $(HOME)/.terraform.d/plugins/$(HOSTNAME)/$(NAMESPACE)/$(NAME)/$(VERSION)/$(OS_ARCH)
 
-.PHONY: build install fmt lint vet test testacc tidy clean docs docs-check
+.PHONY: build install fmt lint vet test testacc testacc-local tidy clean docs docs-check
 
 build:
 	go build -o $(BINARY) .
@@ -37,6 +37,26 @@ test:
 # they skip. Set TF_LOG=DEBUG to see provider HTTP traffic.
 testacc:
 	TF_ACC=1 go test ./internal/provider -v -count=1 -timeout 30m
+
+# Acceptance run against LOCAL DEV (the `nginx` profile on this machine).
+#
+# This is the acceptance gate today: the platform has only local dev and
+# production, a GitHub runner cannot reach local dev, and the tests must never
+# touch production (they upsert tenant-default endpoint posture and cannot clean
+# up after themselves — see .github/workflows/acceptance.yml).
+#
+# Requires admin-api-server running (`feri a`) and credentials for a principal
+# holding policy:rw plus devices:groups:rw or devices:rw. Export FERENTIN_TOKEN,
+# or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET, and FERENTIN_TENANT_ID first.
+# INSECURE_SKIP_VERIFY is set because local dev serves a self-signed cert.
+testacc-local:
+	@test -n "$$FERENTIN_TENANT_ID" || { echo "FERENTIN_TENANT_ID must be set"; exit 1; }
+	@test -n "$$FERENTIN_TOKEN" -o -n "$$FERENTIN_CLIENT_ID" || \
+		{ echo "set FERENTIN_TOKEN, or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET"; exit 1; }
+	TF_ACC=1 \
+	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test} \
+	FERENTIN_INSECURE_SKIP_VERIFY=1 \
+	go test ./internal/provider -v -count=1 -timeout 30m
 
 tidy:
 	go mod tidy

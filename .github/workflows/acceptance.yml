@@ -1,16 +1,28 @@
 name: Acceptance tests
 
-# Acceptance tests hit a live platform and consume credentials, so they're
-# manual-trigger only (workflow_dispatch). Schedule a periodic run from a
-# branch when there's a staging environment to point at.
+# Acceptance tests hit a live platform, create and destroy real resources, and
+# consume credentials — so they're manual-trigger only (workflow_dispatch).
+#
+# THERE IS CURRENTLY NO ENVIRONMENT THIS WORKFLOW CAN SAFELY TARGET.
+#
+# The platform has exactly two environments: `nginx` (local dev, on a developer's
+# machine) and `aws-secure` (PRODUCTION). A GitHub-hosted runner cannot reach
+# local dev, and production is blocked below — see the `refuse-production` step
+# for why that is not merely a policy preference.
+#
+# Until a staging environment exists, the acceptance gate is a LOCAL run:
+#     make testacc-local
+# See DEVELOPMENT.md "Running acceptance tests".
+#
+# This workflow is kept (rather than deleted) so it is ready the day staging
+# lands, and because the production guard is worth having permanently.
 
 on:
   workflow_dispatch:
     inputs:
       endpoint:
-        description: 'FERENTIN_ENDPOINT (e.g. https://api.staging.ferentin.net)'
+        description: 'FERENTIN_ENDPOINT — must be a non-production environment'
         required: true
-        default: 'https://api.staging.ferentin.net'
 
 permissions:
   contents: read
@@ -24,6 +36,30 @@ jobs:
     runs-on: ubuntu-latest
     environment: acceptance-tests   # tighten: require manual approval per run
     steps:
+      # These tests are not read-only and not idempotent against a live fleet:
+      #
+      #   - TestAccEndpointPolicySettings_tenantDefault UPSERTS THE TENANT-DEFAULT
+      #     POSTURE. On production that changes what every managed device in the
+      #     tenant enforces — it sets unapproved_mcp_action = "quarantine", which
+      #     moves real MCP client configs aside on real machines.
+      #   - Destroy of that row is deliberately a NO-OP (the platform refuses to
+      #     delete it). So an interrupted or failed run LEAVES production posture
+      #     at whatever the test last applied. There is no cleanup path.
+      #   - Creating and deleting destination rules bumps policy-bundle versions,
+      #     so real devices re-pull mid-run.
+      #
+      # Hence a hard block, not a confirmation prompt. If a genuine need ever
+      # arises, changing this is a deliberate, reviewable edit.
+      - name: Refuse to run against production
+        run: |
+          host=$(printf '%s' "${{ github.event.inputs.endpoint }}" | sed -E 's#^[a-z]+://##; s#[/?].*##')
+          case "$host" in
+            api.ferentin.net|ferentin.net)
+              echo "::error::Refusing to run acceptance tests against production ($host). These tests mutate tenant-default endpoint posture and cannot clean up after themselves. See the comment in this workflow."
+              exit 1
+              ;;
+          esac
+          echo "ok: $host is not the production host"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
         with:

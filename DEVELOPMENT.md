@@ -78,6 +78,39 @@ TF_REATTACH_PROVIDERS='...' terraform apply
 
 Attach delve to the running process by PID.
 
+## Running acceptance tests
+
+The acceptance suite (`TestAcc*`, gated by `TF_ACC=1`) creates and destroys real
+resources against a live platform. **Run it against local dev, never production.**
+
+```sh
+feri a                                    # admin-api-server on the nginx profile
+export FERENTIN_TENANT_ID=<tenant-uuid>
+export FERENTIN_CLIENT_ID=<cc-client>     # or export FERENTIN_TOKEN=<jwt>
+export FERENTIN_CLIENT_SECRET=<secret>
+make testacc-local
+```
+
+`testacc-local` defaults `FERENTIN_ENDPOINT` to `https://api.local.ferentin.test`
+and sets `FERENTIN_INSECURE_SKIP_VERIFY=1`, since local dev serves a self-signed
+certificate.
+
+**Scopes the principal needs:** `policy:rw` for the endpoint-policy resources,
+and `devices:groups:rw` (platform migration 1215) *or* the broader `devices:rw`
+for `ferentin_device_group`. The seeded `ferentin.iac.operator` role carries both.
+A role-bound `client_credentials` client on a platform older than 1215 will 403
+on the device-group tests.
+
+**Why not CI.** The platform has exactly two environments — `nginx` (local dev)
+and `aws-secure` (production). A GitHub-hosted runner cannot reach local dev, and
+`.github/workflows/acceptance.yml` hard-blocks production. It is not a policy
+preference: `TestAccEndpointPolicySettings_tenantDefault` upserts the
+tenant-default endpoint posture, which on production changes what every managed
+device in the tenant enforces, and destroy of that row is deliberately a no-op —
+so an interrupted run leaves production posture at whatever the test last set,
+with no cleanup path. The workflow is retained for the day a staging environment
+exists.
+
 ## Module path quirks
 
 The cli-app SDK module is `github.com/ferentin-net/ferentin-cli-app/pkg/adminapi`.
