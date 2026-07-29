@@ -4,7 +4,7 @@ page_title: "ferentin_device_group Resource - Ferentin"
 subcategory: ""
 description: |-
   Device group — the policy-scoping unit for managed devices. Reference group_id from ferentin_endpoint_destination_rule.device_group_ids or from a ferentin_endpoint_policy_settings override instead of hardcoding a UUID.
-  This resource has no optimistic-concurrency version: the device_groups table does not carry the platform's IaC-readiness columns, so concurrent writes are last-write-wins.
+  Carries version + the managed_by* provenance block, so a concurrent console edit is rejected with 412 rather than silently clobbered. That matters here specifically: device groups are the targeting dimension for endpoint policy, so a group renamed or recreated out from under Terraform is how a rule ends up scoped to something its author did not intend.
   Required scopes
   Either devices:groups:rw (narrow — group CRUD only, held by the seeded ferentin.iac.operator role) or the broad devices:rw. Prefer the narrow one: devices:rw also grants device status transitions, per-serial certificate revocation, and forced re-enrollment, which a pipeline that only creates groups has no business holding.
   Import
@@ -16,7 +16,7 @@ description: |-
 
 Device group — the policy-scoping unit for managed devices. Reference `group_id` from `ferentin_endpoint_destination_rule.device_group_ids` or from a `ferentin_endpoint_policy_settings` override instead of hardcoding a UUID.
 
-This resource has **no optimistic-concurrency `version`**: the `device_groups` table does not carry the platform's IaC-readiness columns, so concurrent writes are last-write-wins.
+Carries `version` + the `managed_by*` provenance block, so a concurrent console edit is rejected with 412 rather than silently clobbered. That matters here specifically: device groups are the *targeting* dimension for endpoint policy, so a group renamed or recreated out from under Terraform is how a rule ends up scoped to something its author did not intend.
 
 ### Required scopes
 
@@ -73,4 +73,9 @@ resource "ferentin_device_group" "engineering" {
 - `created_at` (String)
 - `group_id` (String) Platform UUID for this group. This is what endpoint-policy resources reference.
 - `id` (String) The ID of this resource.
+- `last_modified_by` (String) Provenance of the most recent writer. **Divergence from `managed_by` is the drift signal** — `iac` + `console` means somebody renamed a Terraform-managed group in the admin console.
+- `managed_by` (String) Provenance of the original creator (`iac` for this provider). Immutable after create. A group synced from Jamf or SCIM reports whatever stamped it — not `iac`.
+- `managed_by_client_id` (String) OAuth2 `client_id` of the creator, from the authenticated principal (never a header).
+- `managed_by_module` (String) Module label this provider sent via `X-Ferentin-Managed-By-Module`.
 - `updated_at` (String)
+- `version` (Number) Optimistic-concurrency version. Threaded as `If-Match` on Update/Delete so a concurrent console edit is rejected with 412 rather than silently clobbered. Read-only.

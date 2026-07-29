@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/path"
@@ -26,12 +27,13 @@ import (
 // string. Hardcoded group UUIDs are unreferenceable, unimportable, and go stale
 // the moment a group is recreated.
 //
-// No optimistic concurrency: `device_groups` never received the IaC-readiness
-// columns (platform#2038 covered endpoint policy only), so there is no
-// `version` attribute and writes are last-write-wins. If the platform adds the
-// provenance columns, add `version` + the four `managed_by*` computed
-// attributes here and thread the version through Update/Delete, exactly as
-// ferentin_edge_site does.
+// Optimistic concurrency arrived with platform migration 1217 (#2040 item 2):
+// `version` is threaded as `If-Match` on Update/Delete, and the four
+// `managed_by*` attributes surface provenance and drift. Before that this
+// resource was last-write-wins, which mattered because device groups are the
+// TARGETING dimension for endpoint policy — a group silently renamed under a
+// concurrent console edit is how a rule ends up scoped to something its author
+// did not intend.
 type DeviceGroupResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
@@ -49,6 +51,13 @@ type DeviceGroupResourceModel struct {
 	GroupID   types.String `tfsdk:"group_id"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
+
+	// IaC readiness (platform#2040 item 2).
+	Version           types.Int64  `tfsdk:"version"` // for If-Match
+	ManagedBy         types.String `tfsdk:"managed_by"`
+	ManagedByClientID types.String `tfsdk:"managed_by_client_id"`
+	ManagedByModule   types.String `tfsdk:"managed_by_module"`
+	LastModifiedBy    types.String `tfsdk:"last_modified_by"`
 }
 
 func NewDeviceGroupResource() resource.Resource { return &DeviceGroupResource{} }
@@ -82,9 +91,11 @@ func (r *DeviceGroupResource) Schema(_ context.Context, _ resource.SchemaRequest
 		MarkdownDescription: "Device group — the policy-scoping unit for managed devices. Reference " +
 			"`group_id` from `ferentin_endpoint_destination_rule.device_group_ids` or from a " +
 			"`ferentin_endpoint_policy_settings` override instead of hardcoding a UUID.\n\n" +
-			"This resource has **no optimistic-concurrency `version`**: the `device_groups` table " +
-			"does not carry the platform's IaC-readiness columns, so concurrent writes are " +
-			"last-write-wins.\n\n" +
+			"Carries `version` + the `managed_by*` provenance block, so a concurrent console edit is " +
+			"rejected with 412 rather than silently clobbered. That matters here specifically: device " +
+			"groups are the *targeting* dimension for endpoint policy, so a group renamed or recreated " +
+			"out from under Terraform is how a rule ends up scoped to something its author did not " +
+			"intend.\n\n" +
 			"### Required scopes\n\n" +
 			"Either `devices:groups:rw` (narrow — group CRUD only, held by the seeded " +
 			"`ferentin.iac.operator` role) or the broad `devices:rw`. Prefer the narrow one: " +
@@ -146,6 +157,35 @@ func (r *DeviceGroupResource) Schema(_ context.Context, _ resource.SchemaRequest
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"updated_at": schema.StringAttribute{Computed: true},
+
+			// ===== IaC-readiness attributes (platform#2040 item 2) =====
+			"version": schema.Int64Attribute{
+				MarkdownDescription: "Optimistic-concurrency version. Threaded as `If-Match` on " +
+					"Update/Delete so a concurrent console edit is rejected with 412 rather than " +
+					"silently clobbered. Read-only.",
+				Computed: true,
+			},
+			"managed_by": schema.StringAttribute{
+				MarkdownDescription: "Provenance of the original creator (`iac` for this provider). " +
+					"Immutable after create. A group synced from Jamf or SCIM reports whatever " +
+					"stamped it — not `iac`.",
+				Computed: true,
+			},
+			"managed_by_client_id": schema.StringAttribute{
+				MarkdownDescription: "OAuth2 `client_id` of the creator, from the authenticated " +
+					"principal (never a header).",
+				Computed: true,
+			},
+			"managed_by_module": schema.StringAttribute{
+				MarkdownDescription: "Module label this provider sent via `X-Ferentin-Managed-By-Module`.",
+				Computed:            true,
+			},
+			"last_modified_by": schema.StringAttribute{
+				MarkdownDescription: "Provenance of the most recent writer. **Divergence from " +
+					"`managed_by` is the drift signal** — `iac` + `console` means somebody renamed a " +
+					"Terraform-managed group in the admin console.",
+				Computed: true,
+			},
 		},
 	}
 }
@@ -207,7 +247,10 @@ func (r *DeviceGroupResource) Update(ctx context.Context, req resource.UpdateReq
 	setStringPtr(plan.Name, &body.Name)
 	setStringPtr(plan.Description, &body.Description)
 
-	group, err := r.sdk.DeviceGroups().Update(ctx, tenantID, state.GroupID.ValueString(), body)
+	// Version comes from state, never a literal — see the ferentin_mcp_policy note
+	// where a hardcoded 0 made every second update 412.
+	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
+	group, err := r.sdk.DeviceGroups().Update(ctx, tenantID, state.GroupID.ValueString(), version, body)
 	if err != nil {
 		addSDKError(&resp.Diagnostics, "Failed to update device group", err)
 		return
@@ -223,7 +266,8 @@ func (r *DeviceGroupResource) Delete(ctx context.Context, req resource.DeleteReq
 		return
 	}
 	tenantID := r.resolveTenant(state.TenantID)
-	err := r.sdk.DeviceGroups().Delete(ctx, tenantID, state.GroupID.ValueString())
+	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
+	err := r.sdk.DeviceGroups().Delete(ctx, tenantID, state.GroupID.ValueString(), version)
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
 		addSDKError(&resp.Diagnostics, "Failed to delete device group", err)
 	}
@@ -269,5 +313,11 @@ func deviceGroupToModel(tenantID string, g *adminapi.DeviceGroup) DeviceGroupRes
 	m.ExternalID = strPtrToTF(g.ExternalId)
 	m.CreatedAt = timePtrToTF(g.CreatedAt)
 	m.UpdatedAt = timePtrToTF(g.UpdatedAt)
+
+	m.Version = int64PtrToTF(g.Version)
+	m.ManagedBy = enumPtrToTF(g.ManagedBy)
+	m.ManagedByClientID = strPtrToTF(g.ManagedByClientId)
+	m.ManagedByModule = strPtrToTF(g.ManagedByModule)
+	m.LastModifiedBy = enumPtrToTF(g.LastModifiedBy)
 	return m
 }

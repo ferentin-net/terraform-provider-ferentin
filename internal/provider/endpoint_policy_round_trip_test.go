@@ -25,14 +25,21 @@ func TestDeviceGroupToModel_RoundTrip(t *testing.T) {
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	groupID := mustParseUUID(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
+	// Plain *string, not a typed enum: DeviceGroupResponse is a Java record whose
+	// components do not (yet) declare @Schema allowableValues, unlike the
+	// endpoint-policy DTOs. enumPtrToTF is generic over ~string so it handles both.
 	g := &adminapi.DeviceGroup{
-		GroupId:     &groupID,
-		Name:        strPtr("contractors"),
-		Description: strPtr("Third-party contractors"),
-		Source:      strPtr("scim"),
-		ExternalId:  strPtr("grp-42"),
-		CreatedAt:   &now,
-		UpdatedAt:   &now,
+		GroupId:           &groupID,
+		Name:              strPtr("contractors"),
+		Description:       strPtr("Third-party contractors"),
+		Source:            strPtr("scim"),
+		ExternalId:        strPtr("grp-42"),
+		CreatedAt:         &now,
+		UpdatedAt:         &now,
+		Version:           int64Ptr(4),
+		ManagedBy:         strPtr("iac"),
+		ManagedByClientId: strPtr("ferentin-iac-prod"),
+		LastModifiedBy:    strPtr("console"),
 	}
 
 	m := deviceGroupToModel(fixtureTenantID, g)
@@ -51,6 +58,23 @@ func TestDeviceGroupToModel_RoundTrip(t *testing.T) {
 	}
 	if got, want := m.ExternalID.ValueString(), "grp-42"; got != want {
 		t.Errorf("ExternalID = %q, want %q", got, want)
+	}
+
+	// Provenance (platform#2040 item 2). device_groups had NO concurrency control
+	// until migration 1217; a group silently renamed under a concurrent console
+	// edit re-scopes whatever endpoint policy targets it, so the version must land
+	// in state for If-Match to work at all.
+	if got, want := m.Version.ValueInt64(), int64(4); got != want {
+		t.Errorf("Version = %d, want %d", got, want)
+	}
+	if got, want := m.ManagedBy.ValueString(), "iac"; got != want {
+		t.Errorf("ManagedBy = %q, want %q", got, want)
+	}
+	if got, want := m.LastModifiedBy.ValueString(), "console"; got != want {
+		t.Errorf("LastModifiedBy = %q, want %q — divergence is the drift signal", got, want)
+	}
+	if got, want := m.ManagedByClientID.ValueString(), "ferentin-iac-prod"; got != want {
+		t.Errorf("ManagedByClientID = %q, want %q", got, want)
 	}
 }
 
