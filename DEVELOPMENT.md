@@ -120,9 +120,23 @@ workload tests need `idps:rw` specifically, not a blanket grant.
 
 The seeded `ferentin.iac.operator` role carries the policy and device scopes. A
 role-bound `client_credentials` client on a platform older than migration 1215
-has no `devices:groups:rw` and will 403 on the device-group tests. Grant what a
-test needs on the **local** client only — never widen the production client to
-make a test pass.
+has no `devices:groups:rw` and will 403 on the device-group tests.
+
+**`idps:rw` is a deliberate exclusion, not a gap.** Platform migration 783 keeps
+identity scopes (`idps:rw`, `users:rw`, `scim:rw`) out of `ferentin.iac.operator`
+— it calls them "the highest blast-radius IaC mistake" — along with
+`policy:activate` (separation of duties) and the self-escalation denylist
+(`clients:rw`, `keys:rw`, …). Do **not** widen that role to turn the workload
+tests green; that dissolves a boundary the platform team drew on purpose. Those
+two tests skip themselves unless the principal demonstrably holds the scope, or
+you opt in explicitly:
+
+```sh
+FERENTIN_ACC_IDENTITY_SCOPES=1 make testacc-local RUN='TestAccWorkload'
+```
+
+Run them as a principal that legitimately carries `idps:rw` — a tenant admin, or
+a purpose-built role — rather than by editing the IaC one.
 
 ### Running a subset
 

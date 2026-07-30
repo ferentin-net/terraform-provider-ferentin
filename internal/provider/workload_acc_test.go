@@ -1,7 +1,11 @@
 package provider
 
 import (
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -15,7 +19,7 @@ import (
 func TestAccWorkloadOAuthClient_basic(t *testing.T) {
 	name := "tf-acc-workload-cc-" + randomSuffix(t)
 	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
+		PreCheck:                 func() { testAccPreCheck(t); requireScope(t, "idps:rw") },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
@@ -52,7 +56,7 @@ func TestAccWorkloadOAuthClient_basic(t *testing.T) {
 func TestAccWorkloadIdentityProvider_basic(t *testing.T) {
 	name := "tf-acc-wip-" + randomSuffix(t)
 	resource.Test(t, resource.TestCase{
-		PreCheck:                 func() { testAccPreCheck(t) },
+		PreCheck:                 func() { testAccPreCheck(t); requireScope(t, "idps:rw") },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
@@ -112,4 +116,68 @@ resource "ferentin_workload_identity_provider" "test" {
   identity_claim    = "sub"
 }
 `, name)
+}
+
+// requireScope skips the calling test when the acceptance principal cannot
+// hold the scope the resource needs.
+//
+// This is not a workaround for a misconfigured environment. `idps:rw` is
+// deliberately absent from `ferentin.iac.operator` — platform migration 783
+// calls identity scopes "the highest blast-radius IaC mistake" and tells you to
+// mint a custom role if you genuinely need them. Widening the seeded IaC role
+// so a test goes green would dissolve a separation-of-duties boundary the
+// platform team drew on purpose.
+//
+// So: skip, loudly, rather than fail. A red suite that everyone learns to
+// ignore is the problem issue #6 exists to fix; a skip with a reason is
+// honest about what this principal was allowed to exercise.
+//
+// To run these deliberately, authenticate as a principal that legitimately
+// carries the scope (a tenant admin, or a purpose-built role) and set
+// FERENTIN_ACC_IDENTITY_SCOPES=1.
+func requireScope(t *testing.T, scope string) {
+	t.Helper()
+
+	if os.Getenv("FERENTIN_ACC_IDENTITY_SCOPES") == "1" {
+		return
+	}
+
+	// A static token can be inspected directly — no need for the opt-in when
+	// the principal demonstrably has the scope.
+	if tok := os.Getenv("FERENTIN_TOKEN"); tok != "" {
+		if scopes, err := scopesFromJWT(tok); err == nil {
+			for _, s := range scopes {
+				if s == scope {
+					return
+				}
+			}
+			t.Skipf("principal lacks %s (token scopes: %s) — see requireScope; "+
+				"set FERENTIN_ACC_IDENTITY_SCOPES=1 to run anyway", scope, strings.Join(scopes, " "))
+		}
+	}
+
+	t.Skipf("cannot confirm the principal holds %s. The seeded ferentin.iac.operator role "+
+		"deliberately excludes identity scopes; set FERENTIN_ACC_IDENTITY_SCOPES=1 to run "+
+		"these against a principal that has them", scope)
+}
+
+// scopesFromJWT reads the `scope` claim (space-delimited, per RFC 8693) from an
+// unverified access token. Test-only: the platform is the trust boundary, and
+// the worst case here is skipping a test that would have run.
+func scopesFromJWT(token string) ([]string, error) {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return nil, fmt.Errorf("not a JWT (got %d parts)", len(parts))
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return nil, fmt.Errorf("decode JWT payload: %w", err)
+	}
+	var claims struct {
+		Scope string `json:"scope"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return nil, fmt.Errorf("parse JWT claims: %w", err)
+	}
+	return strings.Fields(claims.Scope), nil
 }
