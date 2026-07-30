@@ -62,6 +62,7 @@ type AIAgentResourceModel struct {
 	ManagedBy         types.String `tfsdk:"managed_by"`
 	ManagedByClientID types.String `tfsdk:"managed_by_client_id"`
 	ManagedByModule   types.String `tfsdk:"managed_by_module"`
+	LastModifiedBy    types.String `tfsdk:"last_modified_by"`
 }
 
 func NewAIAgentResource() resource.Resource { return &AIAgentResource{} }
@@ -182,6 +183,15 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 			"managed_by":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"managed_by_client_id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"managed_by_module":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"last_modified_by": schema.StringAttribute{
+				MarkdownDescription: "Provenance of the most recent writer. Equal to `managed_by` at create " +
+					"time; **divergence is the drift signal** — `managed_by = \"iac\"` with " +
+					"`last_modified_by = \"console\"` means somebody edited a Terraform-managed agent in " +
+					"the admin console.\n\n" +
+					"Note this reported `unknown` on every read until the platform added the provenance " +
+					"columns to its OIDC-client projection; a stale admin-api still will.",
+				Computed: true,
+			},
 		},
 	}
 }
@@ -381,6 +391,7 @@ func agentToModel(tenantID string, a *adminapi.OIDCClientRow) AIAgentResourceMod
 	m.ManagedBy = enumPtrToTF(a.ManagedBy)
 	m.ManagedByClientID = strPtrToTF(a.ManagedByClientId)
 	m.ManagedByModule = strPtrToTF(a.ManagedByModule)
+	m.LastModifiedBy = enumPtrToTF(a.LastModifiedBy)
 	m.Scopes = stringSliceToList(a.Scopes)
 	m.RedirectUris = stringSliceToList(a.RedirectUris)
 	m.GrantTypes = stringSliceToList(a.GrantTypes)

@@ -160,6 +160,13 @@ func TestAccAIAgent_basic(t *testing.T) {
 					resource.TestCheckResourceAttrSet("ferentin_ai_agent.test", "client_secret"),
 					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "grant_types.0", "client_credentials"),
 					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "ai_client_type", "agent"),
+					// Provenance survives a read. These were `unknown`/null until the
+					// platform added the columns to its OIDC-client projection —
+					// import equality below is the real regression guard, since it
+					// compares the create response against a fresh GET.
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "managed_by", "iac"),
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "last_modified_by", "iac"),
+					resource.TestCheckResourceAttrSet("ferentin_ai_agent.test", "managed_by_client_id"),
 				),
 			},
 			{
@@ -168,20 +175,7 @@ func TestAccAIAgent_basic(t *testing.T) {
 				ImportStateVerify: true,
 				// `client_secret` is only returned on Create — import can't recover it.
 				//
-				// The managed_by* trio is a PLATFORM GAP, not a mapping bug:
-				// OidcClientRepositoryCustomImpl hand-writes the column list for
-				// both the list and find-by-id projections, and neither includes
-				// the provenance columns migration 786 added. So create echoes
-				// `iac` + client_id + module, and every subsequent read returns
-				// `unknown` with the other two null. Drop the ignore once the
-				// platform selects them; until then the drift signal these
-				// attributes exist to provide does not work on this resource.
-				ImportStateVerifyIgnore: []string{
-					"client_secret",
-					"managed_by",
-					"managed_by_client_id",
-					"managed_by_module",
-				},
+				ImportStateVerifyIgnore: []string{"client_secret"},
 			},
 		},
 	})

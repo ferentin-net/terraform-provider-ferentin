@@ -114,6 +114,9 @@ Left unset, the platform applies its own default, which does **not** include `cl
 - `client_type` (String)
 - `created_at` (String)
 - `id` (String) The ID of this resource.
+- `last_modified_by` (String) Provenance of the most recent writer. Equal to `managed_by` at create time; **divergence is the drift signal** — `managed_by = "iac"` with `last_modified_by = "console"` means somebody edited a Terraform-managed agent in the admin console.
+
+Note this reported `unknown` on every read until the platform added the provenance columns to its OIDC-client projection; a stale admin-api still will.
 - `managed_by` (String)
 - `managed_by_client_id` (String)
 - `managed_by_module` (String)
