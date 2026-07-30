@@ -174,6 +174,29 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   validator there could reject configs the API accepts today.
 
 ### Fixed
+- **`client_credentials` auth worked for nobody using the default `auth_url`.**
+  The derived default swapped `api.` → `auth.` and stopped there, but the
+  platform routes CC token mints **per tenant** and the SDK appends `/token` to
+  this value — so the provider posted to the global endpoint and the
+  authorization server refused:
+
+  > `invalid_request`: Tenant could not be determined. Use a tenant-specific
+  > endpoint for this grant type.
+
+  `auth_url` is consulted *only* on the `client_credentials` path, so its
+  default was guaranteed to fail for the one auth mode it exists to serve.
+  Anyone following the README with a service-account client hit it on their
+  first `terraform plan`; it went unnoticed because token auth
+  (`FERENTIN_TOKEN`) skips the mint entirely, and no acceptance test had ever
+  been run against a live platform.
+
+  The default now derives `<auth-base>/tenant/<tenant_id>`. Setting `auth_url`
+  explicitly still wins, which is how you select the subdomain form
+  (`https://<tenant>-sso.auth.<domain>`) — that one cannot be derived, because
+  its label is the tenant *slug* and the provider only ever sees the UUID.
+  Deriving without a `tenant_id` is now its own diagnostic rather than a
+  misleading "endpoint did not contain `api.`".
+
 - **Criteria conditions are sent in the shape the platform actually reads.**
   `ferentin_llm_policy`, `ferentin_mcp_policy`, and
   `ferentin_data_protection_policy` wrapped every condition `value` in a

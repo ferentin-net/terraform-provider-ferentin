@@ -69,7 +69,11 @@ variable "ferentin_client_secret" {
 
 ### Optional
 
-- `auth_url` (String) Authorization server base URL (used with `client_id` / `client_secret`). Falls back to env `FERENTIN_AUTH_URL`. Defaults to `endpoint` with `auth.` substituted for `api.` (e.g. `https://auth.ferentin.net` for endpoint `https://api.ferentin.net`).
+- `auth_url` (String) Authorization server base URL, used **only** with `client_id` / `client_secret`. Falls back to env `FERENTIN_AUTH_URL`.
+
+**Must be tenant-scoped.** The platform routes `client_credentials` token mints per tenant, so the value is either `<auth-base>/tenant/<tenant_id>` or the subdomain form `https://<tenant>-sso.auth.<domain>`. A bare `https://auth.<domain>` is rejected with *"Tenant could not be determined. Use a tenant-specific endpoint for this grant type."*
+
+Defaults to `endpoint` with `auth.` substituted for `api.` plus `/tenant/<tenant_id>` — e.g. endpoint `https://api.ferentin.net` with tenant `abc…` derives `https://auth.ferentin.net/tenant/abc…`. Set it explicitly for the subdomain form, or when the endpoint host does not start with `api.`.
 - `client_id` (String) OAuth2 client_id for service-account auth (client_credentials grant). Mutually exclusive with `token`. Pair with `client_secret`. Falls back to env `FERENTIN_CLIENT_ID`.
 - `client_secret` (String, Sensitive) OAuth2 client_secret. **Sensitive** — redacted in logs and plan output. Provider config does not persist to state. Pair with `client_id`. Falls back to env `FERENTIN_CLIENT_SECRET`.
 - `endpoint` (String) Admin-api base URL. Defaults to `https://api.ferentin.net` (production); override for local-dev or air-gapped deployments (e.g. `https://api.local.ferentin.test`). Falls back to env `FERENTIN_ENDPOINT`, then to the named profile's `endpoint` value in the shared config file, then to the production default.

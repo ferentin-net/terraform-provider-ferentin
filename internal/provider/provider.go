@@ -193,9 +193,17 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				Sensitive: true,
 			},
 			"auth_url": schema.StringAttribute{
-				MarkdownDescription: "Authorization server base URL (used with `client_id` / `client_secret`). " +
-					"Falls back to env `FERENTIN_AUTH_URL`. Defaults to `endpoint` with `auth.` substituted " +
-					"for `api.` (e.g. `https://auth.ferentin.net` for endpoint `https://api.ferentin.net`).",
+				MarkdownDescription: "Authorization server base URL, used **only** with `client_id` / " +
+					"`client_secret`. Falls back to env `FERENTIN_AUTH_URL`.\n\n" +
+					"**Must be tenant-scoped.** The platform routes `client_credentials` token mints " +
+					"per tenant, so the value is either `<auth-base>/tenant/<tenant_id>` or the " +
+					"subdomain form `https://<tenant>-sso.auth.<domain>`. A bare `https://auth.<domain>` " +
+					"is rejected with *\"Tenant could not be determined. Use a tenant-specific endpoint " +
+					"for this grant type.\"*\n\n" +
+					"Defaults to `endpoint` with `auth.` substituted for `api.` plus `/tenant/<tenant_id>` " +
+					"— e.g. endpoint `https://api.ferentin.net` with tenant `abc…` derives " +
+					"`https://auth.ferentin.net/tenant/abc…`. Set it explicitly for the subdomain form, " +
+					"or when the endpoint host does not start with `api.`.",
 				Optional: true,
 			},
 			"profile": schema.StringAttribute{
@@ -348,19 +356,33 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 		sdk, err = adminapi.NewWithToken(opts)
 		authMode = "profile=" + profileName
 	case ccPresent:
-		// Default auth_url: derive from endpoint by swapping `api.` → `auth.`.
-		// This is the platform's canonical pairing (api.ferentin.net pairs
-		// with auth.ferentin.net). If the user wants something else, they
-		// can set auth_url explicitly.
+		// Default auth_url: `api.` → `auth.` (the platform's canonical pairing),
+		// plus the per-tenant token path the grant requires. See deriveAuthURL
+		// for why the tenant path is mandatory rather than a nicety.
 		if authURL == "" {
-			authURL = deriveAuthURL(endpoint)
+			if tenantID == "" {
+				resp.Diagnostics.AddAttributeError(
+					path.Root("auth_url"),
+					"Cannot derive auth URL without a tenant",
+					"`client_credentials` mints against a PER-TENANT token endpoint, so deriving "+
+						"`auth_url` needs `tenant_id`.\n\nEither set `tenant_id` (or export "+
+						"FERENTIN_TENANT_ID), or set `auth_url` to the tenant-scoped base yourself — "+
+						"`https://auth.example.com/tenant/<tenant-uuid>`, or the subdomain form "+
+						"`https://<tenant>-sso.auth.example.com`.",
+				)
+				return
+			}
+			authURL = deriveAuthURL(endpoint, tenantID)
 		}
 		if authURL == "" {
 			resp.Diagnostics.AddAttributeError(
 				path.Root("auth_url"),
 				"Cannot derive auth URL from endpoint",
 				"Set `auth_url` explicitly, or export FERENTIN_AUTH_URL. "+
-					"Endpoint did not contain `api.` for the default `api.→auth.` substitution.",
+					"Endpoint did not contain `api.` for the default `api.→auth.` substitution.\n\n"+
+					"Note the value must be TENANT-SCOPED — `<base>/tenant/<tenant-uuid>` or "+
+					"`https://<tenant>-sso.auth.<domain>` — because the platform routes "+
+					"client_credentials mints per tenant.",
 			)
 			return
 		}
@@ -448,16 +470,32 @@ func resolveBearer(ctx context.Context, staticToken string, source adminapi.Toke
 	return source.Token(ctx)
 }
 
-// deriveAuthURL returns the platform's canonical auth-server URL for a given
-// admin-api endpoint by substituting `api.` with `auth.`. Returns "" if the
-// substitution doesn't apply — e.g. localhost endpoints or non-standard hosts
-// require an explicit `auth_url`.
-func deriveAuthURL(endpoint string) string {
+// deriveAuthURL returns the platform's canonical, TENANT-SCOPED auth-server base
+// for a given admin-api endpoint: `api.` becomes `auth.`, then the tenant path
+// the client_credentials grant requires is appended.
+//
+// The tenant path is not decoration. The platform routes CC token mints per
+// tenant (`/tenant/{id}/token`), and the SDK appends `/token` to whatever this
+// returns. A bare `https://auth.<domain>` therefore mints against the global
+// endpoint, which the authorization server rejects: "Tenant could not be
+// determined. Use a tenant-specific endpoint for this grant type."
+//
+// The subdomain form (`https://<tenant>-sso.auth.<domain>`) is the other valid
+// shape and deliberately is NOT derived: its label is the tenant *slug*, which
+// this provider never sees — only the UUID. Callers wanting it set `auth_url`.
+//
+// Precondition: tenantID is non-empty; the caller diagnoses that case
+// separately, because "no tenant" and "unrecognised endpoint host" need
+// different advice. Returns "" when the `api.` substitution doesn't apply —
+// localhost or a non-standard host must set `auth_url` explicitly.
+func deriveAuthURL(endpoint, tenantID string) string {
 	const marker = "://api."
-	if i := strings.Index(endpoint, marker); i >= 0 {
-		return endpoint[:i] + "://auth." + endpoint[i+len(marker):]
+	i := strings.Index(endpoint, marker)
+	if i < 0 {
+		return ""
 	}
-	return ""
+	base := strings.TrimRight(endpoint[:i]+"://auth."+endpoint[i+len(marker):], "/")
+	return base + "/tenant/" + tenantID
 }
 
 func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resource {
