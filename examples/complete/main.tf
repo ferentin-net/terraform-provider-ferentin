@@ -82,7 +82,7 @@ resource "ferentin_llm_policy" "default" {
     }
   ]
 
-  provider_instances = [ferentin_llm_provider.anthropic_prod.instance_name]
+  provider_instances = [ferentin_llm_provider.anthropic_prod.instance_id]
 }
 
 # --- MCP server (federated OAuth upstream) ------------------------------
@@ -99,7 +99,7 @@ resource "ferentin_mcp_server" "salesforce_us" {
   transport_type         = "streamable_http"
   deployment_mode        = "edge_routed"
   upstream_auth_strategy = "oauth2_user"
-  edge_site_id           = ferentin_edge_site.primary.synthetic_id
+  edge_site_id           = ferentin_edge_site.primary.site_id
   priority               = 100
 }
 
@@ -117,7 +117,7 @@ resource "ferentin_mcp_policy" "salesforce_allow" {
     rate_limit_per_minute = 120
   }
 
-  provider_instances = [ferentin_mcp_server.salesforce_us.name]
+  provider_instances = [ferentin_mcp_server.salesforce_us.server_id]
 }
 
 # --- Data & Content Protection (DLP) policy -----------------------------

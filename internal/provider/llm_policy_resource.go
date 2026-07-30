@@ -7,12 +7,14 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -209,10 +211,15 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"this policy routes to. Order determines failover order at runtime.\n\n" +
 					"Note: the platform's input contract historically accepted `instance_name` strings too — but " +
 					"on the response side it always normalizes to UUIDs, which means a name-based config would " +
-					"diff every plan. Always pass `instance_id`.",
+					"diff every plan. Always pass `instance_id` — a non-UUID entry is rejected at plan time.",
 				Optional:    true,
 				Computed:    true,
 				ElementType: types.StringType,
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(policyInstanceRefValidator{
+						attrHint: "`ferentin_llm_provider.<name>.instance_id`",
+					}),
+				},
 			},
 
 			"limits": schema.SingleNestedAttribute{

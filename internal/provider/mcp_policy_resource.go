@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -129,9 +130,14 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"provider_instances": schema.ListAttribute{
 				MarkdownDescription: "MCP server UUIDs (`ferentin_mcp_server.*.server_id`) this policy applies to. " +
 					"The platform validates each entry is a valid UUID and stores + echoes UUIDs — passing names " +
-					"causes perpetual drift.",
+					"causes perpetual drift, so a non-UUID entry is rejected at plan time.",
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
+				Validators: []validator.List{
+					listvalidator.ValueStringsAre(policyInstanceRefValidator{
+						attrHint: "`ferentin_mcp_server.<name>.server_id`",
+					}),
+				},
 			},
 			"effect": schema.SingleNestedAttribute{
 				MarkdownDescription: "Required effect — allow / deny + tool/toolset constraints + optional rate limit.",

@@ -1,3 +1,12 @@
+# `provider_instances` takes MCP server UUIDs, not names. The platform stores
+# and echoes UUIDs, so a name would drift on every plan; the provider rejects a
+# non-UUID at plan time rather than letting that reach the API. In a real
+# config this is `ferentin_mcp_server.<name>.server_id`.
+variable "internal_search_server_id" {
+  type        = string
+  description = "UUID of the MCP server these policies govern."
+}
+
 # MCP policy with allow effect — engineering-only access to internal search.
 resource "ferentin_mcp_policy" "engineering_search" {
   name        = "engineering-internal-search"
@@ -5,7 +14,7 @@ resource "ferentin_mcp_policy" "engineering_search" {
   priority    = 50
   enabled     = true
 
-  provider_instances = ["internal-search-us"]
+  provider_instances = [var.internal_search_server_id]
 
   effect = {
     type                  = "allow"
@@ -21,7 +30,7 @@ resource "ferentin_mcp_policy" "default_deny" {
   priority = 1000
   enabled  = true
 
-  provider_instances = ["internal-search-us"]
+  provider_instances = [var.internal_search_server_id]
 
   effect = {
     type    = "deny"

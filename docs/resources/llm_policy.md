@@ -25,6 +25,11 @@ terraform import ferentin_llm_policy.example <tenant_id>/<policy_id>
 ## Example Usage
 
 ```terraform
+variable "anthropic_instance_id" {
+  type        = string
+  description = "UUID of the ferentin_llm_provider instance this policy routes to."
+}
+
 # LLM governance policy with ABAC criteria + per-request limits.
 # See §6.4 of the design doc for the policy model.
 
@@ -34,8 +39,13 @@ resource "ferentin_llm_policy" "engineering_default" {
   priority    = 100
   enabled     = true
 
-  # Routing — references an existing ferentin_llm_provider.
-  provider_instances = ["anthropic-prod-us"]
+  # Routing. This takes instance UUIDs, not names: the platform accepts a name
+  # for backward compatibility but stores and returns the resolved UUID, so a
+  # name here fails the apply with "Provider produced inconsistent result after
+  # apply" — after the policy has already been written. The provider rejects a
+  # non-UUID at plan time to keep that from reaching the API. In a real config
+  # this is `ferentin_llm_provider.<name>.instance_id`.
+  provider_instances = [var.anthropic_instance_id]
 
   # Prompt injection.
   system_prompt = file("${path.module}/prompts/system.md")
@@ -95,7 +105,7 @@ resource "ferentin_llm_policy" "engineering_default" {
 - `prompt_cache_enabled` (Boolean) Enable prompt-cache routing (provider-dependent).
 - `provider_instances` (List of String) List of provider-instance **UUIDs** (from `ferentin_llm_provider.instance_id`) this policy routes to. Order determines failover order at runtime.
 
-Note: the platform's input contract historically accepted `instance_name` strings too — but on the response side it always normalizes to UUIDs, which means a name-based config would diff every plan. Always pass `instance_id`.
+Note: the platform's input contract historically accepted `instance_name` strings too — but on the response side it always normalizes to UUIDs, which means a name-based config would diff every plan. Always pass `instance_id` — a non-UUID entry is rejected at plan time.
 - `summary_enabled` (Boolean) Enable post-response summarization.
 - `system_prompt` (String) System prompt injected ahead of the user's prompt. Often loaded with `file()`.
 - `tenant_id` (String) Tenant UUID. Defaults to the provider-level value; immutable per-policy.

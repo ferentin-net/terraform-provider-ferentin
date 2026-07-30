@@ -257,7 +257,7 @@ resource "ferentin_mcp_server" "test" {
   endpoint               = "https://mcp-acctest.ferentin.test/mcp"
   transport_type         = "streamable_http"
   deployment_mode        = "edge_routed"
-  edge_site_id           = ferentin_edge_site.server_dep.synthetic_id
+  edge_site_id           = ferentin_edge_site.server_dep.site_id
   upstream_auth_strategy = "none"
 }
 `, name)

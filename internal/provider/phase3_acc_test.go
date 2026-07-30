@@ -220,7 +220,7 @@ resource "ferentin_llm_policy" "test" {
   name               = %[1]q
   description        = "acctest llm policy"
   priority           = 100
-  provider_instances = [ferentin_llm_provider.policy_dep.instance_name]
+  provider_instances = [ferentin_llm_provider.policy_dep.instance_id]
 
   criteria = [
     {
