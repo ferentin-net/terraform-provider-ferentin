@@ -128,8 +128,10 @@ identity scopes (`idps:rw`, `users:rw`, `scim:rw`) out of `ferentin.iac.operator
 `policy:activate` (separation of duties) and the self-escalation denylist
 (`clients:rw`, `keys:rw`, …). Do **not** widen that role to turn the workload
 tests green; that dissolves a boundary the platform team drew on purpose. Those
-two tests skip themselves unless the principal demonstrably holds the scope, or
-you opt in explicitly:
+two tests skip themselves when the platform answers 403 — keyed off the API's
+own answer, not the token's `scope` claim, since `hasScopeInTenant` consults the
+role binding for the tenant and a token can carry a scope the principal cannot
+exercise there. To run them for real, opt in:
 
 ```sh
 FERENTIN_ACC_IDENTITY_SCOPES=1 make testacc-local RUN='TestAccWorkload'
