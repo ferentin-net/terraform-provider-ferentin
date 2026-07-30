@@ -36,7 +36,7 @@ test:
 # TF_ACC must be set to opt in to network-bound acceptance tests; otherwise
 # they skip. Set TF_LOG=DEBUG to see provider HTTP traffic.
 testacc:
-	TF_ACC=1 go test ./internal/provider -v -count=1 -timeout 30m
+	TF_ACC=1 go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
 # Acceptance run against LOCAL DEV (the `nginx` profile on this machine).
 #
@@ -49,6 +49,19 @@ testacc:
 # holding policy:rw plus devices:groups:rw or devices:rw. Export FERENTIN_TOKEN,
 # or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET, and FERENTIN_TENANT_ID first.
 # INSECURE_SKIP_VERIFY is set because local dev serves a self-signed cert.
+#
+# Pass RUN= to run a subset, which is usually what you want when validating one
+# resource:
+#
+#   make testacc-local RUN='TestAccDeviceGroup|TestAccEndpointDestinationRule'
+#
+# Prefer it over a full run with FERENTIN_CLIENT_ID auth. Each test and each
+# step builds a fresh provider, so each mints a token, and the auth-server's
+# client_credentials burst limit defaults to 10 per 10s — a full suite trips it
+# and the remaining tests fail as `rate_limit_exceeded` (before the platform
+# fix, misreported as `invalid_client`, which looks exactly like bad
+# credentials). The SDK now backs off on 429, but a subset is still faster and
+# does not spend a shared budget. FERENTIN_TOKEN avoids minting entirely.
 testacc-local:
 	@test -n "$$FERENTIN_TENANT_ID" || { echo "FERENTIN_TENANT_ID must be set"; exit 1; }
 	@test -n "$$FERENTIN_TOKEN" -o -n "$$FERENTIN_CLIENT_ID" || \
@@ -56,7 +69,7 @@ testacc-local:
 	TF_ACC=1 \
 	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test} \
 	FERENTIN_INSECURE_SKIP_VERIFY=1 \
-	go test ./internal/provider -v -count=1 -timeout 30m
+	go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
 tidy:
 	go mod tidy
