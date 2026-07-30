@@ -67,7 +67,7 @@ func TestAccWorkloadIdentityProvider_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("ferentin_workload_identity_provider.test", "protocol_type", "WORKLOAD_IDENTITY"),
 					resource.TestCheckResourceAttr("ferentin_workload_identity_provider.test", "active", "true"),
 					resource.TestCheckResourceAttr("ferentin_workload_identity_provider.test", "aws", "true"),
-					resource.TestCheckResourceAttr("ferentin_workload_identity_provider.test", "workload_identity ", "true"),
+					resource.TestCheckResourceAttr("ferentin_workload_identity_provider.test", "workload_identity", "true"),
 				),
 			},
 			{
