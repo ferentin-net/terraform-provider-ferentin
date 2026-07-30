@@ -87,6 +87,13 @@ func TestAccEdgeSite_basic(t *testing.T) {
 				ImportState:       true,
 				ImportStateVerify: true,
 				// id format is "<tenant>/<site_id>" — auto-derived from state.
+				//
+				// `current_devices` is a runtime statistic, not configuration:
+				// the create response omits it (state: null) while the GET the
+				// import performs returns 0, so verify sees a difference that
+				// says nothing about the mapping. It is Computed, so the value
+				// settles on the next refresh either way.
+				ImportStateVerifyIgnore: []string{"current_devices"},
 			},
 		},
 	})
@@ -137,7 +144,8 @@ func TestAccMCPServer_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ferentin_mcp_server.test", "name", name),
 					resource.TestCheckResourceAttr("ferentin_mcp_server.test", "transport_type", "streamable_http"),
-					resource.TestCheckResourceAttr("ferentin_mcp_server.test", "deployment_mode", "public"),
+					resource.TestCheckResourceAttr("ferentin_mcp_server.test", "deployment_mode", "edge_routed"),
+					resource.TestCheckResourceAttrSet("ferentin_mcp_server.test", "edge_site_id"),
 					resource.TestCheckResourceAttr("ferentin_mcp_server.test", "enabled", "true"),
 				),
 			},
@@ -220,12 +228,21 @@ resource "ferentin_llm_provider" "test" {
 // `endpoint` (a required attribute the old fixture omitted entirely) rather
 // than inheriting `default_url`.
 //
-// The host is `.ferentin.test`, not `.example.com`: the provider's own
-// ValidateConfig rejects `.example.{com,org,net}` on a `public` deployment
-// because the platform's SSRF guard does, while `.test` (RFC 2606) is
-// deliberately allowed. Nothing probes it — create is a plain persist.
+// `edge_routed`, not `public`, and that is load-bearing rather than incidental
+// coverage. On a `public` instance the platform runs the strict cloud-dial SSRF
+// check, which RESOLVES the hostname and 400s with "Failed to resolve hostname"
+// for anything that doesn't exist in DNS — so no invented host works, and a
+// real one would make the suite depend on the outside world. `edge_routed`
+// takes SsrfProtectionService's relaxed path (admin-api never dials these URLs;
+// the customer's service-edge does), which is exactly why the interlock exists.
+// It needs an `edge_site_id`, so the fixture creates its own site.
 func configMCPServer(name string) string {
 	return providerBlock() + fmt.Sprintf(`
+resource "ferentin_edge_site" "server_dep" {
+  site_id   = "%[1]s-site"
+  site_name = "%[1]s site"
+}
+
 resource "ferentin_mcp_provider" "server_dep" {
   display_name            = "%[1]s-provider"
   description             = "acctest provider backing %[1]s"
@@ -239,7 +256,8 @@ resource "ferentin_mcp_server" "test" {
   provider_id            = ferentin_mcp_provider.server_dep.provider_id
   endpoint               = "https://mcp-acctest.ferentin.test/mcp"
   transport_type         = "streamable_http"
-  deployment_mode        = "public"
+  deployment_mode        = "edge_routed"
+  edge_site_id           = ferentin_edge_site.server_dep.synthetic_id
   upstream_auth_strategy = "none"
 }
 `, name)

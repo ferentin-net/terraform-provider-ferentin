@@ -201,16 +201,30 @@ resource "ferentin_mcp_policy" "test" {
 `, name, effect, ratePerMinute)
 }
 
+// configLLMPolicy carries its own provider instance: `providerInstances` is
+// `@NotEmpty` on LlmPolicyCreateRequest, so a policy that governs nothing is a
+// 400, not an empty-but-valid policy. The old fixture omitted it entirely.
 func configLLMPolicy(name, operator string) string {
 	return providerBlock() + fmt.Sprintf(`
+resource "ferentin_llm_provider" "policy_dep" {
+  provider_type      = "anthropic"
+  instance_name      = "%[1]s-inst"
+  display_name       = "%[1]s instance"
+  priority           = 100
+  enabled            = true
+  api_key            = "test-key"
+  api_key_wo_version = 1
+}
+
 resource "ferentin_llm_policy" "test" {
-  name        = %q
-  description = "acctest llm policy"
-  priority    = 100
+  name               = %[1]q
+  description        = "acctest llm policy"
+  priority           = 100
+  provider_instances = [ferentin_llm_provider.policy_dep.instance_name]
 
   criteria = [
     {
-      operator    = %q
+      operator    = %[2]q
       type        = "user"
       description = "All users in this acctest"
       conditions = [
