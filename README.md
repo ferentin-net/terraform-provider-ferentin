@@ -30,7 +30,7 @@ resource "ferentin_edge_site" "us_east" {
 }
 ```
 
-A multi-resource end-to-end composition lives in [`examples/complete/`](examples/complete/). The [`examples/mcp-server-from-card/`](examples/mcp-server-from-card/) example drives an MCP provider + server pair from a discovered [`server-card.json`](https://modelcontextprotocol.io) so the Terraform config stays in sync with the upstream MCP server as it evolves.
+A multi-resource end-to-end composition lives in [`examples/complete/`](examples/complete/). The [`examples/mcp-server-from-card/`](examples/mcp-server-from-card/) example drives an MCP provider + server pair from a discovered [`server-card.json`](https://modelcontextprotocol.io) so the Terraform config stays in sync with the upstream MCP server as it evolves. [`examples/endpoint-fleet/`](examples/endpoint-fleet/) covers the managed-device surface on its own — device groups, the on-device destination-rule priority ladder, and posture staged from observe to enforce.
 
 ## Authentication
 
