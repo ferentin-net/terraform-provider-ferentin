@@ -8,10 +8,10 @@ resource "ferentin_mcp_policy" "engineering_search" {
   provider_instances = ["internal-search-us"]
 
   effect = {
-    type                   = "allow"
-    grant_toolsets         = ["search:read", "search:cite"]
-    rate_limit_per_minute  = 30
-    message                = "Internal search granted via engineering policy."
+    type                  = "allow"
+    grant_toolsets        = ["search:read", "search:cite"]
+    rate_limit_per_minute = 30
+    message               = "Internal search granted via engineering policy."
   }
 }
 
