@@ -47,7 +47,7 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 					{
 						Field:    "department",
 						Operator: gen.CriteriaConditionOperator("equals"),
-						Value:    &map[string]interface{}{"value": "legal"},
+						Value:    "legal",
 					},
 				},
 			},
@@ -137,8 +137,9 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 		t.Errorf("detector_configs[EXFILTRATION_URL] = %q", configs["EXFILTRATION_URL"])
 	}
 
-	// criteria — nested ABAC, with the {"value":...} envelope unwrapped to a
-	// jsonencode-style string.
+	// criteria — nested ABAC. The platform stores and echoes the value RAW
+	// (platform#2040); state carries it as the jsonencode-style string the
+	// operator wrote.
 	if len(m.Criteria) != 1 {
 		t.Fatalf("criteria len = %d; want 1", len(m.Criteria))
 	}

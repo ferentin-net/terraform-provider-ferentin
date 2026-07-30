@@ -7,14 +7,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -57,8 +55,8 @@ type LLMPolicyResourceModel struct {
 
 	ProviderInstances types.List `tfsdk:"provider_instances"` // []string
 
-	Limits   *LLMPolicyLimitsModel    `tfsdk:"limits"`
-	Criteria []LLMPolicyCriteriaModel `tfsdk:"criteria"`
+	Limits   *LLMPolicyLimitsModel `tfsdk:"limits"`
+	Criteria []PolicyCriteriaModel `tfsdk:"criteria"`
 
 	// Computed / server-set
 	PolicyID          types.String `tfsdk:"policy_id"`
@@ -87,27 +85,6 @@ type LLMPolicyLimitsModel struct {
 	RequestTimeoutMs      types.Int64 `tfsdk:"request_timeout_ms"`
 	StreamTimeoutMs       types.Int64 `tfsdk:"stream_timeout_ms"`
 	EnforceModelLimits    types.Bool  `tfsdk:"enforce_model_limits"`
-}
-
-// LLMPolicyCriteriaModel mirrors PolicyCriteria.
-type LLMPolicyCriteriaModel struct {
-	Operator    types.String                      `tfsdk:"operator"`
-	Type        types.String                      `tfsdk:"type"`
-	Description types.String                      `tfsdk:"description"`
-	Conditions  []LLMPolicyCriteriaConditionModel `tfsdk:"conditions"`
-}
-
-// LLMPolicyCriteriaConditionModel mirrors CriteriaCondition. The `value`
-// is a JSON-encoded string — the user writes `value = jsonencode("…")` or
-// `value = jsonencode([...])`; the SDK marshals as `{"value": <decoded>}`
-// to fit the platform's `map[string]interface{}` wire shape.
-type LLMPolicyCriteriaConditionModel struct {
-	Field         types.String `tfsdk:"field"`
-	Operator      types.String `tfsdk:"operator"`
-	Value         types.String `tfsdk:"value"`
-	ValueType     types.String `tfsdk:"value_type"`
-	CaseSensitive types.Bool   `tfsdk:"case_sensitive"`
-	Description   types.String `tfsdk:"description"`
 }
 
 func NewLLMPolicyResource() resource.Resource {
@@ -289,67 +266,13 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				},
 			},
 
-			"criteria": schema.ListNestedAttribute{
-				MarkdownDescription: "ABAC criteria for matching requests. Each entry combines `conditions` with " +
+			"criteria": criteriaSchemaAttribute(criteriaSchemaOptions{
+				Description: "ABAC criteria for matching requests. Each entry combines `conditions` with " +
 					"a logical operator (AND / OR). Multiple criteria entries are themselves ANDed.",
-				Optional: true,
-				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"operator": schema.StringAttribute{
-							MarkdownDescription: "Logical operator joining the conditions: `AND` or `OR`.",
-							Required:            true,
-							Validators: []validator.String{
-								stringvalidator.OneOf("AND", "OR"),
-							},
-						},
-						"type": schema.StringAttribute{
-							MarkdownDescription: "Criteria type. Typically `user` or `request`. Server default applies if unset.",
-							Optional:            true,
-							Computed:            true,
-						},
-						"description": schema.StringAttribute{
-							MarkdownDescription: "Optional human-readable description.",
-							Optional:            true,
-						},
-						"conditions": schema.ListNestedAttribute{
-							MarkdownDescription: "Conditions evaluated under the parent `operator`.",
-							Required:            true,
-							NestedObject: schema.NestedAttributeObject{
-								Attributes: map[string]schema.Attribute{
-									"field": schema.StringAttribute{
-										MarkdownDescription: "Field path to evaluate (e.g. `user.department`).",
-										Required:            true,
-									},
-									"operator": schema.StringAttribute{
-										MarkdownDescription: "Comparison operator (`equals`, `in`, `lt`, `gt`, …).",
-										Required:            true,
-									},
-									"value": schema.StringAttribute{
-										MarkdownDescription: "JSON-encoded value to compare against. Examples: " +
-											"`jsonencode(\"engineering\")`, `jsonencode([\"a\",\"b\"])`, `jsonencode(100)`.",
-										Optional: true,
-									},
-									"value_type": schema.StringAttribute{
-										MarkdownDescription: "Optional type hint for the value (`string`, `int`, `list`, …). " +
-											"The platform defaults it to `string` when unset.",
-										Optional: true,
-										Computed: true,
-									},
-									"case_sensitive": schema.BoolAttribute{
-										MarkdownDescription: "For string operations. Platform defaults to `true` when omitted.",
-										Optional:            true,
-										Computed:            true,
-									},
-									"description": schema.StringAttribute{
-										MarkdownDescription: "Optional description.",
-										Optional:            true,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+				TypeDescription:  "Criteria type. Typically `user` or `request`. Server default applies if unset.",
+				FieldDescription: "Field path to evaluate (e.g. `user.department`).",
+				ValueExample:     "`jsonencode(\"engineering\")`",
+			}),
 
 			// Computed / server-set
 			"policy_id": schema.StringAttribute{

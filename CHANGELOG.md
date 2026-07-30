@@ -72,8 +72,10 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     Added first so `device_group_ids` can be a reference
     (`ferentin_device_group.contractors.group_id`) rather than a hardcoded UUID
     that is unreferenceable, unimportable, and stale the moment a group is
-    recreated. Note: `device_groups` carries no `version` column, so this
-    resource has no optimistic concurrency — writes are last-write-wins.
+    recreated. Exposes `version` plus the four `managed_by*` provenance
+    attributes and threads the version through Update/Delete as `If-Match`,
+    once platform migration 1217 gave `device_groups` the IaC-readiness columns
+    (platform #2040 item 2 — before that, writes were last-write-wins).
     Requires `devices:groups:rw` (narrow, group-CRUD-only — held by the
     seeded `ferentin.iac.operator` role as of platform migration 1215) or the
     broad `devices:rw`. Prefer the narrow scope: `devices:rw` also grants
@@ -86,7 +88,8 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     provenance attributes. Cross-field rules (`ai_provider` ⇒ `catalog_slug`,
     `host` ⇒ `destination_hosts`, `steer` ⇒ `steer_to_url`, https-only URLs)
     are validated at **plan** time via `ValidateConfig` rather than surfacing as
-    an opaque 400 at apply.
+    an opaque 400 at apply. Subject scoping is authored with a `criteria` block
+    (see below).
   - **`ferentin_endpoint_policy_settings`** — endpoint posture, either the
     tenant default (omit `device_group_id`) or a per-group override. The
     platform API is upsert-only, which drives three documented deviations:
@@ -110,6 +113,30 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     resets to permissive. A group override, which the platform *can* delete, is
     genuinely deleted and the group falls back to the tenant default.
 
+- **`criteria` on `ferentin_endpoint_destination_rule`** — user/department ABAC
+  scoping is now authorable from Terraform, replacing the read-only
+  `criteria_json` passthrough that only *preserved* what the console wrote
+  (platform #2040 item 1). A Terraform-only shop can now express "legal may use
+  ChatGPT" without touching the admin console. The block is the same shape as
+  the one on `ferentin_llm_policy` / `ferentin_mcp_policy` /
+  `ferentin_data_protection_policy`, plus the rule's own `criteria_combinator`
+  for how GROUPS combine.
+
+  Two things worth knowing before you write one:
+  - **Removing criteria widens the rule.** Criteria narrow a rule to a
+    population, so a config that drops the block turns "legal may use ChatGPT"
+    into "everyone may". `terraform plan` shows the removal and the provider
+    adds a warning naming the rule and the group count. Unlike `criteria_json`,
+    criteria authored in the console are no longer preserved for you —
+    Terraform owns the field now.
+  - **Not yet enforced on-device.** The endpoint agent ships criteria in the
+    policy bundle but refuses to match a rule that has them until the on-device
+    user principal lands (platform #2014). That is fail-closed for `allow` and
+    `steer`; a criteria-scoped `block` does not block.
+
+  `criteria_json` is removed rather than deprecated — it never appeared in a
+  tagged release.
+
 - **`model_constraints` on `ferentin_llm_provider`** — nested
   `{ mode = "allowlist", models = [...] }` attribute that pins an
   instance to a specific set of catalog models. Persisted on the
@@ -117,7 +144,67 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   on Read so drift detection works. See the resource example for a
   GPT-5.5-only configuration.
 
+### Changed
+- **One shared `criteria` implementation across all four resources that have
+  one.** `ferentin_llm_policy`, `ferentin_mcp_policy`, and
+  `ferentin_data_protection_policy` each carried a near-identical private copy
+  of the schema, models, and both conversion directions; adding
+  `ferentin_endpoint_destination_rule` as the fourth caller made that a copy too
+  many (platform #2040). The schema, attribute names, and semantics are
+  unchanged for the three existing resources — the extraction is deliberately
+  behaviour-preserving, and the only generated-doc changes are wording.
+
+  Three small behaviour changes come with it. Two move a server-side rejection
+  to plan time:
+  - `conditions` must now have at least one entry, mirroring `@NotEmpty` on the
+    platform's `PolicyCriteria`. A group with none has no defined truth value;
+    the three policy resources would 400 on it at apply.
+  - A criteria block whose `value` fails to convert can no longer be silently
+    dropped from the request. Previously the diagnostic was discarded when *no*
+    criteria converted, which sent a policy with no criteria at all — i.e. one
+    that matches everyone.
+
+  And one is endpoint-only: `criteria[].type` on
+  `ferentin_endpoint_destination_rule` is now restricted to the platform's enum
+  (`claims`, `context`, `request`, `time`). That column is stored opaquely and
+  validated nowhere server-side, so a typo used to survive the write and reach
+  the agent, which **drops** a rule whose criteria will not parse — fail-open
+  for a `block` rule. The three policy resources are left unvalidated: they go
+  through typed DTOs, and their Java DTO enforces only `@NotBlank`, so a
+  validator there could reject configs the API accepts today.
+
 ### Fixed
+- **Criteria conditions are sent in the shape the platform actually reads.**
+  `ferentin_llm_policy`, `ferentin_mcp_policy`, and
+  `ferentin_data_protection_policy` wrapped every condition `value` in a
+  `{"value": <actual>}` envelope. Nothing on the platform ever unwrapped it —
+  shared-core's `PolicyCriteriaEvaluator` compares `condition.getValue()`
+  directly, so `Objects.equals("legal", Map{value=legal})` is `false`.
+
+  **Every criteria-scoped policy this provider wrote silently applied to
+  nobody.** For a restrictive policy (deny tools, DLP redaction, limits) scoped
+  to a population, that is fail-open: the population it was written to
+  constrain was never constrained. In the other direction, a policy whose
+  criteria were authored in the admin console could not be read at all — the
+  raw value failed SDK decode, so `terraform plan` errored outright.
+
+  Root cause was a generated type, not provider logic: springdoc renders Java
+  `Object value` as `{type: object}`, which oapi-codegen turned into
+  `*map[string]interface{}` — a Go type that literally cannot hold the string,
+  array, or number the field carries. Fixed at the source in
+  ferentin-cli-app (`scripts/refresh-openapi.sh` Patch E strips the bogus
+  `type` so codegen emits `interface{}`, matching the existing Patch B
+  precedent for the same springdoc quirk), then regenerated. The provider now
+  sends and reads the value raw, identical to what the admin console writes.
+
+  **Upgrade note — one expected diff per affected condition.** Rows written by
+  an older provider still contain the envelope. The first `plan` after
+  upgrading shows `{"value":"legal"}` → `"legal"`; applying it repairs the row
+  and the policy starts matching. The provider deliberately does **not**
+  unwrap legacy envelopes on read: that would make state equal config, produce
+  no diff, and leave a policy that matches nobody in place indefinitely. If
+  you have criteria-scoped policies, expect that diff and take it.
+
 - **`ferentin_mcp_policy` updates no longer 412 after the first one.** Update
   hardcoded `If-Match: W/"0"` regardless of the row's real version. That is
   correct exactly once — for a freshly-created policy — and a guaranteed 412 for

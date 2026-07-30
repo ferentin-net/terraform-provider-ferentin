@@ -2,7 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
@@ -58,11 +57,9 @@ type EndpointDestinationRuleResourceModel struct {
 	AppSigningIDs types.List `tfsdk:"app_signing_ids"`
 	AppTeamIDs    types.List `tfsdk:"app_team_ids"`
 
-	DeviceGroupIDs     types.List   `tfsdk:"device_group_ids"`
-	CriteriaCombinator types.String `tfsdk:"criteria_combinator"`
-	// Read-only passthrough so a PUT does not destroy criteria this resource
-	// cannot author. See the schema doc and toWrite.
-	CriteriaJSON types.String `tfsdk:"criteria_json"`
+	DeviceGroupIDs     types.List            `tfsdk:"device_group_ids"`
+	CriteriaCombinator types.String          `tfsdk:"criteria_combinator"`
+	Criteria           []PolicyCriteriaModel `tfsdk:"criteria"`
 
 	RuleID    types.String `tfsdk:"rule_id"`
 	CreatedAt types.String `tfsdk:"created_at"`
@@ -85,6 +82,7 @@ var (
 	_ resource.ResourceWithConfigure      = (*EndpointDestinationRuleResource)(nil)
 	_ resource.ResourceWithImportState    = (*EndpointDestinationRuleResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*EndpointDestinationRuleResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*EndpointDestinationRuleResource)(nil)
 )
 
 func (r *EndpointDestinationRuleResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -116,29 +114,41 @@ func (r *EndpointDestinationRuleResource) Configure(_ context.Context, req resou
 //
 // Unknown values (interpolations not yet resolved at plan time) are skipped —
 // validating them would produce spurious failures for perfectly valid configs.
+//
+// The five attributes are read INDIVIDUALLY rather than through a whole-model
+// Get. `criteria` is backed by a Go slice, and the framework cannot put an
+// unknown into one: a config whose criteria are computed (a for-expression over
+// a resource that does not exist yet) would fail the entire plan with "Value
+// Conversion Error … always an error in the provider" before reaching any of
+// the checks below. types.String / types.List targets carry unknown natively.
 func (r *EndpointDestinationRuleResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var cfg EndpointDestinationRuleResourceModel
-	resp.Diagnostics.Append(req.Config.Get(ctx, &cfg)...)
+	var destinationKind, catalogSlug, action, steerToURL types.String
+	var destinationHosts types.List
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("destination_kind"), &destinationKind)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("catalog_slug"), &catalogSlug)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("destination_hosts"), &destinationHosts)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("action"), &action)...)
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("steer_to_url"), &steerToURL)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	kind := "ai_provider"
-	if !cfg.DestinationKind.IsNull() && !cfg.DestinationKind.IsUnknown() {
-		kind = cfg.DestinationKind.ValueString()
+	if !destinationKind.IsNull() && !destinationKind.IsUnknown() {
+		kind = destinationKind.ValueString()
 	}
 
-	if kind == "ai_provider" && isUnsetString(cfg.CatalogSlug) {
+	if kind == "ai_provider" && isUnsetString(catalogSlug) {
 		resp.Diagnostics.AddAttributeError(path.Root("catalog_slug"),
 			"catalog_slug is required when destination_kind is \"ai_provider\"",
 			"Set catalog_slug (e.g. \"openai\"), or switch destination_kind to \"host\" and set destination_hosts.")
 	}
-	if kind == "host" && isUnsetList(cfg.DestinationHosts) {
+	if kind == "host" && isUnsetList(destinationHosts) {
 		resp.Diagnostics.AddAttributeError(path.Root("destination_hosts"),
 			"destination_hosts is required when destination_kind is \"host\"",
 			"List at least one host or suffix, or switch destination_kind to \"ai_provider\" and set catalog_slug.")
 	}
-	if !cfg.Action.IsUnknown() && cfg.Action.ValueString() == "steer" && isUnsetString(cfg.SteerToURL) {
+	if !action.IsUnknown() && action.ValueString() == "steer" && isUnsetString(steerToURL) {
 		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
 			"steer_to_url is required when action is \"steer\"",
 			"Point it at the https:// base URL of the service-edge that should receive the steered traffic.")
@@ -263,31 +273,36 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 				Optional: true, Computed: true, ElementType: types.StringType,
 			},
 			"criteria_combinator": schema.StringAttribute{
-				MarkdownDescription: "How user/department ABAC criteria combine: `AND` or `OR`. " +
-					"Default `AND`.\n\n" +
-					"~> Criteria themselves cannot be *authored* here yet — see `criteria_json`.",
+				MarkdownDescription: "How `criteria` GROUPS combine: `AND` or `OR`. Default `AND`. " +
+					"Conditions *within* a group combine via that group's own `operator`, so this only " +
+					"matters once a rule has two or more groups.",
 				Optional: true, Computed: true,
 				Default:    stringdefault.StaticString("AND"),
 				Validators: []validator.String{stringvalidator.OneOf("AND", "OR")},
 			},
 
-			"criteria_json": schema.StringAttribute{
-				MarkdownDescription: "The rule's user/department ABAC criteria, as an opaque JSON string. " +
-					"**Read-only, and preserved rather than managed.**\n\n" +
-					"Criteria cannot be authored from Terraform yet. But the platform's update is a PUT " +
-					"full replace that sets `criteria` from the request unconditionally, so a provider " +
-					"that simply omitted the field would **silently delete** criteria authored in the " +
-					"admin console on every `terraform apply`. That is a fail-open: criteria *narrow* a " +
-					"rule to a population, and the endpoint agent currently refuses to match a rule that " +
-					"has them — so wiping them flips a rule from inert to active for everyone it " +
-					"targets.\n\n" +
-					"This attribute therefore round-trips the server's value back unchanged. A concurrent " +
-					"console edit to criteria bumps `version`, so the stale value is rejected by " +
-					"`If-Match` (412) rather than re-applied. Authoring criteria from Terraform is a " +
-					"follow-up.",
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-			},
+			"criteria": criteriaSchemaAttribute(criteriaSchemaOptions{
+				Description: "User/department ABAC criteria that **narrow** the rule to a population. " +
+					"Groups combine via `criteria_combinator`; omitting criteria entirely means the rule " +
+					"applies to **every user** it otherwise targets.\n\n" +
+					"~> **Removing criteria widens the rule.** Because criteria narrow rather than " +
+					"extend, dropping this block from a config that had one is a fail-open change — an " +
+					"`allow` rule scoped to one department becomes an allow for everyone in the targeted " +
+					"device groups. `terraform plan` shows the removal, and the provider adds a warning " +
+					"on top of it; read both before approving.\n\n" +
+					"~> **Not yet enforced on-device.** The endpoint agent ships criteria in the policy " +
+					"bundle but refuses to match a rule that has them until the on-device user principal " +
+					"lands (platform#2014), so a criteria-scoped rule is inert on the fleet today. That " +
+					"is fail-closed for `allow` and `steer`, and it means a `block` rule scoped by " +
+					"criteria does not block.",
+				TypeDescription: "Criteria type. `claims` (the default) matches the signed-in user's " +
+					"identity claims. Unlike the policy resources, this column is stored opaquely by " +
+					"the platform, so nothing is defaulted server-side.",
+				TypeDefault:      "claims",
+				TypeOneOf:        []string{"claims", "context", "request", "time"},
+				FieldDescription: "Field path to evaluate (e.g. `department`, `email`, `groups`).",
+				ValueExample:     "`jsonencode(\"legal\")`",
+			}),
 
 			"rule_id": schema.StringAttribute{
 				Computed:      true,
@@ -339,9 +354,12 @@ func (r *EndpointDestinationRuleResource) Create(ctx context.Context, req resour
 	}
 	tenantID := r.resolveTenant(plan.TenantID)
 
-	body, invalidGroups := plan.toWrite(ctx)
+	body, invalidGroups, diags := plan.toWrite(ctx)
+	resp.Diagnostics.Append(diags...)
 	if len(invalidGroups) > 0 {
 		addInvalidGroupDiag(&resp.Diagnostics, invalidGroups)
+	}
+	if resp.Diagnostics.HasError() {
 		return
 	}
 	rule, err := r.sdk.EndpointPolicies().CreateRule(ctx, tenantID, body)
@@ -349,7 +367,7 @@ func (r *EndpointDestinationRuleResource) Create(ctx context.Context, req resour
 		addSDKError(&resp.Diagnostics, "Failed to create endpoint destination rule", err)
 		return
 	}
-	state := endpointRuleToModel(tenantID, rule)
+	state := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -369,7 +387,7 @@ func (r *EndpointDestinationRuleResource) Read(ctx context.Context, req resource
 		addSDKError(&resp.Diagnostics, "Failed to read endpoint destination rule", err)
 		return
 	}
-	refreshed := endpointRuleToModel(tenantID, rule)
+	refreshed := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -384,9 +402,12 @@ func (r *EndpointDestinationRuleResource) Update(ctx context.Context, req resour
 
 	// Version comes from state — never a literal. See the platform#2038 note on
 	// ferentin_mcp_policy, where a hardcoded 0 made every second update 412.
-	body, invalidGroups := plan.toWrite(ctx)
+	body, invalidGroups, diags := plan.toWrite(ctx)
+	resp.Diagnostics.Append(diags...)
 	if len(invalidGroups) > 0 {
 		addInvalidGroupDiag(&resp.Diagnostics, invalidGroups)
+	}
+	if resp.Diagnostics.HasError() {
 		return
 	}
 	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
@@ -396,7 +417,7 @@ func (r *EndpointDestinationRuleResource) Update(ctx context.Context, req resour
 		addSDKError(&resp.Diagnostics, "Failed to update endpoint destination rule", err)
 		return
 	}
-	refreshed := endpointRuleToModel(tenantID, rule)
+	refreshed := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -445,7 +466,8 @@ func (r *EndpointDestinationRuleResource) resolveTenant(perResource types.String
 // non-empty result rather than proceed, because an empty target list means
 // "every device in the tenant" and silently dropping a bad id would widen the
 // rule's blast radius from one group to the whole fleet.
-func (m *EndpointDestinationRuleResourceModel) toWrite(ctx context.Context) (adminapi.EndpointDestinationRuleWrite, []string) {
+func (m *EndpointDestinationRuleResourceModel) toWrite(ctx context.Context) (adminapi.EndpointDestinationRuleWrite, []string, diag.Diagnostics) {
+	var diags diag.Diagnostics
 	// PUT is a full replace on this resource, so every optional field is sent —
 	// including nil for the ones the config omits. Sending only changed fields
 	// would leave stale values on the row.
@@ -466,22 +488,17 @@ func (m *EndpointDestinationRuleResourceModel) toWrite(ctx context.Context) (adm
 	setStringListPtr(ctx, m.AppTeamIDs, &body.AppTeamIds)
 	invalidGroups := setUUIDListPtr(ctx, m.DeviceGroupIDs, &body.DeviceGroupIds)
 
-	// Preserve criteria this resource cannot author. The platform's PUT sets
-	// `criteria` from the request unconditionally, so omitting the field deletes
-	// whatever the console authored — see the criteria_json schema doc for why
-	// that is a fail-open and not merely lossy.
-	if !m.CriteriaJSON.IsNull() && !m.CriteriaJSON.IsUnknown() && m.CriteriaJSON.ValueString() != "" {
-		var criteria []map[string]interface{}
-		if err := json.Unmarshal([]byte(m.CriteriaJSON.ValueString()), &criteria); err == nil && len(criteria) > 0 {
-			body.Criteria = &criteria
-		}
-		// An unmarshal failure is deliberately not fatal: criteria_json is
-		// server-provided, so a shape this provider cannot parse means the
-		// platform grew the model. Dropping it here would delete it, so the
-		// caller re-reads instead — endpointRuleToModel keeps the raw string in
-		// state and the next Read repairs it.
+	// The platform's PUT is a full replace that sets `criteria` from the request
+	// unconditionally, so what is sent here IS the rule's whole subject scope.
+	// An empty result therefore means "matches every user", which for an `allow`
+	// rule is a widening — hence the plan-time warning in ModifyPlan when a
+	// config drops criteria it previously had.
+	crits, d := criteriaListToOpaque(m.Criteria)
+	diags.Append(d...)
+	if len(crits) > 0 {
+		body.Criteria = &crits
 	}
-	return body, invalidGroups
+	return body, invalidGroups, diags
 }
 
 // addInvalidGroupDiag renders the fail-loud diagnostic for malformed
@@ -496,7 +513,7 @@ func addInvalidGroupDiag(diags *diag.Diagnostics, invalid []string) {
 			"rule from one group to the whole fleet.", strings.Join(invalid, ", ")))
 }
 
-func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule) EndpointDestinationRuleResourceModel {
+func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule, diags *diag.Diagnostics) EndpointDestinationRuleResourceModel {
 	m := EndpointDestinationRuleResourceModel{TenantID: types.StringValue(tenantID)}
 	if rule.Id != nil {
 		m.RuleID = types.StringValue(rule.Id.String())
@@ -518,7 +535,7 @@ func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule
 	m.AppTeamIDs = stringSliceToList(rule.AppTeamIds)
 	m.DeviceGroupIDs = uuidSliceToList(rule.DeviceGroupIds)
 	m.CriteriaCombinator = strPtrToTF(rule.CriteriaCombinator)
-	m.CriteriaJSON = criteriaToJSONString(rule.Criteria)
+	m.Criteria = endpointRuleCriteria(rule.Criteria, diags)
 	m.CreatedAt = timePtrToTF(rule.CreatedAt)
 	m.UpdatedAt = timePtrToTF(rule.UpdatedAt)
 
@@ -530,21 +547,66 @@ func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule
 	return m
 }
 
-// criteriaToJSONString renders the server's opaque criteria array as a JSON
-// string for state, or null when there are none. Null and "[]" are deliberately
-// collapsed to null: an empty criteria array and an absent one both mean
-// "matches everyone" on the platform, and keeping them distinct would show a
-// permanent diff.
-func criteriaToJSONString(criteria *[]map[string]interface{}) types.String {
-	if criteria == nil || len(*criteria) == 0 {
-		return types.StringNull()
+// endpointRuleCriteria maps the stored (opaque) criteria into the shared model,
+// warning about anything on the wire this provider does not model.
+//
+// The warning matters because the column is untyped: the console — or a future
+// platform version — can store keys the provider's schema has no attribute for
+// (a condition's `stage`, say). Those keys are absent from state, so the next
+// PUT, which is a full replace, drops them. Silently narrowing or widening a
+// criteria group is exactly the failure this resource is careful about
+// everywhere else, so say so out loud instead.
+func endpointRuleCriteria(criteria *[]map[string]interface{}, diags *diag.Diagnostics) []PolicyCriteriaModel {
+	models, unmodelled := criteriaListFromOpaque(criteria)
+	if len(unmodelled) > 0 && diags != nil {
+		diags.AddAttributeWarning(path.Root("criteria"),
+			"Endpoint rule criteria contain fields this provider does not model",
+			fmt.Sprintf("Not represented in Terraform state: %s.\n\nThese were authored outside "+
+				"Terraform. The platform's update is a full replace built from state, so the next "+
+				"`terraform apply` that touches this rule will DROP them and change which users the "+
+				"rule matches. Re-author the criteria in the console after that apply, or upgrade the "+
+				"provider if it has since grown the attribute.", strings.Join(unmodelled, ", ")))
 	}
-	raw, err := json.Marshal(*criteria)
-	if err != nil {
-		// Unreachable for decoded JSON, but returning null here would signal
-		// "no criteria" and cause the very deletion this exists to prevent —
-		// so surface something non-empty that a Read will correct.
-		return types.StringValue("[]")
+	return models
+}
+
+// ModifyPlan warns when an apply is about to delete a rule's criteria.
+//
+// Criteria NARROW a rule to a population, so removing them is a widening:
+// "legal may use ChatGPT" becomes "everyone may". The plan diff already shows
+// the removal, but under an allowlist posture (`default_destination_action =
+// "block"`) that one line is the difference between a scoped exception and a
+// fleet-wide one — worth more than a `-` in the diff.
+// Criteria are read as types.List rather than through the model: they are a Go
+// slice there, and an unknown (criteria computed from something not yet
+// created) cannot be reflected into one — see the note on ValidateConfig.
+func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	// Create (no prior state) and destroy (no plan) are not widenings.
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
 	}
-	return types.StringValue(string(raw))
+	var stateCriteria, planCriteria types.List
+	var name types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("criteria"), &stateCriteria)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("criteria"), &planCriteria)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &name)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	// An unknown plan value may resolve to anything, including the same criteria.
+	// Warning here would cry wolf on every plan that computes them.
+	if planCriteria.IsUnknown() {
+		return
+	}
+	if len(stateCriteria.Elements()) > 0 && len(planCriteria.Elements()) == 0 {
+		resp.Diagnostics.AddAttributeWarning(path.Root("criteria"),
+			"This apply removes the rule's subject criteria",
+			fmt.Sprintf("Rule %q currently has %d criteria group(s) and the plan has none. Criteria "+
+				"NARROW a rule to a population, so removing them widens it to every user in the "+
+				"targeted device groups — an `allow` rule scoped to one department becomes an allow "+
+				"for everyone.\n\nIf you meant to keep them, add the `criteria` block back to the "+
+				"config (criteria authored in the admin console are not preserved for you — Terraform "+
+				"owns this field now).",
+				name.ValueString(), len(stateCriteria.Elements())))
+	}
 }

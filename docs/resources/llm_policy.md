@@ -120,7 +120,7 @@ Note: the platform's input contract historically accepted `instance_name` string
 
 Required:
 
-- `conditions` (Attributes List) Conditions evaluated under the parent `operator`. (see [below for nested schema](#nestedatt--criteria--conditions))
+- `conditions` (Attributes List) Conditions evaluated under the parent `operator`. At least one is required. (see [below for nested schema](#nestedatt--criteria--conditions))
 - `operator` (String) Logical operator joining the conditions: `AND` or `OR`.
 
 Optional:
@@ -134,7 +134,7 @@ Optional:
 Required:
 
 - `field` (String) Field path to evaluate (e.g. `user.department`).
-- `operator` (String) Comparison operator (`equals`, `in`, `lt`, `gt`, …).
+- `operator` (String) Comparison operator (`equals`, `in`, `lt`, `gt`, `ends_with`, …).
 
 Optional:
 

@@ -2,14 +2,12 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
-	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
@@ -44,8 +42,8 @@ type MCPPolicyResourceModel struct {
 	ProviderInstances types.List   `tfsdk:"provider_instances"`
 	ValidateArguments types.Bool   `tfsdk:"validate_arguments"`
 
-	Effect   *MCPPolicyEffectModel    `tfsdk:"effect"`
-	Criteria []MCPPolicyCriteriaModel `tfsdk:"criteria"`
+	Effect   *MCPPolicyEffectModel `tfsdk:"effect"`
+	Criteria []PolicyCriteriaModel `tfsdk:"criteria"`
 
 	PolicyID  types.String `tfsdk:"policy_id"`
 	CreatedAt types.String `tfsdk:"created_at"`
@@ -62,32 +60,6 @@ type MCPPolicyEffectModel struct {
 	GrantToolsets      types.List   `tfsdk:"grant_toolsets"`
 	DenyToolsets       types.List   `tfsdk:"deny_toolsets"`
 	RateLimitPerMinute types.Int64  `tfsdk:"rate_limit_per_minute"`
-}
-
-// MCPPolicyCriteriaModel mirrors gen.PolicyCriteria — same shape the LLM
-// policy uses. ABAC matching on JWT claims / request context / time
-// windows; conditions are combined via the per-criterion operator
-// (AND/OR), and multiple criteria entries are themselves ANDed by the
-// platform evaluator.
-type MCPPolicyCriteriaModel struct {
-	Operator    types.String                      `tfsdk:"operator"`
-	Type        types.String                      `tfsdk:"type"`
-	Description types.String                      `tfsdk:"description"`
-	Conditions  []MCPPolicyCriteriaConditionModel `tfsdk:"conditions"`
-}
-
-// MCPPolicyCriteriaConditionModel mirrors gen.CriteriaCondition. The
-// `value` attribute is a JSON-encoded string — the user writes
-// `value = jsonencode(...)` and we decode + wrap as `{"value": <decoded>}`
-// to fit the platform's `map[string]interface{}` wire shape (same trick
-// the LLM policy resource uses).
-type MCPPolicyCriteriaConditionModel struct {
-	Field         types.String `tfsdk:"field"`
-	Operator      types.String `tfsdk:"operator"`
-	Value         types.String `tfsdk:"value"`
-	ValueType     types.String `tfsdk:"value_type"`
-	CaseSensitive types.Bool   `tfsdk:"case_sensitive"`
-	Description   types.String `tfsdk:"description"`
 }
 
 func NewMCPPolicyResource() resource.Resource { return &MCPPolicyResource{} }
@@ -187,69 +159,15 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				},
 			},
 
-			"criteria": schema.ListNestedAttribute{
-				MarkdownDescription: "ABAC criteria for matching MCP requests. Each entry combines `conditions` " +
+			"criteria": criteriaSchemaAttribute(criteriaSchemaOptions{
+				Description: "ABAC criteria for matching MCP requests. Each entry combines `conditions` " +
 					"with a logical operator (`AND` / `OR`); multiple criteria entries are ANDed together by the " +
 					"platform evaluator. Common shape: match on JWT claims (`client_id`, `sub_profile`, `email`) " +
 					"to scope the policy to a specific agent / service-account / user group.",
-				Optional: true,
-				NestedObject: schema.NestedAttributeObject{
-					Attributes: map[string]schema.Attribute{
-						"operator": schema.StringAttribute{
-							MarkdownDescription: "Logical operator joining the conditions: `AND` or `OR`.",
-							Required:            true,
-							Validators: []validator.String{
-								stringvalidator.OneOf("AND", "OR"),
-							},
-						},
-						"type": schema.StringAttribute{
-							MarkdownDescription: "Criteria type. Allowed: `claims`, `context`, `request`, `time`. Server default applies if unset.",
-							Optional:            true,
-							Computed:            true,
-						},
-						"description": schema.StringAttribute{
-							MarkdownDescription: "Optional human-readable description.",
-							Optional:            true,
-						},
-						"conditions": schema.ListNestedAttribute{
-							MarkdownDescription: "Conditions evaluated under the parent `operator`.",
-							Required:            true,
-							NestedObject: schema.NestedAttributeObject{
-								Attributes: map[string]schema.Attribute{
-									"field": schema.StringAttribute{
-										MarkdownDescription: "Field path to evaluate (e.g. `client_id`, `sub_profile`, `email`).",
-										Required:            true,
-									},
-									"operator": schema.StringAttribute{
-										MarkdownDescription: "Comparison operator (`equals`, `in`, `lt`, `gt`, `ends_with`, …).",
-										Required:            true,
-									},
-									"value": schema.StringAttribute{
-										MarkdownDescription: "JSON-encoded value to compare against. Examples: " +
-											"`jsonencode(\"service\")`, `jsonencode([\"a\",\"b\"])`, `jsonencode(100)`.",
-										Optional: true,
-									},
-									"value_type": schema.StringAttribute{
-										MarkdownDescription: "Optional type hint for the value (`string`, `int`, `list`, …). " +
-											"The platform defaults it to `string` when unset.",
-										Optional: true,
-										Computed: true,
-									},
-									"case_sensitive": schema.BoolAttribute{
-										MarkdownDescription: "For string operations. Platform defaults to `true` when omitted.",
-										Optional:            true,
-										Computed:            true,
-									},
-									"description": schema.StringAttribute{
-										MarkdownDescription: "Optional description.",
-										Optional:            true,
-									},
-								},
-							},
-						},
-					},
-				},
-			},
+				TypeDescription:  "Criteria type. Allowed: `claims`, `context`, `request`, `time`. Server default applies if unset.",
+				FieldDescription: "Field path to evaluate (e.g. `client_id`, `sub_profile`, `email`).",
+				ValueExample:     "`jsonencode(\"service\")`",
+			}),
 
 			"version": schema.Int64Attribute{
 				MarkdownDescription: "Optimistic-concurrency version (platform #649). Threaded as `If-Match` on " +
@@ -293,11 +211,12 @@ func (r *MCPPolicyResource) Create(ctx context.Context, req resource.CreateReque
 	setStringPtr(plan.Description, &body.Description)
 	setBoolPtr(plan.Enabled, &body.Enabled)
 	setBoolPtr(plan.ValidateArguments, &body.ValidateArguments)
-	if crits, d := plan.toCriteria(ctx); len(crits) > 0 {
-		resp.Diagnostics.Append(d...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	crits, critDiags := criteriaListToSDK(plan.Criteria)
+	resp.Diagnostics.Append(critDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(crits) > 0 {
 		body.Criteria = &crits
 	}
 
@@ -355,11 +274,12 @@ func (r *MCPPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 		eff := plan.toEffect(ctx)
 		body.Effect = &eff
 	}
-	if crits, d := plan.toCriteria(ctx); len(crits) > 0 {
-		resp.Diagnostics.Append(d...)
-		if resp.Diagnostics.HasError() {
-			return
-		}
+	crits, critDiags := criteriaListToSDK(plan.Criteria)
+	resp.Diagnostics.Append(critDiags...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if len(crits) > 0 {
 		body.Criteria = &crits
 	}
 
@@ -479,129 +399,6 @@ func mcpPolicyToModel(tenantID string, pol *adminapi.MCPPolicy) MCPPolicyResourc
 			RateLimitPerMinute: int32PtrToTF(pol.Effect.RateLimitPerMinute),
 		}
 	}
-	m.Criteria = mcpCriteriaFromSDK(pol.Criteria)
+	m.Criteria = criteriaListFromSDK(pol.Criteria)
 	return m
-}
-
-// toCriteria converts the plan model's criteria slice to the SDK wire
-// form. Identical shape to LLMPolicyCriteriaModel.toSDK — both target
-// gen.PolicyCriteria / gen.CriteriaCondition.
-func (m *MCPPolicyResourceModel) toCriteria(ctx context.Context) ([]gen.PolicyCriteria, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	if len(m.Criteria) == 0 {
-		return nil, diags
-	}
-	out := make([]gen.PolicyCriteria, 0, len(m.Criteria))
-	for i, c := range m.Criteria {
-		conv, d := c.toSDK(fmt.Sprintf("criteria[%d]", i))
-		diags.Append(d...)
-		if !d.HasError() {
-			out = append(out, conv)
-		}
-	}
-	return out, diags
-}
-
-func (c *MCPPolicyCriteriaModel) toSDK(pathHint string) (gen.PolicyCriteria, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	out := gen.PolicyCriteria{
-		Operator: gen.PolicyCriteriaOperator(c.Operator.ValueString()),
-	}
-	if !c.Type.IsNull() && !c.Type.IsUnknown() {
-		out.Type = gen.PolicyCriteriaType(c.Type.ValueString())
-	}
-	if !c.Description.IsNull() && !c.Description.IsUnknown() {
-		v := c.Description.ValueString()
-		out.Description = &v
-	}
-	for i, cond := range c.Conditions {
-		conv, d := cond.toSDK(fmt.Sprintf("%s.conditions[%d]", pathHint, i))
-		diags.Append(d...)
-		if !d.HasError() {
-			out.Conditions = append(out.Conditions, conv)
-		}
-	}
-	return out, diags
-}
-
-func (c *MCPPolicyCriteriaConditionModel) toSDK(pathHint string) (gen.CriteriaCondition, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	out := gen.CriteriaCondition{
-		Field:    c.Field.ValueString(),
-		Operator: gen.CriteriaConditionOperator(c.Operator.ValueString()),
-	}
-	if !c.CaseSensitive.IsNull() && !c.CaseSensitive.IsUnknown() {
-		v := c.CaseSensitive.ValueBool()
-		out.CaseSensitive = &v
-	}
-	if !c.Description.IsNull() && !c.Description.IsUnknown() {
-		v := c.Description.ValueString()
-		out.Description = &v
-	}
-	if !c.ValueType.IsNull() && !c.ValueType.IsUnknown() {
-		v := gen.CriteriaConditionValueType(c.ValueType.ValueString())
-		out.ValueType = &v
-	}
-	if !c.Value.IsNull() && !c.Value.IsUnknown() && c.Value.ValueString() != "" {
-		var decoded interface{}
-		if err := json.Unmarshal([]byte(c.Value.ValueString()), &decoded); err != nil {
-			diags.AddError(
-				"Invalid JSON in criteria condition value",
-				fmt.Sprintf("%s.value must be valid JSON (e.g. `jsonencode(\"engineering\")`): %v", pathHint, err),
-			)
-			return out, diags
-		}
-		m := map[string]interface{}{"value": decoded}
-		out.Value = &m
-	}
-	return out, diags
-}
-
-// mcpCriteriaFromSDK is the inverse direction — populate the resource
-// model from the platform's response shape. Same pattern as the
-// llm_policy criteriaFromSDK, just with the MCP-typed slice and the
-// resource-specific model. (Could be unified into a generic helper
-// once we have a third caller.)
-func mcpCriteriaFromSDK(in *[]gen.PolicyCriteria) []MCPPolicyCriteriaModel {
-	if in == nil || len(*in) == 0 {
-		return nil
-	}
-	out := make([]MCPPolicyCriteriaModel, 0, len(*in))
-	for _, c := range *in {
-		cm := MCPPolicyCriteriaModel{
-			Operator:    types.StringValue(string(c.Operator)),
-			Type:        types.StringValue(string(c.Type)),
-			Description: strPtrToTF(c.Description),
-		}
-		for _, cond := range c.Conditions {
-			cm.Conditions = append(cm.Conditions, MCPPolicyCriteriaConditionModel{
-				Field:         types.StringValue(cond.Field),
-				Operator:      types.StringValue(string(cond.Operator)),
-				CaseSensitive: boolPtrOrDefault(cond.CaseSensitive),
-				Description:   strPtrToTF(cond.Description),
-				ValueType:     enumPtrToTF(cond.ValueType),
-				Value:         valueMapToJSONString(cond.Value),
-			})
-		}
-		out = append(out, cm)
-	}
-	return out
-}
-
-// valueMapToJSONString unwraps the platform's `{"value": <decoded>}`
-// envelope back into a JSON-encoded string (mirroring how the user wrote
-// it in HCL via jsonencode).
-func valueMapToJSONString(m *map[string]interface{}) types.String {
-	if m == nil {
-		return types.StringNull()
-	}
-	v, ok := (*m)["value"]
-	if !ok {
-		return types.StringNull()
-	}
-	b, err := json.Marshal(v)
-	if err != nil {
-		return types.StringNull()
-	}
-	return types.StringValue(string(b))
 }

@@ -2,11 +2,13 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -113,7 +115,8 @@ func TestEndpointRuleToModel_RoundTrip(t *testing.T) {
 		LastModifiedBy:     &lastModifiedBy,
 	}
 
-	m := endpointRuleToModel(fixtureTenantID, rule)
+	var diags diag.Diagnostics
+	m := endpointRuleToModel(fixtureTenantID, rule, &diags)
 
 	if got, want := m.ID.ValueString(), fixtureTenantID+"/"+ruleID.String(); got != want {
 		t.Errorf("ID = %q, want %q", got, want)
@@ -259,7 +262,7 @@ func TestEndpointRuleToWrite_OptionalListsAndDefaults(t *testing.T) {
 		AppTeamIDs:       types.ListNull(types.StringType),
 		DeviceGroupIDs:   types.ListNull(types.StringType),
 	}
-	body, invalid := bare.toWrite(ctx)
+	body, invalid, _ := bare.toWrite(ctx)
 	if len(invalid) != 0 {
 		t.Fatalf("unexpected invalid group ids: %v", invalid)
 	}
@@ -280,7 +283,7 @@ func TestEndpointRuleToWrite_OptionalListsAndDefaults(t *testing.T) {
 	}
 	targeted := bare
 	targeted.DeviceGroupIDs = groups
-	body, invalid = targeted.toWrite(ctx)
+	body, invalid, _ = targeted.toWrite(ctx)
 	if len(invalid) != 0 {
 		t.Fatalf("unexpected invalid group ids: %v", invalid)
 	}
@@ -314,7 +317,7 @@ func TestEndpointRuleToWrite_MalformedGroupIDIsReportedNotDropped(t *testing.T) 
 		AppTeamIDs:       types.ListNull(types.StringType),
 		DeviceGroupIDs:   bad,
 	}
-	body, invalid := m.toWrite(ctx)
+	body, invalid, _ := m.toWrite(ctx)
 	if len(invalid) != 1 || invalid[0] != "not-a-uuid" {
 		t.Fatalf("invalid = %v, want exactly [not-a-uuid]", invalid)
 	}
@@ -325,16 +328,15 @@ func TestEndpointRuleToWrite_MalformedGroupIDIsReportedNotDropped(t *testing.T) 
 	}
 }
 
-// Criteria must SURVIVE an update. The platform's PUT sets `criteria` from the
-// request unconditionally, so a provider that omits the field deletes whatever
-// the console authored. That is a fail-open, not merely lossy: criteria narrow a
-// rule to a population, and the endpoint agent refuses to match a rule that has
-// them — so wiping them flips an inert rule into one that is active for everyone
-// it targets.
-func TestEndpointRuleToWrite_PreservesCriteriaItCannotAuthor(t *testing.T) {
+// Criteria are AUTHORED here now (platform#2040), not merely preserved. The
+// endpoint rule's criteria column is opaque on the platform side, so the
+// provider owns the JSON shape entirely — and it must be the shape the admin
+// console writes and shared-core's PolicyCriteriaEvaluator reads. In
+// particular `value` is RAW: the `{"value": …}` envelope the typed policy
+// resources send would produce a condition that can never match.
+func TestEndpointRuleToWrite_AuthorsCriteriaInTheConsoleShape(t *testing.T) {
 	ctx := context.Background()
 
-	consoleAuthored := `[{"operator":"AND","conditions":[{"field":"department","operator":"equals","value":"legal"}]}]`
 	m := EndpointDestinationRuleResourceModel{
 		Name:             types.StringValue("allow-chatgpt-for-legal"),
 		Action:           types.StringValue("allow"),
@@ -343,44 +345,144 @@ func TestEndpointRuleToWrite_PreservesCriteriaItCannotAuthor(t *testing.T) {
 		AppSigningIDs:    types.ListNull(types.StringType),
 		AppTeamIDs:       types.ListNull(types.StringType),
 		DeviceGroupIDs:   types.ListNull(types.StringType),
-		CriteriaJSON:     types.StringValue(consoleAuthored),
+		Criteria: []PolicyCriteriaModel{{
+			Operator: types.StringValue("AND"),
+			Type:     types.StringValue("claims"),
+			Conditions: []PolicyCriteriaConditionModel{{
+				Field:    types.StringValue("department"),
+				Operator: types.StringValue("equals"),
+				Value:    types.StringValue(`"legal"`),
+			}},
+		}},
 	}
-	body, invalid := m.toWrite(ctx)
+	body, invalid, diags := m.toWrite(ctx)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags)
+	}
 	if len(invalid) != 0 {
 		t.Fatalf("unexpected invalid group ids: %v", invalid)
 	}
-	if body.Criteria == nil {
-		t.Fatal("Criteria = nil — the PUT would DELETE the console-authored criteria, " +
-			"widening the rule from one department to everyone it targets")
+	if body.Criteria == nil || len(*body.Criteria) != 1 {
+		t.Fatalf("Criteria = %v, want one group", body.Criteria)
 	}
-	if len(*body.Criteria) != 1 {
-		t.Fatalf("Criteria has %d groups, want 1", len(*body.Criteria))
+	group := (*body.Criteria)[0]
+	if group["operator"] != "AND" || group["type"] != "claims" {
+		t.Errorf("group = %v, want operator AND / type claims", group)
 	}
-	if (*body.Criteria)[0]["operator"] != "AND" {
-		t.Errorf("Criteria[0].operator = %v, want AND", (*body.Criteria)[0]["operator"])
+	conds, ok := group["conditions"].([]interface{})
+	if !ok || len(conds) != 1 {
+		t.Fatalf("conditions = %v, want one entry", group["conditions"])
+	}
+	cond := conds[0].(map[string]interface{})
+	if cond["field"] != "department" || cond["operator"] != "equals" {
+		t.Errorf("condition = %v, want department/equals", cond)
+	}
+	if cond["value"] != "legal" {
+		t.Errorf("condition value = %#v, want the RAW string \"legal\" — an envelope "+
+			"({\"value\": …}) is compared as a map by the evaluator and never matches", cond["value"])
+	}
+	// Unset optionals must be absent rather than sent empty: the agent reads
+	// "" as a value, not as "unspecified".
+	for _, k := range []string{"value_type", "case_sensitive", "description"} {
+		if _, present := cond[k]; present {
+			t.Errorf("condition carries %q = %v, want the key omitted when unset", k, cond[k])
+		}
 	}
 
-	// A rule with no criteria must send nothing, not an empty array.
-	m.CriteriaJSON = types.StringNull()
-	body, _ = m.toWrite(ctx)
+	// A rule with no criteria must send nothing, not an empty array — the
+	// platform collapses [] to NULL anyway, and the two must not differ in state.
+	m.Criteria = nil
+	body, _, _ = m.toWrite(ctx)
 	if body.Criteria != nil {
 		t.Errorf("Criteria = %v, want nil when the rule has none", body.Criteria)
 	}
 }
 
-// State must render criteria as JSON, and collapse "none" to null so an empty
-// array on the wire does not show a permanent diff.
-func TestCriteriaToJSONString(t *testing.T) {
-	if got := criteriaToJSONString(nil); !got.IsNull() {
-		t.Errorf("nil criteria => %v, want null", got)
+// A criteria-scoped rule must survive apply -> read -> apply unchanged;
+// anything else is a permanent diff on a field where a diff means the rule
+// matches a different population than the config says.
+func TestEndpointRuleCriteria_RoundTripsThroughState(t *testing.T) {
+	ctx := context.Background()
+
+	wire := []map[string]interface{}{{
+		"type":        "claims",
+		"operator":    "OR",
+		"description": "legal or compliance",
+		"conditions": []interface{}{
+			map[string]interface{}{
+				"field": "department", "operator": "in",
+				"value": []interface{}{"legal", "compliance"}, "value_type": "array",
+			},
+			map[string]interface{}{
+				"field": "email", "operator": "ends_with",
+				"value": "@legal.example.com", "case_sensitive": false,
+			},
+		},
+	}}
+
+	var diags diag.Diagnostics
+	models := endpointRuleCriteria(&wire, &diags)
+	if diags.HasError() || diags.WarningsCount() != 0 {
+		t.Fatalf("unexpected diagnostics for a fully-modelled group: %v", diags)
 	}
-	empty := []map[string]interface{}{}
-	if got := criteriaToJSONString(&empty); !got.IsNull() {
-		t.Errorf("empty criteria => %v, want null (absent and [] both mean 'matches everyone')", got)
+	if len(models) != 1 || len(models[0].Conditions) != 2 {
+		t.Fatalf("models = %+v, want one group with two conditions", models)
 	}
-	one := []map[string]interface{}{{"operator": "OR"}}
-	got := criteriaToJSONString(&one)
-	if got.IsNull() || !strings.Contains(got.ValueString(), `"operator":"OR"`) {
-		t.Errorf("criteria => %q, want JSON containing the operator", got.ValueString())
+	if got := models[0].Conditions[0].Value.ValueString(); got != `["legal","compliance"]` {
+		t.Errorf("list value = %q, want the jsonencode form", got)
+	}
+	if got := models[0].Conditions[1].Value.ValueString(); got != `"@legal.example.com"` {
+		t.Errorf("string value = %q, want the jsonencode form", got)
+	}
+	if models[0].Conditions[1].CaseSensitive.ValueBool() {
+		t.Error("case_sensitive = true, want the wire's false")
+	}
+
+	m := EndpointDestinationRuleResourceModel{
+		Name:             types.StringValue("allow-legal"),
+		Action:           types.StringValue("allow"),
+		DestinationHosts: types.ListNull(types.StringType),
+		AppBundleIDs:     types.ListNull(types.StringType),
+		AppSigningIDs:    types.ListNull(types.StringType),
+		AppTeamIDs:       types.ListNull(types.StringType),
+		DeviceGroupIDs:   types.ListNull(types.StringType),
+		Criteria:         models,
+	}
+	body, _, d := m.toWrite(ctx)
+	if d.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", d)
+	}
+	before, _ := json.Marshal(wire)
+	after, _ := json.Marshal(*body.Criteria)
+	if string(before) != string(after) {
+		t.Errorf("round trip changed the stored criteria:\n before %s\n after  %s", before, after)
+	}
+}
+
+// The column is untyped, so the console (or a newer platform) can store keys
+// this provider has no attribute for. They cannot survive a full-replace PUT
+// built from state — so the read must say so rather than let the next apply
+// quietly change which users the rule matches.
+func TestEndpointRuleCriteria_WarnsOnFieldsItDoesNotModel(t *testing.T) {
+	wire := []map[string]interface{}{{
+		"operator": "AND",
+		"conditions": []interface{}{
+			map[string]interface{}{
+				"field": "environment.ip", "operator": "equals",
+				"value": "10.0.0.1", "stage": "request",
+			},
+		},
+	}}
+
+	var diags diag.Diagnostics
+	models := endpointRuleCriteria(&wire, &diags)
+	if len(models) != 1 {
+		t.Fatalf("models = %+v, want the parseable part kept", models)
+	}
+	if diags.WarningsCount() == 0 {
+		t.Fatal("no warning for an unmodelled `stage` field — the next apply drops it silently")
+	}
+	if got := diags.Warnings()[0].Detail(); !strings.Contains(got, "stage") {
+		t.Errorf("warning detail = %q, want it to name the dropped field", got)
 	}
 }

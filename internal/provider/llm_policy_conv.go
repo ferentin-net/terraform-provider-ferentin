@@ -2,8 +2,6 @@ package provider
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
@@ -53,16 +51,12 @@ func (m *LLMPolicyResourceModel) toCreateRequest(ctx context.Context) (adminapi.
 		out.Limits = m.Limits.toSDK()
 	}
 
-	// criteria
-	if len(m.Criteria) > 0 {
-		crits := make([]gen.PolicyCriteria, 0, len(m.Criteria))
-		for i, c := range m.Criteria {
-			conv, d := c.toSDK(fmt.Sprintf("criteria[%d]", i))
-			diags.Append(d...)
-			if !d.HasError() {
-				crits = append(crits, conv)
-			}
-		}
+	// criteria — diagnostics are appended unconditionally: a criteria block that
+	// failed to convert produces no entries, and swallowing the diag there would
+	// silently send a policy with NO criteria (i.e. one that matches everyone).
+	crits, d := criteriaListToSDK(m.Criteria)
+	diags.Append(d...)
+	if len(crits) > 0 {
 		out.Criteria = &crits
 	}
 
@@ -103,15 +97,9 @@ func (m *LLMPolicyResourceModel) toUpdateRequest(ctx context.Context) (adminapi.
 	if m.Limits != nil {
 		out.Limits = m.Limits.toSDK()
 	}
-	if len(m.Criteria) > 0 {
-		crits := make([]gen.PolicyCriteria, 0, len(m.Criteria))
-		for i, c := range m.Criteria {
-			conv, d := c.toSDK(fmt.Sprintf("criteria[%d]", i))
-			diags.Append(d...)
-			if !d.HasError() {
-				crits = append(crits, conv)
-			}
-		}
+	crits, d := criteriaListToSDK(m.Criteria)
+	diags.Append(d...)
+	if len(crits) > 0 {
 		out.Criteria = &crits
 	}
 	return out, diags
@@ -170,67 +158,6 @@ func (l *LLMPolicyLimitsModel) toSDK() *gen.ModelSurfaceLimits {
 	return out
 }
 
-// LLMPolicyCriteriaModel → SDK (gen.PolicyCriteria).
-func (c *LLMPolicyCriteriaModel) toSDK(pathHint string) (gen.PolicyCriteria, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	out := gen.PolicyCriteria{
-		Operator: gen.PolicyCriteriaOperator(c.Operator.ValueString()),
-	}
-	if !c.Type.IsNull() && !c.Type.IsUnknown() {
-		out.Type = gen.PolicyCriteriaType(c.Type.ValueString())
-	}
-	if !c.Description.IsNull() && !c.Description.IsUnknown() {
-		v := c.Description.ValueString()
-		out.Description = &v
-	}
-	for i, cond := range c.Conditions {
-		conv, d := cond.toSDK(fmt.Sprintf("%s.conditions[%d]", pathHint, i))
-		diags.Append(d...)
-		if !d.HasError() {
-			out.Conditions = append(out.Conditions, conv)
-		}
-	}
-	return out, diags
-}
-
-// LLMPolicyCriteriaConditionModel → SDK (gen.CriteriaCondition).
-//
-// The `value` attribute is a JSON-encoded string. We decode to interface{}
-// and wrap as `{"value": <decoded>}` to fit the platform's
-// map[string]interface{} wire shape. Empty / Null values send nil.
-func (c *LLMPolicyCriteriaConditionModel) toSDK(pathHint string) (gen.CriteriaCondition, diag.Diagnostics) {
-	var diags diag.Diagnostics
-	out := gen.CriteriaCondition{
-		Field:    c.Field.ValueString(),
-		Operator: gen.CriteriaConditionOperator(c.Operator.ValueString()),
-	}
-	if !c.CaseSensitive.IsNull() && !c.CaseSensitive.IsUnknown() {
-		v := c.CaseSensitive.ValueBool()
-		out.CaseSensitive = &v
-	}
-	if !c.Description.IsNull() && !c.Description.IsUnknown() {
-		v := c.Description.ValueString()
-		out.Description = &v
-	}
-	if !c.ValueType.IsNull() && !c.ValueType.IsUnknown() {
-		v := gen.CriteriaConditionValueType(c.ValueType.ValueString())
-		out.ValueType = &v
-	}
-	if !c.Value.IsNull() && !c.Value.IsUnknown() && c.Value.ValueString() != "" {
-		var decoded interface{}
-		if err := json.Unmarshal([]byte(c.Value.ValueString()), &decoded); err != nil {
-			diags.AddError(
-				"Invalid JSON in criteria condition value",
-				fmt.Sprintf("%s.value must be valid JSON (e.g. `jsonencode(\"engineering\")`): %v", pathHint, err),
-			)
-			return out, diags
-		}
-		m := map[string]interface{}{"value": decoded}
-		out.Value = &m
-	}
-	return out, diags
-}
-
 // llmPolicyToModel maps the SDK response into Terraform state.
 func llmPolicyToModel(ctx context.Context, tenantID string, pol *adminapi.LLMPolicy) LLMPolicyResourceModel {
 	m := LLMPolicyResourceModel{
@@ -284,12 +211,7 @@ func llmPolicyToModel(ctx context.Context, tenantID string, pol *adminapi.LLMPol
 	}
 
 	// criteria
-	if pol.Criteria != nil {
-		m.Criteria = make([]LLMPolicyCriteriaModel, 0, len(*pol.Criteria))
-		for _, c := range *pol.Criteria {
-			m.Criteria = append(m.Criteria, criteriaFromSDK(&c))
-		}
-	}
+	m.Criteria = criteriaListFromSDK(pol.Criteria)
 
 	return m
 }
@@ -310,57 +232,5 @@ func limitsFromSDK(l *gen.ModelSurfaceLimits) *LLMPolicyLimitsModel {
 	out.RequestTimeoutMs = int32PtrToTF(l.RequestTimeoutMs)
 	out.StreamTimeoutMs = int32PtrToTF(l.StreamTimeoutMs)
 	out.EnforceModelLimits = boolPtrOrDefault(l.EnforceModelLimits)
-	return out
-}
-
-func criteriaFromSDK(c *gen.PolicyCriteria) LLMPolicyCriteriaModel {
-	out := LLMPolicyCriteriaModel{
-		Operator: types.StringValue(string(c.Operator)),
-		Type:     types.StringValue(string(c.Type)),
-	}
-	out.Description = strPtrToTF(c.Description)
-	for _, cond := range c.Conditions {
-		out.Conditions = append(out.Conditions, conditionFromSDK(&cond))
-	}
-	return out
-}
-
-func conditionFromSDK(c *gen.CriteriaCondition) LLMPolicyCriteriaConditionModel {
-	out := LLMPolicyCriteriaConditionModel{
-		Field:    types.StringValue(c.Field),
-		Operator: types.StringValue(string(c.Operator)),
-	}
-	if c.CaseSensitive != nil {
-		out.CaseSensitive = types.BoolValue(*c.CaseSensitive)
-	} else {
-		out.CaseSensitive = types.BoolNull()
-	}
-	out.Description = strPtrToTF(c.Description)
-	if c.ValueType != nil {
-		out.ValueType = types.StringValue(string(*c.ValueType))
-	} else {
-		out.ValueType = types.StringNull()
-	}
-	// value: unwrap the {"value": ...} envelope and JSON-encode back to string.
-	if c.Value != nil {
-		if v, ok := (*c.Value)["value"]; ok {
-			b, err := json.Marshal(v)
-			if err == nil {
-				out.Value = types.StringValue(string(b))
-			} else {
-				out.Value = types.StringNull()
-			}
-		} else {
-			// No "value" wrapper — round-trip the whole map.
-			b, err := json.Marshal(*c.Value)
-			if err == nil {
-				out.Value = types.StringValue(string(b))
-			} else {
-				out.Value = types.StringNull()
-			}
-		}
-	} else {
-		out.Value = types.StringNull()
-	}
 	return out
 }

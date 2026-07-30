@@ -46,3 +46,49 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned_hosts" {
   destination_hosts = ["api.unsanctioned-ai.example", "*.shadow-llm.example"]
   action            = "block"
 }
+
+# 4. Scope a rule to a POPULATION with criteria. Criteria narrow a rule: this
+#    allow applies only to devices in the engineering group AND signed in as a
+#    user whose department claim is legal or compliance. Omitting `criteria`
+#    would make the allow apply to every user on those devices.
+#
+#    Criteria groups combine via `criteria_combinator`; conditions inside a
+#    group combine via that group's own `operator`.
+#
+#    NOTE: the endpoint agent ships criteria in the policy bundle but does not
+#    evaluate them until the on-device user principal lands (platform#2014), so
+#    a criteria-scoped rule is inert on the fleet today — fail-closed for allow
+#    and steer, but a criteria-scoped `block` does not block.
+resource "ferentin_endpoint_destination_rule" "allow_chatgpt_for_legal" {
+  name        = "allow-chatgpt-legal"
+  description = "Legal and compliance may use ChatGPT; everyone else falls through"
+  priority    = 5
+
+  destination_kind = "ai_provider"
+  catalog_slug     = "openai"
+  action           = "allow"
+
+  device_group_ids    = [ferentin_device_group.engineering.group_id]
+  criteria_combinator = "OR"
+
+  criteria = [
+    {
+      operator = "AND"
+      conditions = [{
+        field      = "department"
+        operator   = "in"
+        value      = jsonencode(["legal", "compliance"])
+        value_type = "array"
+      }]
+    },
+    {
+      operator = "AND"
+      conditions = [{
+        field          = "email"
+        operator       = "ends_with"
+        value          = jsonencode("@legal.example.com")
+        case_sensitive = false
+      }]
+    },
+  ]
+}

@@ -105,7 +105,7 @@ Optional:
 
 Required:
 
-- `conditions` (Attributes List) Conditions evaluated under the parent `operator`. (see [below for nested schema](#nestedatt--criteria--conditions))
+- `conditions` (Attributes List) Conditions evaluated under the parent `operator`. At least one is required. (see [below for nested schema](#nestedatt--criteria--conditions))
 - `operator` (String) Logical operator joining the conditions: `AND` or `OR`.
 
 Optional:
