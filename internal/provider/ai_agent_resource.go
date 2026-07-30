@@ -68,9 +68,10 @@ type AIAgentResourceModel struct {
 func NewAIAgentResource() resource.Resource { return &AIAgentResource{} }
 
 var (
-	_ resource.Resource                = (*AIAgentResource)(nil)
-	_ resource.ResourceWithConfigure   = (*AIAgentResource)(nil)
-	_ resource.ResourceWithImportState = (*AIAgentResource)(nil)
+	_ resource.Resource                   = (*AIAgentResource)(nil)
+	_ resource.ResourceWithConfigure      = (*AIAgentResource)(nil)
+	_ resource.ResourceWithImportState    = (*AIAgentResource)(nil)
+	_ resource.ResourceWithValidateConfig = (*AIAgentResource)(nil)
 )
 
 func (r *AIAgentResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -151,7 +152,15 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 					"it, so an agent intended for M2M use that omits `client_credentials` is stored as an " +
 					"`assistant` and cannot mint a token without a user.\n\n" +
 					"Left unset, the platform applies its own default, which does **not** include " +
-					"`client_credentials`. Set it explicitly for service agents.",
+					"`client_credentials`. Set it explicitly for service agents — an " +
+					"`application_type = \"SERVICE\"` agent that omits it gets a plan-time warning " +
+					"naming the conventional set.\n\n" +
+					"Deliberately not defaulted by the provider: this is a capability set, and deriving " +
+					"it from `application_type` would change what a client can do without the change " +
+					"appearing as an operator-authored diff. It can also emit a set the actor is not " +
+					"permitted to write — `AgentClientScopeAllowlist` constrains agent clients to " +
+					"`client_credentials` / `authorization_code` for an actor holding " +
+					"`clients:agent:rw` but not `clients:rw`.",
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
 			},
