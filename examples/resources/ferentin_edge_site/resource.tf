@@ -2,6 +2,15 @@
 resource "ferentin_edge_site" "us_east" {
   site_id   = "prod-us-east-1a"
   site_name = "US East 1A"
+
+  # Free-form key/value tags for organizing and filtering sites. Not
+  # interpreted by the platform — routing and bundling come from the typed
+  # attributes. Dropping the block leaves the server-side value alone; set
+  # `tags = {}` to clear.
+  tags = {
+    tier = "primary"
+    team = "platform"
+  }
 }
 
 # Multiple edge sites via for_each. Adding a new region is a one-line diff.

@@ -119,7 +119,12 @@ func (r *MCPProviderResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"default_url":  schema.StringAttribute{Optional: true, Computed: true},
 			"transport": schema.StringAttribute{
 				Optional: true, Computed: true,
-				MarkdownDescription: "Transport. Allowed: `stdio`, `sse`, `http`.",
+				MarkdownDescription: "Transport. Allowed: `http`, `sse`, `stdio`.\n\n" +
+					"`http` **is** Streamable HTTP (the recommended transport); `sse` is the legacy " +
+					"variant and `stdio` a local subprocess. Note the value is not spelled " +
+					"`streamable_http` here — that spelling belongs to the downstream " +
+					"`ferentin_mcp_server.transport_type`, which is a different enum on a different " +
+					"table.",
 				Validators: []validator.String{
 					stringvalidator.OneOf("stdio", "sse", "http"),
 				},

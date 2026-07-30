@@ -1,8 +1,12 @@
 package provider
 
 import (
+	crand "crypto/rand"
+	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -183,31 +187,62 @@ resource "ferentin_edge_site" "test" {
 `
 }
 
+// configLLMProvider is deliberately explicit about display_name / priority /
+// enabled. The platform defaults them, but a fixture that sends only the
+// minimum makes a create failure ambiguous between "the provider built a bad
+// body" and "the platform rejected the values", which is what made the
+// DATA_INTEGRITY_VIOLATION in #6 hard to read.
 func configLLMProvider(name, secret string, woVersion int) string {
 	return providerBlock() + fmt.Sprintf(`
 resource "ferentin_llm_provider" "test" {
   provider_type      = "anthropic"
-  instance_name      = %q
-  api_key            = %q
-  api_key_wo_version = %d
+  instance_name      = %[1]q
+  display_name       = "%[1]s (acctest)"
+  priority           = 100
+  enabled            = true
+  api_key            = %[2]q
+  api_key_wo_version = %[3]d
 }
 `, name, secret, woVersion)
 }
 
+// configMCPServer stands the server up on a tenant provider the test creates
+// itself.
+//
+// It used to look the catalog entry up with `data "ferentin_mcp_provider"`
+// filtered by `slug`, which cannot work: that data source is keyed by
+// `provider_id` (a UUID) and has no `slug` argument — resolving a catalog row
+// by slug means filtering the plural `ferentin_mcp_providers`. Even fixed, it
+// would make the test depend on the local-dev catalog shipping an `echo` row.
+// A tenant-owned provider keeps the fixture self-contained.
+//
+// `allow_endpoint_override` is on because the server below sets its own
+// `endpoint` (a required attribute the old fixture omitted entirely) rather
+// than inheriting `default_url`.
+//
+// The host is `.ferentin.test`, not `.example.com`: the provider's own
+// ValidateConfig rejects `.example.{com,org,net}` on a `public` deployment
+// because the platform's SSRF guard does, while `.test` (RFC 2606) is
+// deliberately allowed. Nothing probes it — create is a plain persist.
 func configMCPServer(name string) string {
-	return providerBlock() + `
-data "ferentin_mcp_provider" "echo" {
-  slug = "echo"
+	return providerBlock() + fmt.Sprintf(`
+resource "ferentin_mcp_provider" "server_dep" {
+  display_name            = "%[1]s-provider"
+  description             = "acctest provider backing %[1]s"
+  transport               = "http"
+  default_url             = "https://mcp-acctest.ferentin.test/mcp"
+  allow_endpoint_override = true
 }
 
 resource "ferentin_mcp_server" "test" {
-  name            = "` + name + `"
-  provider_id     = data.ferentin_mcp_provider.echo.id
-  transport_type  = "streamable_http"
-  deployment_mode = "public"
+  name                   = %[1]q
+  provider_id            = ferentin_mcp_provider.server_dep.provider_id
+  endpoint               = "https://mcp-acctest.ferentin.test/mcp"
+  transport_type         = "streamable_http"
+  deployment_mode        = "public"
   upstream_auth_strategy = "none"
 }
-`
+`, name)
 }
 
 func configOtelSink(name string) string {
@@ -232,9 +267,37 @@ provider "ferentin" {
 `
 }
 
-// randomSuffix yields a short unique suffix so concurrent / retried runs
-// don't collide on platform-side name uniqueness.
+// acctestRunID tags every name produced by one `go test` process.
+//
+// The previous scheme — `time.Now().UnixMilli() % 1_000_000` — repeats every
+// 1000 seconds, and two calls in the same millisecond return the SAME value.
+// Both matter here. Names are unique per tenant, the platform has no TTL on
+// test rows, and a run killed part-way (the token-endpoint rate limit in #6
+// killed one) leaves rows behind that nothing cleans up. Re-running inside the
+// same ~16-minute window then replays a suffix straight into a uniqueness
+// violation on create — which is what a `400 DATA_INTEGRITY_VIOLATION` on a
+// fixture that reads as obviously-unique actually was.
+//
+// A per-process random tag plus a monotonic counter removes both collision
+// modes: distinct across runs, distinct within a run regardless of clock
+// resolution.
+var acctestRunID = func() string {
+	var b [4]byte
+	if _, err := crand.Read(b[:]); err != nil {
+		// A CSPRNG read should not be able to fail a test run; the clock is a
+		// weaker but adequate fallback for a name tag.
+		binary.LittleEndian.PutUint32(b[:], uint32(time.Now().UnixNano()))
+	}
+	return hex.EncodeToString(b[:])
+}()
+
+var acctestSeq atomic.Uint32
+
+// randomSuffix yields a suffix unique to this process and to each call, so
+// retried or interleaved runs don't collide on platform-side name uniqueness.
+// Lowercase hex + digits keeps it legal everywhere the provider accepts a
+// slug-shaped identifier (`site_id`, `instance_name`, group names).
 func randomSuffix(t *testing.T) string {
 	t.Helper()
-	return fmt.Sprintf("%06d", time.Now().UnixMilli()%1_000_000)
+	return fmt.Sprintf("%s%02d", acctestRunID, acctestSeq.Add(1))
 }

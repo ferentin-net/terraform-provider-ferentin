@@ -85,8 +85,34 @@ jobs:
           cache: true
       - name: Configure access to private modules
         run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
+      # TestAcceptanceFixturesValidate runs `terraform validate` over every
+      # acceptance fixture against the real provider schema — no platform, no
+      # credentials. It self-skips when terraform is absent, so installing it
+      # here is what makes that gate exist in CI. See issue #6: most of the
+      # stale-suite failures were schema drift validate catches on its own.
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with:
+          terraform_wrapper: false
       - run: go mod download
       - run: go test -v -count=1 -timeout 5m ./...
+
+  # examples/ is embedded verbatim into docs/ by tfplugindocs, so a
+  # mis-formatted example ships to the registry and quietly fails the next
+  # `make docs-check`. This is the cheap guard for that.
+  examples-fmt:
+    name: Examples formatted
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
+        with:
+          terraform_wrapper: false
+      - name: terraform fmt -check
+        run: |
+          if ! terraform fmt -check -recursive -diff examples/; then
+            echo "::error::examples/ is not formatted — run 'terraform fmt -recursive examples/' and commit"
+            exit 1
+          fi
 
   docs-check:
     name: Docs up-to-date

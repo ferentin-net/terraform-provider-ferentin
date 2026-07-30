@@ -8,9 +8,14 @@ resource "ferentin_mcp_provider" "internal_search" {
   icon         = "search"
   owner        = "platform-team"
   contact      = "platform@example.com"
-  default_url  = "https://search.internal.example.com/mcp/sse"
-  transport    = "sse"
-  category     = "search"
+  default_url  = "https://search.internal.example.com/mcp"
+
+  # `http` IS Streamable HTTP, and is the recommended transport — `sse` is the
+  # legacy variant, `stdio` a local subprocess. The value is NOT spelled
+  # `streamable_http` here; that spelling belongs to the downstream
+  # `ferentin_mcp_server.transport_type`, a different enum on a different table.
+  transport = "http"
+  category  = "search"
 
   enabled_scopes = [
     "search:read",

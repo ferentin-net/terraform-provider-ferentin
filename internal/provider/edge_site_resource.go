@@ -57,6 +57,7 @@ type EdgeSiteResourceModel struct {
 	MonitoringEnabled types.Bool   `tfsdk:"monitoring_enabled"`
 	McpGatewayURL     types.String `tfsdk:"mcp_gateway_url"`
 	TunnelURL         types.String `tfsdk:"tunnel_url"`
+	Tags              types.Map    `tfsdk:"tags"`
 
 	// Computed / server-set
 	Version           types.Int64  `tfsdk:"version"` // for If-Match
@@ -230,6 +231,17 @@ func (r *EdgeSiteResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Optional:            true,
 				Computed:            true,
 			},
+			"tags": schema.MapAttribute{
+				MarkdownDescription: "Free-form key/value tags for organizing and filtering sites " +
+					"(e.g. `{ tier = \"primary\", team = \"platform\" }`). Not interpreted by the " +
+					"platform — routing and bundling are driven by the typed attributes above.\n\n" +
+					"~> Like every optional attribute on this resource, dropping the block leaves the " +
+					"server-side value untouched rather than clearing it. To remove tags, set " +
+					"`tags = {}` explicitly.",
+				Optional:    true,
+				Computed:    true,
+				ElementType: types.StringType,
+			},
 
 			// Computed / server-set
 			"synthetic_id": schema.StringAttribute{
@@ -327,6 +339,7 @@ func (r *EdgeSiteResource) Create(ctx context.Context, req resource.CreateReques
 		v := plan.TunnelURL.ValueString()
 		create.TunnelUrl = &v
 	}
+	create.Tags = stringMapToSDK(ctx, plan.Tags)
 
 	site, err := r.sdk.EdgeSites().Create(ctx, tenantID, create)
 	if err != nil {
@@ -415,6 +428,7 @@ func (r *EdgeSiteResource) Update(ctx context.Context, req resource.UpdateReques
 		v := plan.TunnelURL.ValueString()
 		update.TunnelUrl = &v
 	}
+	update.Tags = stringMapToSDK(ctx, plan.Tags)
 
 	site, err := r.sdk.EdgeSites().Update(ctx, tenantID, siteID, version, update)
 	if err != nil {
@@ -517,6 +531,9 @@ func edgeSiteToModel(tenantID string, site *adminapi.EdgeSite) EdgeSiteResourceM
 	m.MonitoringEnabled = boolPtrOrDefault(site.MonitoringEnabled)
 	m.McpGatewayURL = strPtrToTF(site.McpGatewayUrl)
 	m.TunnelURL = strPtrToTF(site.TunnelUrl)
+	// A site with no tags comes back as absent, not `{}` — map to a null map so
+	// a config that never mentions tags stays a no-op plan.
+	m.Tags = stringMapToTF(site.Tags)
 	m.CurrentDevices = int32PtrToTF(site.CurrentDevices)
 	m.CreatedAt = timePtrToTF(site.CreatedAt)
 	m.UpdatedAt = timePtrToTF(site.UpdatedAt)

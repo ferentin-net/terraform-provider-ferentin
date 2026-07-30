@@ -330,3 +330,48 @@ func TestStringConversions_Helpers(t *testing.T) {
 		t.Errorf("setInt32Ptr = %v", i)
 	}
 }
+
+// TestEdgeSiteToModel_Tags covers the `tags` mapping added for issue #6. The
+// acceptance test asserted on `tags.tier` against a schema that never had the
+// attribute, so the platform's tag support was unreachable from Terraform and
+// the test could only ever fail at plan.
+func TestEdgeSiteToModel_Tags(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("tags round-trip", func(t *testing.T) {
+		site := &adminapi.EdgeSite{
+			SiteId:   strPtr("prod-us-east-1a"),
+			SiteName: strPtr("US East 1A"),
+			Tags:     &map[string]string{"tier": "primary", "team": "platform"},
+		}
+		m := edgeSiteToModel(fixtureTenantID, site)
+		if m.Tags.IsNull() || m.Tags.IsUnknown() {
+			t.Fatalf("Tags = %v, want a known map", m.Tags)
+		}
+		var out map[string]string
+		if diags := m.Tags.ElementsAs(ctx, &out, false); diags.HasError() {
+			t.Fatalf("ElementsAs: %v", diags)
+		}
+		if out["tier"] != "primary" || out["team"] != "platform" {
+			t.Errorf("Tags = %v, want tier=primary team=platform", out)
+		}
+	})
+
+	// A site with no tags must map to a NULL map, not an empty one: with an
+	// Optional+Computed attribute, an empty map in state against a config that
+	// never mentions tags is a permanent non-empty plan.
+	t.Run("absent tags stay null", func(t *testing.T) {
+		m := edgeSiteToModel(fixtureTenantID, &adminapi.EdgeSite{SiteId: strPtr("s")})
+		if !m.Tags.IsNull() {
+			t.Errorf("Tags = %v, want null", m.Tags)
+		}
+	})
+
+	// Null config must omit the field entirely rather than sending `{}`, which
+	// the platform would read as "clear the tags".
+	t.Run("null map is omitted from the request", func(t *testing.T) {
+		if got := stringMapToSDK(ctx, types.MapNull(types.StringType)); got != nil {
+			t.Errorf("stringMapToSDK(null) = %v, want nil", got)
+		}
+	})
+}

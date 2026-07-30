@@ -29,6 +29,15 @@ terraform import ferentin_edge_site.example <tenant_id>/<site_id>
 resource "ferentin_edge_site" "us_east" {
   site_id   = "prod-us-east-1a"
   site_name = "US East 1A"
+
+  # Free-form key/value tags for organizing and filtering sites. Not
+  # interpreted by the platform — routing and bundling come from the typed
+  # attributes. Dropping the block leaves the server-side value alone; set
+  # `tags = {}` to clear.
+  tags = {
+    tier = "primary"
+    team = "platform"
+  }
 }
 
 # Multiple edge sites via for_each. Adding a new region is a one-line diff.
@@ -90,6 +99,9 @@ output "us_east_synthetic_id" {
 - `mcp_gateway_url` (String) Customer-hosted L7 proxy URL fronting this site's service-edge replicas. Used to compute copyable MCP URLs for edge-routed provider instances.
 - `monitoring_enabled` (Boolean) Whether monitoring is enabled for this site. Default `false`.
 - `status` (String) Site runtime status. Allowed: `active`, `inactive`, `maintenance`.
+- `tags` (Map of String) Free-form key/value tags for organizing and filtering sites (e.g. `{ tier = "primary", team = "platform" }`). Not interpreted by the platform — routing and bundling are driven by the typed attributes above.
+
+~> Like every optional attribute on this resource, dropping the block leaves the server-side value untouched rather than clearing it. To remove tags, set `tags = {}` explicitly.
 - `tenant_id` (String) Tenant UUID this site belongs to. Defaults to the provider-level `tenant_id`; override here to manage multiple tenants from one config.
 - `time_zone` (String) IANA time zone name.
 - `tunnel_url` (String) WebSocket URL for tunnel-agent connections. Overrides the global default.

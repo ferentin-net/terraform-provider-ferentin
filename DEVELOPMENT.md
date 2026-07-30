@@ -95,11 +95,54 @@ make testacc-local
 and sets `FERENTIN_INSECURE_SKIP_VERIFY=1`, since local dev serves a self-signed
 certificate.
 
-**Scopes the principal needs:** `policy:rw` for the endpoint-policy resources,
-and `devices:groups:rw` (platform migration 1215) *or* the broader `devices:rw`
-for `ferentin_device_group`. The seeded `ferentin.iac.operator` role carries both.
-A role-bound `client_credentials` client on a platform older than 1215 will 403
-on the device-group tests.
+### Scopes the test principal needs
+
+A missing scope shows up as a bare `403` on one test while everything else
+passes, which reads like a code bug and is not one. Each row is the `:rw` scope
+the resource's controller requires; the matching `:r` (or `:admin`) covers the
+read-only data sources.
+
+| Resource(s) | Scope | Controller |
+| --- | --- | --- |
+| `ferentin_edge_site` | `edge:rw` | `EdgeSiteController` |
+| `ferentin_llm_provider` | `provider:rw` | `ProviderInstanceController` |
+| `ferentin_mcp_provider`, `ferentin_mcp_server`, `ferentin_mcp_server_from_card` | `mcp:servers:rw` | `McpTenantProviderController`, `McpProviderInstanceAdminController` |
+| `ferentin_llm_policy`, `ferentin_mcp_policy`, `ferentin_endpoint_destination_rule`, `ferentin_endpoint_policy_settings` | `policy:rw` | `LlmPolicyController`, `McpPolicyController`, `EndpointPolicyController` |
+| `ferentin_data_protection_policy` | `policy:rw` (+ `policy:t` to test) | `DataProtectionPolicyController` |
+| `ferentin_otel_sink`, `ferentin_otel_policy` | `otel:rw` | `OtelSinkController`, `OtelPolicyController` |
+| `ferentin_ai_agent` | `clients:agent:rw` | `AdminOidcClientController` |
+| `ferentin_workload_oauth_client`, `ferentin_workload_identity_provider` | `idps:rw` | `WorkloadOAuthClientController`, `WorkloadIdentityProviderController` |
+| `ferentin_device_group` | `devices:groups:rw` *or* `devices:rw` | `DeviceGroupController` |
+
+`hasWriteAccess('x')` accepts `x:rw` or `x:admin`; `hasReadAccess('x')` also
+accepts `x:r`. There is no global `admin` scope that covers all of these — the
+workload tests need `idps:rw` specifically, not a blanket grant.
+
+The seeded `ferentin.iac.operator` role carries the policy and device scopes. A
+role-bound `client_credentials` client on a platform older than migration 1215
+has no `devices:groups:rw` and will 403 on the device-group tests. Grant what a
+test needs on the **local** client only — never widen the production client to
+make a test pass.
+
+### Running a subset
+
+Each test, and each step within one, builds a fresh provider — so under
+`FERENTIN_CLIENT_ID` auth each mints its own token, and a full suite trips the
+auth server's `client_credentials` burst limit (10 per 10s). Scope the run:
+
+```sh
+make testacc-local RUN='TestAccDeviceGroup|TestAccEndpointDestinationRule'
+```
+
+`FERENTIN_TOKEN` avoids minting entirely and is the better choice for a full
+run.
+
+### Test rows are not cleaned up
+
+A run killed part-way (rate limit, `^C`, a panic) leaves whatever it created
+behind, and nothing sweeps it. Fixture names carry a per-process random tag so a
+re-run does not collide with those leftovers — see `randomSuffix`. Rows named
+`tf-acc-*` in local dev are safe to delete by hand.
 
 **Why not CI.** The platform has exactly two environments — `nginx` (local dev)
 and `aws-secure` (production). A GitHub-hosted runner cannot reach local dev, and

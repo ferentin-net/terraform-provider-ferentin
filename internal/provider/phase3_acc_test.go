@@ -22,7 +22,12 @@ func TestAccMCPProvider_basic(t *testing.T) {
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ferentin_mcp_provider.test", "display_name", name),
 					resource.TestCheckResourceAttr("ferentin_mcp_provider.test", "description", "Test provider for acceptance suite"),
-					resource.TestCheckResourceAttr("ferentin_mcp_provider.test", "transport", "streamable_http"),
+					// `http` IS Streamable HTTP on this enum. The catalog column
+					// predates the rename and its allowed set is
+					// [stdio sse http] — `streamable_http` is the value the
+					// downstream `ferentin_mcp_server.transport_type` takes, a
+					// different enum on a different table.
+					resource.TestCheckResourceAttr("ferentin_mcp_provider.test", "transport", "http"),
 					resource.TestCheckResourceAttr("ferentin_mcp_provider.test", "allow_endpoint_override", "false"),
 					resource.TestCheckResourceAttrSet("ferentin_mcp_provider.test", "provider_id"),
 				),
@@ -174,7 +179,7 @@ func configMCPProvider(displayName, description string) string {
 resource "ferentin_mcp_provider" "test" {
   display_name = %q
   description  = %q
-  transport    = "streamable_http"
+  transport    = "http"
   default_url  = "https://example.com/mcp"
 }
 `, displayName, description)
@@ -212,7 +217,9 @@ resource "ferentin_llm_policy" "test" {
         {
           field    = "email"
           operator = "endswith"
-          value    = "@example.com"
+          # JSON-encoded, like every criteria value on every policy resource —
+          # a bare "@example.com" is not valid JSON and fails at apply.
+          value = jsonencode("@example.com")
         }
       ]
     }

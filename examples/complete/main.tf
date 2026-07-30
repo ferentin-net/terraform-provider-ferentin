@@ -70,9 +70,13 @@ resource "ferentin_llm_policy" "default" {
       description = "All internal employees"
       conditions = [
         {
+          # `value` is JSON-encoded on every resource that carries criteria —
+          # Terraform has no "any" type, so a JSON string is how a condition
+          # compares against non-string claims too. A bare "@example.com" is
+          # not valid JSON and fails at apply.
           field    = "email"
           operator = "endswith"
-          value    = "@example.com"
+          value    = jsonencode("@example.com")
         }
       ]
     }
