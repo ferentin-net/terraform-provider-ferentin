@@ -185,17 +185,24 @@ resource "ferentin_mcp_provider" "test" {
 `, displayName, description)
 }
 
+// configMCPPolicy carries a real MCP server for the same reason configLLMPolicy
+// carries a provider instance: McpPolicyService.validateProviderInstancesExist
+// runs unconditionally on create, rejects an empty list, and then checks each
+// UUID actually resolves to a tenant-owned (or system) instance. A policy that
+// governs nothing is a 400.
 func configMCPPolicy(name, effect string, ratePerMinute int) string {
-	return providerBlock() + fmt.Sprintf(`
+	return providerBlock() + mcpServerStack("policy_dep", name+"-srv") + fmt.Sprintf(`
 resource "ferentin_mcp_policy" "test" {
-  name        = %q
+  name        = %[1]q
   description = "acctest policy"
   priority    = 100
 
+  provider_instances = [ferentin_mcp_server.policy_dep.server_id]
+
   effect = {
-    type                  = %q
+    type                  = %[2]q
     message               = "Acceptance test policy applied"
-    rate_limit_per_minute = %d
+    rate_limit_per_minute = %[3]d
   }
 }
 `, name, effect, ratePerMinute)

@@ -237,30 +237,39 @@ resource "ferentin_llm_provider" "test" {
 // the customer's service-edge does), which is exactly why the interlock exists.
 // It needs an `edge_site_id`, so the fixture creates its own site.
 func configMCPServer(name string) string {
-	return providerBlock() + fmt.Sprintf(`
-resource "ferentin_edge_site" "server_dep" {
-  site_id   = "%[1]s-site"
-  site_name = "%[1]s site"
+	return providerBlock() + mcpServerStack("test", name)
 }
 
-resource "ferentin_mcp_provider" "server_dep" {
-  display_name            = "%[1]s-provider"
-  description             = "acctest provider backing %[1]s"
+// mcpServerStack renders the three resources an MCP server needs to exist:
+// an edge site to bind to, a tenant provider to instantiate, and the server
+// itself under the given resource label. `ferentin_mcp_policy` needs a real
+// server UUID to reference, so both fixtures share this rather than each
+// growing its own copy.
+func mcpServerStack(label, name string) string {
+	return fmt.Sprintf(`
+resource "ferentin_edge_site" "%[1]s_site" {
+  site_id   = "%[2]s-site"
+  site_name = "%[2]s site"
+}
+
+resource "ferentin_mcp_provider" "%[1]s_provider" {
+  display_name            = "%[2]s-provider"
+  description             = "acctest provider backing %[2]s"
   transport               = "http"
   default_url             = "https://mcp-acctest.ferentin.test/mcp"
   allow_endpoint_override = true
 }
 
-resource "ferentin_mcp_server" "test" {
-  name                   = %[1]q
-  provider_id            = ferentin_mcp_provider.server_dep.provider_id
+resource "ferentin_mcp_server" "%[1]s" {
+  name                   = %[2]q
+  provider_id            = ferentin_mcp_provider.%[1]s_provider.provider_id
   endpoint               = "https://mcp-acctest.ferentin.test/mcp"
   transport_type         = "streamable_http"
   deployment_mode        = "edge_routed"
-  edge_site_id           = ferentin_edge_site.server_dep.site_id
+  edge_site_id           = ferentin_edge_site.%[1]s_site.site_id
   upstream_auth_strategy = "none"
 }
-`, name)
+`, label, name)
 }
 
 func configOtelSink(name string) string {
