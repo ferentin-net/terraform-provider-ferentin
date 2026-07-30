@@ -47,9 +47,19 @@ func addSDKError(diags *diag.Diagnostics, op string, err error) {
 	case errors.Is(err, adminapi.ErrForbidden):
 		diags.AddError(
 			fmt.Sprintf("%s — insufficient permissions", op),
-			"The principal authenticated successfully but lacks scope for this operation. "+
-				"Tenant-admin operations require `scope=admin` in the issued token; verify the "+
-				"service account binding includes the admin role.\n\nDetails: "+err.Error(),
+			"The principal authenticated successfully but lacks scope for this operation.\n\n"+
+				"There is no global `admin` scope that covers the tenant-admin API — each resource "+
+				"family has its own, and the token needs the specific one:\n\n"+
+				"* edge sites — `edge:rw`\n"+
+				"* LLM provider instances — `provider:rw`\n"+
+				"* MCP providers / servers — `mcp:servers:rw`\n"+
+				"* policies (LLM, MCP, data protection, endpoint) — `policy:rw`\n"+
+				"* OTEL sinks and policies — `otel:rw`\n"+
+				"* AI agents — `clients:agent:rw`\n"+
+				"* workload OAuth clients and identity providers — `idps:rw`\n"+
+				"* device groups — `devices:groups:rw` or `devices:rw`\n\n"+
+				"Read operations take the matching `:r`. Check the role bound to this service "+
+				"account, not the token's audience.\n\nDetails: "+err.Error(),
 		)
 	case errors.Is(err, adminapi.ErrConflict):
 		diags.AddError(

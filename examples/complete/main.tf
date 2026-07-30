@@ -179,6 +179,13 @@ resource "ferentin_ai_agent" "claude_assistant" {
   token_endpoint_auth_method = "client_secret_basic"
   description                = "Claude-based team assistant"
   scopes                     = ["llm", "mcp"]
+
+  # Required for a machine-to-machine agent. The platform generates
+  # `ai_client_type` from this alone — client_credentials present -> "agent",
+  # otherwise -> "assistant" — and its own default omits it, so a SERVICE agent
+  # without this line is stored as an assistant that cannot mint a token
+  # without a user.
+  grant_types = ["client_credentials"]
 }
 
 # --- Endpoint: device groups --------------------------------------------

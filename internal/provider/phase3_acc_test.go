@@ -158,6 +158,7 @@ func TestAccAIAgent_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "active", "true"),
 					resource.TestCheckResourceAttrSet("ferentin_ai_agent.test", "client_id"),
 					resource.TestCheckResourceAttrSet("ferentin_ai_agent.test", "client_secret"),
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "grant_types.0", "client_credentials"),
 					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "ai_client_type", "agent"),
 				),
 			},
@@ -278,6 +279,11 @@ resource "ferentin_ai_agent" "test" {
   token_endpoint_auth_method = "client_secret_basic"
   description                = "acctest agent"
   scopes                     = ["llm", "mcp"]
+
+  # ai_client_type is generated from this and nothing else: client_credentials
+  # present -> "agent", otherwise -> "assistant". The platform default omits it,
+  # which is how this fixture used to assert "agent" and get "assistant".
+  grant_types = ["client_credentials"]
 }
 `, name)
 }
