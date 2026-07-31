@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
@@ -59,6 +60,7 @@ type AIAgentResourceModel struct {
 	AiClientType      types.String `tfsdk:"ai_client_type"`
 	CreatedAt         types.String `tfsdk:"created_at"`
 	UpdatedAt         types.String `tfsdk:"updated_at"`
+	Version           types.Int64  `tfsdk:"version"` // for If-Match
 	ManagedBy         types.String `tfsdk:"managed_by"`
 	ManagedByClientID types.String `tfsdk:"managed_by_client_id"`
 	ManagedByModule   types.String `tfsdk:"managed_by_module"`
@@ -187,8 +189,18 @@ func (r *AIAgentResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
-			"created_at":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"updated_at":           schema.StringAttribute{Computed: true},
+			"created_at": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"updated_at": schema.StringAttribute{Computed: true},
+			"version": schema.Int64Attribute{
+				MarkdownDescription: "Optimistic-concurrency version. Threaded as `If-Match` on " +
+					"Update/Delete so a concurrent console edit is rejected with 412 rather than " +
+					"silently clobbered. Read-only.\n\n" +
+					"Requires an admin-api carrying the platform fix that added `version` to the " +
+					"OIDC-client projection. Against a stale admin-api every read returns `0`, so the " +
+					"second update of any agent fails with 412 — the same failure " +
+					"`ferentin_mcp_policy` hit when it sent a hardcoded `W/\"0\"`.",
+				Computed: true,
+			},
 			"managed_by":           schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"managed_by_client_id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"managed_by_module":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
@@ -276,7 +288,11 @@ func (r *AIAgentResource) Update(ctx context.Context, req resource.UpdateRequest
 		return
 	}
 	// ai_client_type is a generated column — see the note in Create.
-	agent, err := r.sdk.OIDCClients().Update(ctx, tenantID, state.AgentID.ValueString(), "", body)
+	//
+	// Version comes from state, never a literal — see the ferentin_mcp_policy note
+	// where a hardcoded 0 made every second update 412.
+	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
+	agent, err := r.sdk.OIDCClients().Update(ctx, tenantID, state.AgentID.ValueString(), version, body)
 	if err != nil {
 		addSDKError(&resp.Diagnostics, "Failed to update AI agent client", err)
 		return
@@ -293,7 +309,8 @@ func (r *AIAgentResource) Delete(ctx context.Context, req resource.DeleteRequest
 		return
 	}
 	tenantID := r.resolveTenant(state.TenantID)
-	err := r.sdk.OIDCClients().Delete(ctx, tenantID, state.AgentID.ValueString(), "")
+	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
+	err := r.sdk.OIDCClients().Delete(ctx, tenantID, state.AgentID.ValueString(), version)
 	if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
 		addSDKError(&resp.Diagnostics, "Failed to delete AI agent client", err)
 	}
@@ -397,6 +414,7 @@ func agentToModel(tenantID string, a *adminapi.OIDCClientRow) AIAgentResourceMod
 	m.Active = boolPtrOrDefault(a.Active)
 	m.CreatedAt = timePtrToTF(a.CreatedAt)
 	m.UpdatedAt = timePtrToTF(a.UpdatedAt)
+	m.Version = int64PtrToTF(a.Version)
 	m.ManagedBy = enumPtrToTF(a.ManagedBy)
 	m.ManagedByClientID = strPtrToTF(a.ManagedByClientId)
 	m.ManagedByModule = strPtrToTF(a.ManagedByModule)

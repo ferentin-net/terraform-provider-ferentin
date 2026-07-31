@@ -123,3 +123,6 @@ Note this reported `unknown` on every read until the platform added the provenan
 - `managed_by_client_id` (String)
 - `managed_by_module` (String)
 - `updated_at` (String)
+- `version` (Number) Optimistic-concurrency version. Threaded as `If-Match` on Update/Delete so a concurrent console edit is rejected with 412 rather than silently clobbered. Read-only.
+
+Requires an admin-api carrying the platform fix that added `version` to the OIDC-client projection. Against a stale admin-api every read returns `0`, so the second update of any agent fails with 412 — the same failure `ferentin_mcp_policy` hit when it sent a hardcoded `W/"0"`.

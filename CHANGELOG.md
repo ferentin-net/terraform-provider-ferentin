@@ -66,6 +66,25 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `govulncheck ./...` now reports **no vulnerabilities**.
 
 ### Added
+- **`ferentin_ai_agent` now exposes `version` and uses optimistic concurrency.**
+  The attribute is threaded as `If-Match` on Update and Delete, so a concurrent
+  admin-console edit is rejected with 412 instead of being silently clobbered.
+  This was the last IaC-managed resource carrying provenance attributes but no
+  optimistic-concurrency guard.
+
+  Requires an admin-api carrying the platform fix that added `version` to the
+  OIDC-client projection (ferentin-platform#2061). Against an older admin-api
+  every read of an OIDC client returned `version = 0`, which is why this could
+  not be wired before: the second update of any agent would have failed with a
+  permanent 412 — the same failure `ferentin_mcp_policy` hit when it sent a
+  hardcoded `W/"0"`.
+
+  Existing state gains the attribute on the next refresh; no configuration
+  change is needed. One edge: applying with `-refresh=false` on the very first
+  run after upgrading reads `version` as `0` from pre-upgrade state, which will
+  412 for any agent that has already been updated once. Refresh once (the
+  default) and it resolves itself.
+
 - **Three endpoint-policy resources** — governance for AI traffic on managed
   devices via the macOS endpoint agent. Platform #2038 (built on #2010 / #2018).
   - **`ferentin_device_group`** — the policy-scoping unit the other two target.

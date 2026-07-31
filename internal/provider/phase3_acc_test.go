@@ -167,6 +167,10 @@ func TestAccAIAgent_basic(t *testing.T) {
 					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "managed_by", "iac"),
 					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "last_modified_by", "iac"),
 					resource.TestCheckResourceAttrSet("ferentin_ai_agent.test", "managed_by_client_id"),
+					// A freshly-created agent is at version 0. Against a stale
+					// admin-api this also reads 0 — TestAccAIAgent_ifMatchSecondUpdate
+					// is what actually distinguishes the two.
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "version", "0"),
 				),
 			},
 			{
@@ -176,6 +180,56 @@ func TestAccAIAgent_basic(t *testing.T) {
 				// `client_secret` is only returned on Create — import can't recover it.
 				//
 				ImportStateVerifyIgnore: []string{"client_secret"},
+			},
+		},
+	})
+}
+
+// TestAccAIAgent_ifMatchSecondUpdate is the optimistic-concurrency regression
+// guard. `version` is threaded as `If-Match` on Update/Delete, and the failure
+// it prevents only shows up on the SECOND update:
+//
+//   - create      → version 0
+//   - 1st update  → sends If-Match: W/"0" against a row at 0. Passes either way,
+//     which is why a single-update test proves nothing.
+//   - 2nd update  → sends If-Match: W/"1". Passes only if `version` actually
+//     refreshed off the update response. If the resource reported a stale 0
+//     (a hardcoded literal, or an admin-api whose OIDC-client projection drops
+//     the column) the platform's precondition rejects this with 412.
+//
+// Same shape as the ferentin_mcp_policy and ferentin_endpoint_policy guards —
+// both resources shipped this exact bug and both needed a second apply to catch
+// it. The delete at the end of the run exercises the If-Match delete path too.
+func TestAccAIAgent_ifMatchSecondUpdate(t *testing.T) {
+	name := "tf-acc-agent-ifmatch-" + randomSuffix(t)
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: configAIAgentWithDescription(name, "acctest agent v1"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "description", "acctest agent v1"),
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "version", "0"),
+				),
+			},
+			{
+				Config: configAIAgentWithDescription(name, "acctest agent v2"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "description", "acctest agent v2"),
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "version", "1"),
+				),
+			},
+			{
+				// The regression guard. A stale `version` 412s here.
+				Config: configAIAgentWithDescription(name, "acctest agent v3"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "description", "acctest agent v3"),
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "version", "2"),
+					// An edit through this provider must not look like console drift.
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "managed_by", "iac"),
+					resource.TestCheckResourceAttr("ferentin_ai_agent.test", "last_modified_by", "iac"),
+				),
 			},
 		},
 	})
@@ -294,4 +348,22 @@ resource "ferentin_ai_agent" "test" {
   grant_types = ["client_credentials"]
 }
 `, name)
+}
+
+// configAIAgentWithDescription is configAIAgent with a caller-supplied
+// description, so successive applies produce a real update rather than a no-op
+// plan — the If-Match path only runs when something actually changes.
+func configAIAgentWithDescription(name, description string) string {
+	return providerBlock() + fmt.Sprintf(`
+resource "ferentin_ai_agent" "test" {
+  name                       = %q
+  agent_platform             = "claude"
+  application_type           = "SERVICE"
+  token_endpoint_auth_method = "client_secret_basic"
+  description                = %q
+  scopes                     = ["llm", "mcp"]
+
+  grant_types = ["client_credentials"]
+}
+`, name, description)
 }
