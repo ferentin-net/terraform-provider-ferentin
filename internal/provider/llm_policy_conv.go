@@ -30,6 +30,7 @@ func (m *LLMPolicyResourceModel) toCreateRequest(ctx context.Context) (adminapi.
 	setBoolPtr(m.DisallowClientDeveloper, &out.DisallowClientDeveloper)
 	setBoolPtr(m.DisallowClientSystem, &out.DisallowClientSystem)
 	setBoolPtr(m.PromptCacheEnabled, &out.PromptCacheEnabled)
+	setBoolPtr(m.AllowProviderStorage, &out.AllowProviderStorage)
 	setBoolPtr(m.SummaryEnabled, &out.SummaryEnabled)
 	setBoolPtr(m.UseGatewayPrompts, &out.UseGatewayPrompts)
 
@@ -83,6 +84,7 @@ func (m *LLMPolicyResourceModel) toUpdateRequest(ctx context.Context) (adminapi.
 	setBoolPtr(m.DisallowClientDeveloper, &out.DisallowClientDeveloper)
 	setBoolPtr(m.DisallowClientSystem, &out.DisallowClientSystem)
 	setBoolPtr(m.PromptCacheEnabled, &out.PromptCacheEnabled)
+	setBoolPtr(m.AllowProviderStorage, &out.AllowProviderStorage)
 	setBoolPtr(m.SummaryEnabled, &out.SummaryEnabled)
 	setBoolPtr(m.UseGatewayPrompts, &out.UseGatewayPrompts)
 
@@ -180,6 +182,7 @@ func llmPolicyToModel(ctx context.Context, tenantID string, pol *adminapi.LLMPol
 	m.DisallowClientDeveloper = boolPtrOrDefault(pol.DisallowClientDeveloper)
 	m.DisallowClientSystem = boolPtrOrDefault(pol.DisallowClientSystem)
 	m.PromptCacheEnabled = boolPtrOrDefault(pol.PromptCacheEnabled)
+	m.AllowProviderStorage = boolPtrOrDefault(pol.AllowProviderStorage)
 	m.SummaryEnabled = boolPtrOrDefault(pol.SummaryEnabled)
 	m.UseGatewayPrompts = boolPtrOrDefault(pol.UseGatewayPrompts)
 

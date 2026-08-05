@@ -93,6 +93,9 @@ resource "ferentin_llm_policy" "engineering_default" {
 
 ### Optional
 
+- `allow_provider_storage` (Boolean) Allow callers to set OpenAI's `store` parameter to true, letting the provider retain the prompt in its own storage. Defaults to `false`, in which case a request sending `store: true` is rejected rather than silently ignored.
+
+This is a compliance control, not a performance one: enabling it moves prompt content into a third party's retained storage, outside Ferentin's audit and retention controls. Leave it off unless your data-residency obligations explicitly permit it.
 - `criteria` (Attributes List) ABAC criteria for matching requests. Each entry combines `conditions` with a logical operator (AND / OR). Multiple criteria entries are themselves ANDed. (see [below for nested schema](#nestedatt--criteria))
 - `description` (String) Optional description.
 - `developer_prompt` (String) Developer prompt injected ahead of the user's prompt (separate channel from system).

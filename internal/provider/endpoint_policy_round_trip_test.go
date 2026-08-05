@@ -31,17 +31,22 @@ func TestDeviceGroupToModel_RoundTrip(t *testing.T) {
 	// components do not (yet) declare @Schema allowableValues, unlike the
 	// endpoint-policy DTOs. enumPtrToTF is generic over ~string so it handles both.
 	g := &adminapi.DeviceGroup{
-		GroupId:           &groupID,
-		Name:              strPtr("contractors"),
-		Description:       strPtr("Third-party contractors"),
-		Source:            strPtr("scim"),
-		ExternalId:        strPtr("grp-42"),
-		CreatedAt:         &now,
-		UpdatedAt:         &now,
-		Version:           int64Ptr(4),
-		ManagedBy:         strPtr("iac"),
+		GroupId:     &groupID,
+		Name:        strPtr("contractors"),
+		Description: strPtr("Third-party contractors"),
+		Source:      strPtr("scim"),
+		ExternalId:  strPtr("grp-42"),
+		CreatedAt:   &now,
+		UpdatedAt:   &now,
+		Version:     int64Ptr(4),
+		// Typed enums, not *string: the platform declares
+		// allowableValues={iac,console,cli,system,unknown} on these fields, so the
+		// regenerated SDK models them as enums. The constants are the point — a
+		// literal here would compile today and silently rot if the platform's
+		// allowable set changed.
+		ManagedBy:         enumPtr(gen.DeviceGroupResponseManagedByIac),
 		ManagedByClientId: strPtr("ferentin-iac-prod"),
-		LastModifiedBy:    strPtr("console"),
+		LastModifiedBy:    enumPtr(gen.DeviceGroupResponseLastModifiedByConsole),
 	}
 
 	m := deviceGroupToModel(fixtureTenantID, g)
