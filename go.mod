@@ -3,7 +3,7 @@ module github.com/ferentin-net/terraform-provider-ferentin
 go 1.26.5
 
 require (
-	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260730215913-5a3da67fcc0f
+	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260805195409-638e3c4b885a
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/terraform-plugin-docs v0.25.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0

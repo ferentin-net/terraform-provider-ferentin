@@ -52,6 +52,7 @@ type LLMPolicyResourceModel struct {
 	DisallowClientDeveloper types.Bool   `tfsdk:"disallow_client_developer"`
 	DisallowClientSystem    types.Bool   `tfsdk:"disallow_client_system"`
 	PromptCacheEnabled      types.Bool   `tfsdk:"prompt_cache_enabled"`
+	AllowProviderStorage    types.Bool   `tfsdk:"allow_provider_storage"`
 	SummaryEnabled          types.Bool   `tfsdk:"summary_enabled"`
 	UseGatewayPrompts       types.Bool   `tfsdk:"use_gateway_prompts"`
 
@@ -195,6 +196,16 @@ func (r *LLMPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				MarkdownDescription: "Enable prompt-cache routing (provider-dependent).",
 				Optional:            true,
 				Computed:            true,
+			},
+			"allow_provider_storage": schema.BoolAttribute{
+				MarkdownDescription: "Allow callers to set OpenAI's `store` parameter to true, letting the " +
+					"provider retain the prompt in its own storage. Defaults to `false`, in which case a " +
+					"request sending `store: true` is rejected rather than silently ignored.\n\n" +
+					"This is a compliance control, not a performance one: enabling it moves prompt content " +
+					"into a third party's retained storage, outside Ferentin's audit and retention controls. " +
+					"Leave it off unless your data-residency obligations explicitly permit it.",
+				Optional: true,
+				Computed: true,
 			},
 			"summary_enabled": schema.BoolAttribute{
 				MarkdownDescription: "Enable post-response summarization.",

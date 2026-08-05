@@ -102,6 +102,8 @@ resource "ferentin_llm_policy" "engineering_default" {
 - `limits` (Attributes) Per-request limits the platform enforces before forwarding to the provider. (see [below for nested schema](#nestedatt--limits))
 - `message` (String) Optional explanation surfaced to the agent when the policy applies.
 - `priority` (Number) Evaluation priority. Lower number = higher priority. Conflicting policies are resolved by priority.
+- `allow_provider_storage` (Boolean) Allow callers to set OpenAI's `store` parameter to true, letting the provider retain the prompt in its own storage. Defaults to `false`, in which case a request sending `store: true` is rejected rather than silently ignored.
+This is a compliance control, not a performance one: enabling it moves prompt content into a third party's retained storage, outside Ferentin's audit and retention controls. Leave it off unless your data-residency obligations explicitly permit it.
 - `prompt_cache_enabled` (Boolean) Enable prompt-cache routing (provider-dependent).
 - `provider_instances` (List of String) List of provider-instance **UUIDs** (from `ferentin_llm_provider.instance_id`) this policy routes to. Order determines failover order at runtime.
 

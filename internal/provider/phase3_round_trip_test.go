@@ -24,6 +24,11 @@ func boolPtr(b bool) *bool    { return &b }
 func int32Ptr(i int32) *int32 { return &i }
 func int64Ptr(i int64) *int64 { return &i }
 
+// enumPtr is the typed-enum counterpart to strPtr. The regenerated SDK models
+// any field the platform declares with allowableValues as its own ~string type,
+// so fixtures cannot use strPtr for those.
+func enumPtr[T ~string](v T) *T { return &v }
+
 const fixtureTenantID = "e3a86afa-70aa-4879-9ab8-ea56f3eef48b"
 
 func mustParseUUID(t *testing.T, s string) openapi_types.UUID {

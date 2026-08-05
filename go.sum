@@ -54,12 +54,10 @@ github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FM
 github.com/fatih/color v1.13.0/go.mod h1:kLAiJbzzSOZDVNGyDpeOxJ47H46qBXwg5ILebYFFOfk=
 github.com/fatih/color v1.19.0 h1:Zp3PiM21/9Ld6FzSKyL5c/BULoe/ONr9KlbYVOfG8+w=
 github.com/fatih/color v1.19.0/go.mod h1:zNk67I0ZUT1bEGsSGyCZYZNrHuTkJJB+r6Q9VuMi0LE=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260729172703-0b17123dcb86 h1:4qQZan6KlZpYCv51eJnQYbD/hansQbyGlF2OIyQOjLs=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260729172703-0b17123dcb86/go.mod h1:wdm9F3DKRdKno3H3LMuGu0QJ88TaqfBJ1QeWPy47v1s=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260730163434-b6f0bb442355 h1:YIoHwbO12YG/I6eM43XI5ahG+JeGFDYhlr3V9upw4Gs=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260730163434-b6f0bb442355/go.mod h1:wdm9F3DKRdKno3H3LMuGu0QJ88TaqfBJ1QeWPy47v1s=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260730215913-5a3da67fcc0f h1:Xk632BesSRAn+bQt6gV+pwwojt578T+2V7yDcrUV5X8=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260730215913-5a3da67fcc0f/go.mod h1:wdm9F3DKRdKno3H3LMuGu0QJ88TaqfBJ1QeWPy47v1s=
+github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260805185123-5685b34efc3f h1:YPsMSdtpr1TobzU4b2ikne6bKeIbr/PfFLkJynZUTGs=
+github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260805185123-5685b34efc3f/go.mod h1:DM/N63nfjnAHzV0CqLPNSui8ujqXasbXY0HXu7i/bQs=
+github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260805195409-638e3c4b885a h1:lPI4wU4aL+EC/Gttg5EPKmZZjeSICHqtp5Iy8IlHH20=
+github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260805195409-638e3c4b885a/go.mod h1:DM/N63nfjnAHzV0CqLPNSui8ujqXasbXY0HXu7i/bQs=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/go-git/gcfg v1.5.1-0.20230307220236-3a3c6141e376 h1:+zs/tPmkDkHx3U66DAb0lQFJrpS6731Oaa12ikc+DiI=
