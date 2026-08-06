@@ -106,8 +106,8 @@ Must be `https://` — an `http://` value would downgrade every governed MCP ses
 - `tenant_id` (String)
 - `unapproved_mcp_action` (String) What the agent does with an MCP server config it finds on a device that is not approved:
 
-* `report_only` — report it in telemetry, change nothing on the machine (default)
-* `quarantine` — move the offending config aside so the client cannot load it
+* `report_only` — report it in telemetry, change nothing on the machine
+* `quarantine` — move the offending config aside so the client cannot load it (default). The entry is preserved verbatim in a root-owned sidecar before removal, and is not removed if it cannot be preserved
 * `block` — block the server's traffic outright (requires the NetworkExtension content filter; without it the agent can report but not enforce)
 
 ### Read-Only

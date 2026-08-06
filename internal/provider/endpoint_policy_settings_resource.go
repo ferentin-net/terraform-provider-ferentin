@@ -21,15 +21,23 @@ import (
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 )
 
-// The platform's own column defaults — the observe-only posture a tenant runs on
-// before an admin authors anything. Mirrored here as schema defaults so a config
-// that omits a field plans to the same value the server would pick.
+// A platform column default, mirrored here as a schema default so a config that
+// omits the field plans to the same value the server would pick.
 //
-// NOTE: these are NOT what Delete writes. Destroy deliberately leaves the
+// Mirroring a server default into a provider constant is a liability, and the list
+// is one entry shorter than it used to be for that reason. A `Default` on an
+// Optional+Computed attribute is a silent data migration: when the mirrored value
+// changes, every config that omits the attribute plans the new value and APPLIES it
+// to rows that already exist. GH #2127 moved `unapproved_mcp_action` server-side, so
+// that attribute dropped its Default and now defers to the server via
+// Computed + UseStateForUnknown (see the schema block). Prefer that shape for
+// anything new; keep a mirrored Default only where an omitted value genuinely must
+// resolve client-side.
+//
+// NOTE: this is NOT what Delete writes. Destroy deliberately leaves the
 // tenant-default row enforcing whatever was last applied; see Delete.
 const (
-	postureDefaultUnapprovedMcpAction = "report_only"
-	postureDefaultDestinationAction   = "allow"
+	postureDefaultDestinationAction = "allow"
 )
 
 // EndpointPolicySettingsResource is the `ferentin_endpoint_policy_settings`
@@ -169,13 +177,33 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 			"unapproved_mcp_action": schema.StringAttribute{
 				MarkdownDescription: "What the agent does with an MCP server config it finds on a device " +
 					"that is not approved:\n\n" +
-					"* `report_only` — report it in telemetry, change nothing on the machine (default)\n" +
-					"* `quarantine` — move the offending config aside so the client cannot load it\n" +
+					"* `report_only` — report it in telemetry, change nothing on the machine\n" +
+					"* `quarantine` — move the offending config aside so the client cannot load it " +
+					"(default). The entry is preserved verbatim in a root-owned sidecar before " +
+					"removal, and is not removed if it cannot be preserved\n" +
 					"* `block` — block the server's traffic outright (requires the NetworkExtension " +
 					"content filter; without it the agent can report but not enforce)",
-				Optional: true, Computed: true,
-				Default:    stringdefault.StaticString(postureDefaultUnapprovedMcpAction),
-				Validators: []validator.String{stringvalidator.OneOf("report_only", "quarantine", "block")},
+				// NO schema Default, deliberately — unlike its sibling below.
+				//
+				// A `Default` on an Optional+Computed attribute is a silent data
+				// migration: a config that omits the field plans to the constant and
+				// APPLIES it. When platform#2127 moved the server default to
+				// "quarantine", that turned every IaC-managed tenant with an existing
+				// row into a plan of `report_only -> quarantine`, applied on the next
+				// run — precisely the migration changeset 1248 refused to perform,
+				// because an implicit `report_only` and a deliberate one are the same
+				// bytes and there is no way to tell them apart.
+				//
+				// Computed + UseStateForUnknown instead: omitting the attribute keeps
+				// whatever the tenant already has, and a brand-new row gets whatever
+				// default the SERVER picks. That is also the better shape generally —
+				// mirroring a server-side default into a provider constant is what
+				// created the drift in the first place, and this attribute no longer
+				// has a second definition to fall out of step with.
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{stringvalidator.OneOf("report_only", "quarantine", "block")},
 			},
 			"mcp_gateway_url": schema.StringAttribute{
 				MarkdownDescription: "Tenant MCP gateway base URL that approved server configs are " +
