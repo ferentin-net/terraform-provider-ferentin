@@ -1,6 +1,6 @@
 module github.com/ferentin-net/terraform-provider-ferentin
 
-go 1.26.5
+go 1.27.0
 
 require (
 	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20260805201855-6b4740f37b89

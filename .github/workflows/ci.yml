@@ -70,9 +70,22 @@ jobs:
           cache: true
       - name: Configure access to private modules
         run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
+      # `install-mode: goinstall` compiles the linter with this job's Go rather
+      # than downloading a prebuilt release. A released binary type-checks with
+      # the Go it was built with, and the v2.12.2 artifact was built with
+      # go1.26.2 — so the moment go.mod's language version outran it (1.26.5 ->
+      # 1.27.0) the prebuilt binary rejected our source outright, before running
+      # a single linter: "the Go language version (go1.26) used to build
+      # golangci-lint is lower than the targeted Go version (1.27.0)". Compiling
+      # from source removes that coupling permanently; bumping `version:` alone
+      # only defers it to the next Go bump. Mirrors ferentin-cli-app, which
+      # pins `install-mode: goinstall` for this reason.
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
+        env:
+          GOTOOLCHAIN: auto
         with:
           version: v2.12.2
+          install-mode: goinstall
 
   test:
     name: Unit tests
