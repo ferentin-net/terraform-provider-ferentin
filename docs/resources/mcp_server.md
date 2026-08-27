@@ -139,7 +139,7 @@ output "salesforce_idp_reachable" {
 
 ### Optional
 
-- `auth_mode` (String) Whether upstream credentials are agent-bound (`agent` — one tenant-shared credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity credential binding). Resolved at plan time: the provider auto-selects `agent` for non-interactive strategies (`static_bearer`, `custom_headers`, `cc_federated`) to satisfy the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `xaa_*`) leave the value null and let the platform infer. Set explicitly to override. Allowed: `agent`, `user`.
+- `auth_mode` (String) Whether upstream credentials are agent-bound (`agent` — one tenant-shared credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity credential binding). Resolved at plan time: the provider auto-selects `agent` for non-interactive strategies (`static_bearer`, `custom_headers`, `cc_federated`) to satisfy the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `ema_*`) leave the value null and let the platform infer. Set explicitly to override. Allowed: `agent`, `user`.
 - `bearer_token` (String, Sensitive) Bearer token to forward to the upstream MCP when `upstream_auth_strategy = "static_bearer"`. Sugar for `env = { BEARER_TOKEN = ... }` — the common case where the upstream wants a single token in the `Authorization` header. Mutually exclusive with `env`. Sensitive — redacted in logs and plan output.
 - `cc_federated_audience_override` (String) Per-server `audience` value sent at mint time. Narrows the workload OAuth client's `default_audience` for just this server. Only meaningful with `cc_federated`.
 - `cc_federated_resource_override` (String) Per-server RFC 8707 `resource` value. Narrows the workload OAuth client's `default_resource` for just this server. Only meaningful with `cc_federated`.
@@ -158,7 +158,7 @@ output "salesforce_idp_reachable" {
 - `tags` (Map of String) Free-form key-value tags for organization and `for_each` filtering.
 - `tenant_id` (String) Tenant UUID. Defaults to the provider-level value.
 - `transport_type` (String) MCP transport type. Allowed: `sse`, `stdio_tunnel`, `streamable_http`. Defaults to the provider catalog entry.
-- `upstream_auth_strategy` (String) Strategy for authenticating to the upstream MCP server. Allowed: `none`, `oauth2_user`, `cc_federated`, `custom_headers`, `static_bearer`, `xaa_federated`, `xaa_local`.
+- `upstream_auth_strategy` (String) Strategy for authenticating to the upstream MCP server. Allowed: `none`, `oauth2_user`, `cc_federated`, `custom_headers`, `static_bearer`, `ema_federated`, `ema_ferentin`.
 
 ### Read-Only
 

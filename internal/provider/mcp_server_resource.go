@@ -252,13 +252,21 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"upstream_auth_strategy": schema.StringAttribute{
 				MarkdownDescription: "Strategy for authenticating to the upstream MCP server. Allowed: " +
 					"`none`, `oauth2_user`, `cc_federated`, `custom_headers`, `static_bearer`, " +
-					"`xaa_federated`, `xaa_local`.",
+					"`ema_federated`, `ema_ferentin`.",
 				Optional: true,
 				Computed: true,
 				Validators: []validator.String{
 					stringvalidator.OneOf(
+						// Renamed by ferentin-platform#2367, and it was a HARD
+						// cutover on the platform side: `xaa_local` and
+						// `xaa_federated` are not deprecated aliases, they are
+						// refused with a 400. Accepting them here would only move
+						// the failure from plan time to apply time, which is the
+						// worse of the two — so the old spellings are gone rather
+						// than kept alongside. Mirrors the enum in the admin API's
+						// snapshot; keep the two in step.
 						"none", "oauth2_user", "cc_federated", "custom_headers",
-						"static_bearer", "xaa_federated", "xaa_local",
+						"static_bearer", "ema_federated", "ema_ferentin",
 					),
 				},
 			},
@@ -267,7 +275,7 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity " +
 					"credential binding). Resolved at plan time: the provider auto-selects `agent` for " +
 					"non-interactive strategies (`static_bearer`, `custom_headers`, `cc_federated`) to satisfy " +
-					"the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `xaa_*`) leave " +
+					"the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `ema_*`) leave " +
 					"the value null and let the platform infer. Set explicitly to override. Allowed: `agent`, " +
 					"`user`.",
 				Optional: true,

@@ -61,11 +61,11 @@ func TestResolveAuthModeDefault(t *testing.T) {
 			why:      "interactive — let post-#856 wire response fill the value; we can't predict it",
 		},
 		{
-			name:     "xaa_federated unknown plan → stays unknown",
+			name:     "ema_federated unknown plan → stays unknown",
 			planAuth: types.StringUnknown(),
-			strategy: types.StringValue("xaa_federated"),
+			strategy: types.StringValue("ema_federated"),
 			want:     types.StringUnknown(),
-			why:      "interactive — xaa_federated; let wire fill",
+			why:      "interactive — ema_federated; let wire fill",
 		},
 		{
 			name:     "none unknown plan → stays unknown",
