@@ -46,3 +46,6 @@ terraform-provider-ferentin_v*
 
 # Scratch dir used by `make docs-check` (see GNUmakefile).
 .docs-check-tmp/
+
+# Built by `make lint` — a version+toolchain-stamped golangci-lint.
+.tools/

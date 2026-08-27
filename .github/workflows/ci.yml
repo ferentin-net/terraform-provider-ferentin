@@ -80,11 +80,22 @@ jobs:
       # from source removes that coupling permanently; bumping `version:` alone
       # only defers it to the next Go bump. Mirrors ferentin-cli-app, which
       # pins `install-mode: goinstall` for this reason.
+      #
+      # The VERSION is read out of the GNUmakefile rather than written here.
+      # Two copies is how this job came to run v2.12.2 while `make lint` ran
+      # whatever was on a developer's PATH — so a local run reported 0 issues
+      # against a linter that was not the one gating the merge, and the one
+      # that was panicked on Go 1.27's internal/poll and exited 3. The
+      # Makefile carries the reasoning; keep this reading it back.
+      - name: Resolve the pinned golangci-lint version
+        id: golangci
+        run: echo "version=$(make -s print-golangci-lint-version)" >> "$GITHUB_OUTPUT"
+
       - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a  # v9.3.0
         env:
           GOTOOLCHAIN: auto
         with:
-          version: v2.12.2
+          version: ${{ steps.golangci.outputs.version }}
           install-mode: goinstall
 
   test:

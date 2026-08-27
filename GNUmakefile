@@ -13,6 +13,38 @@ OS_ARCH     := $(shell go env GOOS)_$(shell go env GOARCH)
 INSTALL_DIR := $(HOME)/.terraform.d/plugins/$(HOSTNAME)/$(NAMESPACE)/$(NAME)/$(VERSION)/$(OS_ARCH)
 
 .PHONY: build install fmt lint vet test testacc testacc-local tidy clean docs docs-check
+.PHONY: print-golangci-lint-version
+
+# The ONE place the golangci-lint version is written. The CI lint job reads it
+# back out of here rather than keeping a second copy in its `with: version:`.
+#
+# That second copy is not hypothetical — it is the bug this pin fixes. CI
+# hardcoded v2.12.2 while `lint` below invoked a bare `golangci-lint` off
+# PATH, so a developer with a newer one on PATH got a clean run against a
+# different linter than the one gating the merge. v2.12.2 vendors
+# honnef.co/go/tools v0.7.0, whose IR builder panics with
+# "unexpected expr: *ast.KeyValueExpr" on Go 1.27's internal/poll and takes
+# buildir down, which cascades into typedness / nilness / fact_purity /
+# SA5012 and exits 3 before a single one of our own files is judged.
+#
+# It is also GOOS-dependent, which is why nobody saw it locally: internal/poll
+# is per-platform source, the offending construct is in a Linux-only file, and
+# a scan on darwin never parses it. Reproduce with
+# `GOOS=linux GOARCH=amd64 golangci-lint run ./...`.
+GOLANGCI_LINT_VERSION := v2.13.1
+
+# Built from source at that version, not downloaded prebuilt, matching the
+# workflow's `install-mode: goinstall`. A released binary type-checks with the
+# Go it was built with, so the moment go.mod's language version outruns the
+# linter release a prebuilt binary rejects our source before running anything.
+#
+# The path carries the version AND the toolchain, so bumping either rebuilds
+# rather than silently reusing a stale binary — a cache that reintroduces the
+# exact drift this variable exists to prevent. `:=` because a recursive
+# assignment re-forks `go env` on every expansion, including while make merely
+# PARSES this file.
+GOLANGCI_LINT_GOVERSION := $(shell go env GOVERSION)
+GOLANGCI_LINT_BIN := $(CURDIR)/.tools/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(GOLANGCI_LINT_GOVERSION)
 
 build:
 	go build -o $(BINARY) .
@@ -24,8 +56,19 @@ install: build
 fmt:
 	gofmt -s -w .
 
-lint:
-	golangci-lint run ./...
+$(GOLANGCI_LINT_BIN):
+	@GOOS= GOARCH= GOBIN=$(CURDIR)/.tools go install \
+		github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION)
+	@mv $(CURDIR)/.tools/golangci-lint $@
+
+lint: $(GOLANGCI_LINT_BIN)
+	$(GOLANGCI_LINT_BIN) run ./...
+
+# Consumed by the CI lint job so the workflow does not carry its own copy of
+# the version. `-s` on the make invocation there keeps the output to the bare
+# string.
+print-golangci-lint-version:
+	@echo $(GOLANGCI_LINT_VERSION)
 
 vet:
 	go vet ./...
@@ -104,3 +147,4 @@ docs-check:
 
 clean:
 	rm -f $(BINARY)
+	rm -rf $(CURDIR)/.tools
