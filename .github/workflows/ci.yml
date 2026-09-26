@@ -120,6 +120,24 @@ jobs:
       - run: go mod download
       - run: go test -v -count=1 -timeout 5m ./...
 
+  # The only scan that sees this module's build. ferentin-cli-app's
+  # govulncheck covers the ferentin binary; a requirement there that never
+  # reaches that binary still sets a floor here, and that is how grpc 1.84.0
+  # (GO-2026-6443, reachable through the plugin's gRPC server) arrived with
+  # every upstream check green. Exit 3 means a reachable vulnerability.
+  vuln:
+    name: govulncheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Configure access to private modules
+        run: git config --global url."https://x-access-token:${{ secrets.FERENTIN_CI_PAT }}@github.com/".insteadOf "https://github.com/"
+      - run: make vuln
+
   # examples/ is embedded verbatim into docs/ by tfplugindocs, so a
   # mis-formatted example ships to the registry and quietly fails the next
   # `make docs-check`. This is the cheap guard for that.

@@ -12,7 +12,7 @@ VERSION     := dev
 OS_ARCH     := $(shell go env GOOS)_$(shell go env GOARCH)
 INSTALL_DIR := $(HOME)/.terraform.d/plugins/$(HOSTNAME)/$(NAMESPACE)/$(NAME)/$(VERSION)/$(OS_ARCH)
 
-.PHONY: build install fmt lint vet test testacc testacc-local tidy clean docs docs-check
+.PHONY: build install fmt lint vet vuln test testacc testacc-local tidy clean docs docs-check
 .PHONY: print-golangci-lint-version
 
 # The ONE place the golangci-lint version is written. The CI lint job reads it
@@ -72,6 +72,16 @@ print-golangci-lint-version:
 
 vet:
 	go vet ./...
+
+# Reachable-vulnerability scan of what THIS module builds, including the
+# plugin's own gRPC server. It has to run here and not only in
+# ferentin-cli-app: that repo's scan covers the ferentin binary, but every
+# requirement in its go.mod, tool-only ones included, sets a minimum version for
+# this module. grpc 1.84.0 reached this build that way, carrying GO-2026-6443,
+# while cli-app's own scan stayed clean (ferentin-cli-app lesson 282).
+# Pinned by the `tool` directive in go.mod, so a dependency audit sees it.
+vuln:
+	go tool govulncheck ./...
 
 test:
 	go test ./... -count=1 -timeout 60s
