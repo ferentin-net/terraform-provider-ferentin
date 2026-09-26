@@ -71,7 +71,7 @@ variable "ferentin_client_secret" {
 
 - `auth_url` (String) Authorization server base URL, used **only** with `client_id` / `client_secret`. Falls back to env `FERENTIN_AUTH_URL`.
 
-**Must be tenant-scoped.** The platform routes `client_credentials` token mints per tenant, so the value is either `<auth-base>/tenant/<tenant_id>` or the subdomain form `https://<tenant>-sso.auth.<domain>`. A bare `https://auth.<domain>` is rejected with *"Tenant could not be determined. Use a tenant-specific endpoint for this grant type."*
+**Must be tenant-scoped.** The platform routes `client_credentials` token mints per tenant, so the value is either `<auth-base>/tenant/<tenant_id>` or the subdomain form `https://<tenant-shortname>.auth.<domain>`. A bare `https://auth.<domain>` is rejected with *"Tenant could not be determined. Use a tenant-specific endpoint for this grant type."*
 
 Defaults to `endpoint` with `auth.` substituted for `api.` plus `/tenant/<tenant_id>` — e.g. endpoint `https://api.ferentin.net` with tenant `abc…` derives `https://auth.ferentin.net/tenant/abc…`. Set it explicitly for the subdomain form, or when the endpoint host does not start with `api.`.
 - `client_id` (String) OAuth2 client_id for service-account auth (client_credentials grant). Mutually exclusive with `token`. Pair with `client_secret`. Falls back to env `FERENTIN_CLIENT_ID`.

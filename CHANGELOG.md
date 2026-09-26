@@ -8,6 +8,27 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### BREAKING CHANGES
+- **Plain `http://` endpoints are refused.** A profile or managed `endpoint`,
+  the provider's `endpoint`, and a client_credentials `auth_url` must use
+  `https://`; `http://` is accepted only on `127.0.0.1`, `[::1]` or
+  `localhost`. An admin token sent over http can be read and replayed by
+  anyone on the network path. The refusal names the attribute (or, for a
+  profile, says where the endpoint is set). From ferentin-cli-app #211/#214
+  (ferentin-net/ferentin-cli-app#183).
+
+### Changed
+- **A profile's `insecure: true` overruled by the managed configuration now
+  says so.** When the managed layer sets `insecure: false`, or exists and
+  cannot be read, the provider emits a warning naming why, instead of leaving
+  a bare certificate error to be read as a broken endpoint.
+- The `auth_url` descriptions gave the per-tenant subdomain form as
+  `https://<tenant>-sso.auth.<domain>`, a shape that does not exist; it is
+  `https://<tenant-shortname>.auth.<domain>`.
+- Takes ferentin-cli-app `ac27b16`: the #183 Low fixes, including redirect
+  confinement tightened to port 80 -> 443 upgrades, per-profile state
+  directories keyed by a digest of the name, and bounded, sanitised error
+  bodies.
+
 - **`ferentin_llm_provider_instance` renamed to `ferentin_llm_provider`.**
   The longer name was awkward in CLI/HCL alike; the new noun matches
   the `admin llm-providers` CLI surface and the same parallel as
