@@ -319,8 +319,11 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	opts := adminapi.SDKOptions{
 		Endpoint: endpoint,
 		// The admin API's answer. In client_credentials mode the SDK also mints
-		// with it; the auth URL differs from the endpoint only in ways the
-		// handshake's production check already covers.
+		// against auth_url with it. With no profile, the only inputs that can
+		// say "skip" are the caller's opt-in and a managed `insecure: true`,
+		// and both are meant for every non-production host — so the answer is
+		// the same for auth_url except where auth_url is production, which the
+		// handshake refuses to skip whatever this says.
 		SkipTLS:   conn.adminInsecure,
 		UserAgent: "terraform-provider-ferentin/" + p.version,
 		// Platform #651 provenance. "iac" is the platform's enum value for
