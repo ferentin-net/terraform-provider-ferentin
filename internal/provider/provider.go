@@ -210,8 +210,10 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				MarkdownDescription: "Named profile to read from the `ferentin` CLI's shared credentials file. " +
 					"Uses the tokens `ferentin login --profile <name>` stashed in the OS keyring (or " +
 					"`~/.ferentin/profile:<name>` fallback) and refreshes them via the stored refresh_token " +
-					"as they expire. The profile's `endpoint` and `insecure` from `~/.ferentin/.ferentin.yaml` " +
-					"populate the matching provider-block attributes when those are otherwise unset. " +
+					"as they expire. The profile's `endpoint` from `~/.ferentin/.ferentin.yaml` populates `endpoint` " +
+					"when that is otherwise unset, and its `insecure` applies only when the provider uses that same " +
+					"endpoint. A managed (MDM) configuration takes precedence over the file, and a Ferentin production " +
+					"host is always verified. " +
 					"Mutually exclusive with `token` and `client_id`/`client_secret`. Falls back to env " +
 					"`FERENTIN_PROFILE`.",
 				Optional: true,
@@ -248,9 +250,10 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	sharedConfigFile := stringOrEnv(data.SharedConfigFile, envSharedConfigFile)
 	insecure := boolOrEnv(data.InsecureSkipVerify, envInsecure)
 
-	// If a profile is named, try to backfill endpoint / insecure from the
-	// CLI's shared config file. The provider-block attributes still win:
-	// a config-file value only fills in when the user didn't set one.
+	// If a profile is named, backfill the endpoint from the CLI's config
+	// (managed layer first). The provider-block endpoint still wins, and the
+	// profile's insecure follows the profile's endpoint only — see
+	// profileInsecureApplies.
 	if profileName != "" {
 		profileEndpoint, profileInsecure, err := profileauth.ReadProfileConfig(profileName, sharedConfigFile)
 		if err != nil {
@@ -260,9 +263,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 		if endpoint == "" {
 			endpoint = profileEndpoint
 		}
-		if !insecure && profileInsecure {
-			insecure = true
-		}
+		insecure = profileInsecureApplies(insecure, endpoint, profileEndpoint, profileInsecure)
 	}
 
 	if endpoint == "" {
@@ -547,4 +548,27 @@ func boolOrEnv(v types.Bool, envKey string) bool {
 		return v.ValueBool()
 	}
 	return os.Getenv(envKey) == "1" || os.Getenv(envKey) == "true"
+}
+
+// profileInsecureApplies decides whether a profile's `insecure` may turn off
+// certificate verification for the endpoint this provider will actually use.
+//
+// The profile's key describes that PROFILE's endpoint — typically a dev edge
+// with a self-signed certificate — and nothing else. When the HCL (or
+// FERENTIN_ENDPOINT) names a different endpoint, carrying the profile's opt-in
+// across would disable verification for a host the key never described
+// (ferentin-cli-app#183 M1). The provider's own insecure_skip_verify is the
+// caller's explicit opt-in and is kept as given.
+//
+// Production Ferentin hosts are verified at the handshake whatever this returns
+// (httpx.TLSConfig in ferentin-cli-app); this keeps the answer honest for every
+// other host.
+func profileInsecureApplies(explicit bool, endpoint, profileEndpoint string, profileInsecure bool) bool {
+	if explicit {
+		return true
+	}
+	if !profileInsecure || profileEndpoint == "" {
+		return false
+	}
+	return strings.TrimRight(endpoint, "/") == strings.TrimRight(profileEndpoint, "/")
 }

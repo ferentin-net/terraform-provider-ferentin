@@ -50,6 +50,28 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `LLMProviderInstancesAPI` keeps its name for platform alignment.
 
 ### Security
+- **Took the ferentin-cli-app SDK with the #183 TLS and redirect fixes**
+  (`98aeb93`):
+  - Certificate verification is never skipped for a Ferentin production
+    host, checked at the TLS handshake. This covers the connection actually
+    made, so a profile refresh against a production-issued token's issuer
+    stays verified even when `insecure_skip_verify` is set for a dev edge.
+  - A profile's endpoint and `insecure` now honour the machine's managed
+    (MDM) configuration first, as the CLI does (#183 M6). A user's own
+    `insecure: true` no longer beats a managed `insecure: false`.
+  - The admin SDK follows a redirect only within its own origin, so a 3xx
+    cannot carry the admin token to another host (#183 M2).
+  - `google.golang.org/grpc` stays at 1.83.2. An intermediate SDK build would
+    have raised it to 1.84.0, which carries
+    [GO-2026-6443](https://pkg.go.dev/vuln/GO-2026-6443) (server panic on a
+    missing `:authority`/`Host` header), reachable here through the plugin's
+    own gRPC server and with no fixed release. `govulncheck ./...` reports
+    **no vulnerabilities**.
+- **A profile's `insecure` no longer applies to an endpoint set in HCL or
+  `FERENTIN_ENDPOINT`.** It describes that profile's own endpoint, typically
+  a dev edge with a self-signed certificate, and was being carried to any
+  endpoint the provider block named. `insecure_skip_verify` is unaffected.
+
 - **Upgraded two modules with reachable vulnerabilities**, both confirmed by
   `govulncheck` as reachable from this provider's own call graph (not merely
   present in the module graph):
