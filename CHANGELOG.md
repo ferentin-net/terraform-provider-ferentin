@@ -48,6 +48,17 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (`/admin/tenants/{tid}/provider-instances`) and DB table
   (`llm_provider_instances`) are unchanged. SDK type
   `LLMProviderInstancesAPI` keeps its name for platform alignment.
+- **`insecure_skip_verify` is refused where the machine's managed (MDM)
+  configuration sets `insecure: false`**, and also where a managed
+  configuration exists but cannot be read. This matches the CLI, which refuses
+  `--insecure` on such a machine. `terraform plan` fails with an error on
+  `insecure_skip_verify` rather than connecting unverified. This applies to
+  every auth mode, not only `profile`.
+- **A profile's `insecure` covers only that profile's own endpoint.** It no
+  longer applies to an endpoint set in HCL or `FERENTIN_ENDPOINT`, or to the
+  issuer the profile's tokens refresh against, which is a different host. If a
+  local stack's issuer has a self-signed certificate, set
+  `insecure_skip_verify = true`, or trust the stack's CA.
 
 ### Security
 - **Took the ferentin-cli-app SDK with the #183 TLS and redirect fixes**
@@ -67,11 +78,13 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     missing `:authority`/`Host` header), reachable here through the plugin's
     own gRPC server and with no fixed release. `govulncheck ./...` reports
     **no vulnerabilities**.
-- **A profile's `insecure` no longer applies to an endpoint set in HCL or
-  `FERENTIN_ENDPOINT`.** It describes that profile's own endpoint, typically
-  a dev edge with a self-signed certificate, and was being carried to any
-  endpoint the provider block named. `insecure_skip_verify` is unaffected.
-
+- **TLS is decided per destination, and the managed configuration outranks
+  the provider's own opt-in** (ferentin-cli-app#190). Before this,
+  `insecure_skip_verify` or `FERENTIN_INSECURE_SKIP_VERIFY=1` still turned
+  verification off on a machine whose managed configuration said
+  `insecure: false`, and one setting covered both the admin API and the issuer
+  the profile's tokens refresh against. See BREAKING CHANGES for what this
+  means for your configuration.
 - **Upgraded two modules with reachable vulnerabilities**, both confirmed by
   `govulncheck` as reachable from this provider's own call graph (not merely
   present in the module graph):

@@ -211,9 +211,9 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 					"Uses the tokens `ferentin login --profile <name>` stashed in the OS keyring (or " +
 					"`~/.ferentin/profile:<name>` fallback) and refreshes them via the stored refresh_token " +
 					"as they expire. The profile's `endpoint` from `~/.ferentin/.ferentin.yaml` populates `endpoint` " +
-					"when that is otherwise unset, and its `insecure` applies only when the provider uses that same " +
-					"endpoint. A managed (MDM) configuration takes precedence over the file, and a Ferentin production " +
-					"host is always verified. " +
+					"when that is otherwise unset, and its `insecure` applies only to that endpoint's origin — not to " +
+					"an endpoint set in HCL, nor to the issuer its tokens refresh against. A managed (MDM) " +
+					"configuration takes precedence over the file, and a Ferentin production host is always verified. " +
 					"Mutually exclusive with `token` and `client_id`/`client_secret`. Falls back to env " +
 					"`FERENTIN_PROFILE`.",
 				Optional: true,
@@ -226,7 +226,9 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 			},
 			"insecure_skip_verify": schema.BoolAttribute{
 				MarkdownDescription: "Skip TLS verification. Local-dev only; do NOT set in production. " +
-					"Falls back to env `FERENTIN_INSECURE_SKIP_VERIFY=1`.",
+					"Applies to the admin API and to the issuer a profile's tokens refresh against. Never " +
+					"takes effect for a Ferentin production host, and is refused where the machine's managed " +
+					"(MDM) configuration sets `insecure: false`. Falls back to env `FERENTIN_INSECURE_SKIP_VERIFY=1`.",
 				Optional: true,
 			},
 		},
@@ -248,27 +250,28 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	authURL := stringOrEnv(data.AuthURL, envAuthURL)
 	profileName := stringOrEnv(data.Profile, envProfile)
 	sharedConfigFile := stringOrEnv(data.SharedConfigFile, envSharedConfigFile)
-	insecure := boolOrEnv(data.InsecureSkipVerify, envInsecure)
+	explicitInsecure := boolOrEnv(data.InsecureSkipVerify, envInsecure)
 
-	// If a profile is named, backfill the endpoint from the CLI's config
-	// (managed layer first). The provider-block endpoint still wins, and the
-	// profile's insecure follows the profile's endpoint only — see
-	// profileInsecureApplies.
-	if profileName != "" {
-		profileEndpoint, profileInsecure, err := profileauth.ReadProfileConfig(profileName, sharedConfigFile)
-		if err != nil {
-			resp.Diagnostics.AddError("Failed to read shared config file", err.Error())
-			return
-		}
-		if endpoint == "" {
-			endpoint = profileEndpoint
-		}
-		insecure = profileInsecureApplies(insecure, endpoint, profileEndpoint, profileInsecure)
+	// The CLI's configuration, managed (MDM) layer first. Read even with no
+	// profile: the machine-wide managed `insecure` binds a static-token or
+	// client_credentials run exactly as it binds a profile run.
+	settings, err := profileauth.LoadSettings(profileName, sharedConfigFile)
+	if err != nil {
+		resp.Diagnostics.AddError("Failed to read shared config file", err.Error())
+		return
 	}
+	conn, err := resolveConnection(settings, endpoint, settings.Endpoint, explicitInsecure)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(
+			path.Root("insecure_skip_verify"),
+			"Certificate verification cannot be skipped on this machine",
+			err.Error()+"\n\nUnset `insecure_skip_verify` and FERENTIN_INSECURE_SKIP_VERIFY, or "+
+				"trust the endpoint's certificate authority instead.",
+		)
+		return
+	}
+	endpoint = conn.endpoint
 
-	if endpoint == "" {
-		endpoint = DefaultEndpoint
-	}
 	// tenant_id resolution is deferred: we first build the SDK, then if the
 	// user didn't set it explicitly we derive it from the JWT's `tid` claim
 	// (which the auth-server populates from the principal's bound tenant).
@@ -314,8 +317,14 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	opts := adminapi.SDKOptions{
-		Endpoint:  endpoint,
-		SkipTLS:   insecure,
+		Endpoint: endpoint,
+		// The admin API's answer. In client_credentials mode the SDK also mints
+		// against auth_url with it. With no profile, the only inputs that can
+		// say "skip" are the caller's opt-in and a managed `insecure: true`,
+		// and both are meant for every non-production host — so the answer is
+		// the same for auth_url except where auth_url is production, which the
+		// handshake refuses to skip whatever this says.
+		SkipTLS:   conn.adminInsecure,
 		UserAgent: "terraform-provider-ferentin/" + p.version,
 		// Platform #651 provenance. "iac" is the platform's enum value for
 		// Terraform / OpenTofu / CC-token automation; ManagedByModule is
@@ -336,14 +345,14 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 
 	var (
 		sdk      *adminapi.SDKClient
-		err      error
 		authMode string
 	)
 	switch {
 	case profilePresent:
 		opts.UserAgent += " (profile=" + profileName + ")"
 		src, perr := profileauth.NewProfileTokenSource(profileName, profileauth.ProfileTokenSourceConfig{
-			SkipTLS: &insecure,
+			// Asked about the stored issuer, a different origin from endpoint.
+			InsecureFor: conn.issuerInsecure,
 		})
 		if perr != nil {
 			resp.Diagnostics.AddAttributeError(
@@ -550,25 +559,46 @@ func boolOrEnv(v types.Bool, envKey string) bool {
 	return os.Getenv(envKey) == "1" || os.Getenv(envKey) == "true"
 }
 
-// profileInsecureApplies decides whether a profile's `insecure` may turn off
-// certificate verification for the endpoint this provider will actually use.
+// tlsSettings is the part of profileauth.Settings resolveConnection needs; an
+// interface so the wiring can be tested without the machine's managed layer.
+type tlsSettings interface {
+	CheckOptIn(explicit bool) error
+	InsecureFor(target string, explicit bool) bool
+}
+
+// connection is where the provider connects and, per destination, whether it
+// may skip certificate verification there.
+type connection struct {
+	endpoint       string
+	adminInsecure  bool
+	issuerInsecure func(target string) bool
+}
+
+// resolveConnection picks the admin endpoint (HCL / FERENTIN_ENDPOINT, then the
+// profile's, then production) and answers TLS for each destination separately.
 //
-// The profile's key describes that PROFILE's endpoint — typically a dev edge
-// with a self-signed certificate — and nothing else. When the HCL (or
-// FERENTIN_ENDPOINT) names a different endpoint, carrying the profile's opt-in
-// across would disable verification for a host the key never described
-// (ferentin-cli-app#183 M1). The provider's own insecure_skip_verify is the
-// caller's explicit opt-in and is kept as given.
-//
-// Production Ferentin hosts are verified at the handshake whatever this returns
-// (httpx.TLSConfig in ferentin-cli-app); this keeps the answer honest for every
-// other host.
-func profileInsecureApplies(explicit bool, endpoint, profileEndpoint string, profileInsecure bool) bool {
-	if explicit {
-		return true
+// One bool used to cover both the admin API and the issuer the profile's
+// tokens refresh against, and the provider's own opt-in was ORed over the
+// CLI's answer, so FERENTIN_INSECURE_SKIP_VERIFY=1 beat a managed
+// `insecure: false` (ferentin-cli-app lessons 280 and 283). The opt-in is now
+// an INPUT to the resolver, and refused outright where the managed layer
+// forbids it, as the CLI refuses `--insecure`.
+func resolveConnection(s tlsSettings, hclEndpoint, profileEndpoint string, explicit bool) (connection, error) {
+	if err := s.CheckOptIn(explicit); err != nil {
+		return connection{}, err
 	}
-	if !profileInsecure || profileEndpoint == "" {
-		return false
+	endpoint := hclEndpoint
+	if endpoint == "" {
+		endpoint = profileEndpoint
 	}
-	return strings.TrimRight(endpoint, "/") == strings.TrimRight(profileEndpoint, "/")
+	if endpoint == "" {
+		endpoint = DefaultEndpoint
+	}
+	return connection{
+		endpoint:      endpoint,
+		adminInsecure: s.InsecureFor(endpoint, explicit),
+		issuerInsecure: func(target string) bool {
+			return s.InsecureFor(target, explicit)
+		},
+	}, nil
 }
