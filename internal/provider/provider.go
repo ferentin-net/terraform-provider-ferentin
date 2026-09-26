@@ -197,7 +197,7 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 					"`client_secret`. Falls back to env `FERENTIN_AUTH_URL`.\n\n" +
 					"**Must be tenant-scoped.** The platform routes `client_credentials` token mints " +
 					"per tenant, so the value is either `<auth-base>/tenant/<tenant_id>` or the " +
-					"subdomain form `https://<tenant>-sso.auth.<domain>`. A bare `https://auth.<domain>` " +
+					"subdomain form `https://<tenant-shortname>.auth.<domain>`. A bare `https://auth.<domain>` " +
 					"is rejected with *\"Tenant could not be determined. Use a tenant-specific endpoint " +
 					"for this grant type.\"*\n\n" +
 					"Defaults to `endpoint` with `auth.` substituted for `api.` plus `/tenant/<tenant_id>` " +
@@ -248,6 +248,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	clientID := stringOrEnv(data.ClientID, envClientID)
 	clientSecret := stringOrEnv(data.ClientSecret, envClientSecret)
 	authURL := stringOrEnv(data.AuthURL, envAuthURL)
+	authURLSupplied := authURL != ""
 	profileName := stringOrEnv(data.Profile, envProfile)
 	sharedConfigFile := stringOrEnv(data.SharedConfigFile, envSharedConfigFile)
 	explicitInsecure := boolOrEnv(data.InsecureSkipVerify, envInsecure)
@@ -257,8 +258,17 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	// client_credentials run exactly as it binds a profile run.
 	settings, err := profileauth.LoadSettings(profileName, sharedConfigFile)
 	if err != nil {
-		resp.Diagnostics.AddError("Failed to read shared config file", err.Error())
+		summary, detail := settingsLoadDiagnostic(err)
+		resp.Diagnostics.AddError(summary, detail)
 		return
+	}
+	// Not when the caller opted in explicitly: CheckOptIn (in resolveConnection,
+	// below) refuses that opt-in for the same cause, and one cause earns one
+	// diagnostic.
+	if w := settings.SuppressedInsecure(); w != nil && !explicitInsecure {
+		resp.Diagnostics.AddWarning("The profile's `insecure: true` is not in effect", w.Error()+
+			"\n\nA certificate error from this run means verification stayed on, "+
+			"not that the endpoint is broken. Trust the endpoint's certificate authority instead.")
 	}
 	conn, err := resolveConnection(settings, endpoint, settings.Endpoint, explicitInsecure)
 	if err != nil {
@@ -378,7 +388,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 						"`auth_url` needs `tenant_id`.\n\nEither set `tenant_id` (or export "+
 						"FERENTIN_TENANT_ID), or set `auth_url` to the tenant-scoped base yourself — "+
 						"`https://auth.example.com/tenant/<tenant-uuid>`, or the subdomain form "+
-						"`https://<tenant>-sso.auth.example.com`.",
+						"`https://<tenant-shortname>.auth.example.com`.",
 				)
 				return
 			}
@@ -391,7 +401,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 				"Set `auth_url` explicitly, or export FERENTIN_AUTH_URL. "+
 					"Endpoint did not contain `api.` for the default `api.→auth.` substitution.\n\n"+
 					"Note the value must be TENANT-SCOPED — `<base>/tenant/<tenant-uuid>` or "+
-					"`https://<tenant>-sso.auth.<domain>` — because the platform routes "+
+					"`https://<tenant-shortname>.auth.<domain>` — because the platform routes "+
 					"client_credentials mints per tenant.",
 			)
 			return
@@ -409,6 +419,10 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 		authMode = "static_token"
 	}
 	if err != nil {
+		if attr, summary, detail, ok := cleartextSDKDiagnostic(err, ccPresent && !profilePresent && authURLSupplied); ok {
+			resp.Diagnostics.AddAttributeError(attr, summary, detail)
+			return
+		}
 		resp.Diagnostics.AddError("Failed to build admin-api SDK client", err.Error())
 		return
 	}
@@ -490,7 +504,7 @@ func resolveBearer(ctx context.Context, staticToken string, source adminapi.Toke
 // endpoint, which the authorization server rejects: "Tenant could not be
 // determined. Use a tenant-specific endpoint for this grant type."
 //
-// The subdomain form (`https://<tenant>-sso.auth.<domain>`) is the other valid
+// The subdomain form (`https://<tenant-shortname>.auth.<domain>`) is the other valid
 // shape and deliberately is NOT derived: its label is the tenant *slug*, which
 // this provider never sees — only the UUID. Callers wanting it set `auth_url`.
 //
@@ -561,6 +575,41 @@ func boolOrEnv(v types.Bool, envKey string) bool {
 
 // tlsSettings is the part of profileauth.Settings resolveConnection needs; an
 // interface so the wiring can be tested without the machine's managed layer.
+// settingsLoadDiagnostic names what went wrong reading the CLI's
+// configuration. A profile or managed `endpoint` that is plain http:// is not
+// a file that failed to read, and reporting it as one sends the user looking
+// for a parse error in a file that parsed fine.
+func settingsLoadDiagnostic(err error) (summary, detail string) {
+	if errors.Is(err, profileauth.ErrCleartextEndpoint) {
+		return "The profile's endpoint must use https", err.Error() +
+			"\n\nAn admin token sent over http:// can be read and replayed by anyone on the network path. " +
+			"Change the endpoint where it is set (`ferentin profiles set-endpoint`, or the managed configuration) to https://."
+	}
+	return "Failed to read shared config file", err.Error()
+}
+
+// cleartextSDKDiagnostic points a cleartext refusal from the SDK at the
+// attribute that supplied the URL. `auth_url` is blamed only when the user SET
+// it: a derived auth_url inherits the endpoint's scheme (deriveAuthURL keeps
+// it), so a refusal of the derived value is fixed by changing `endpoint`, and
+// pointing at an attribute the user never wrote sends them to the wrong line.
+// The SDK's message already redacts userinfo and query, so it is shown as is.
+func cleartextSDKDiagnostic(err error, userAuthURL bool) (path.Path, string, string, bool) {
+	if !errors.Is(err, adminapi.ErrCleartextEndpoint) {
+		return path.Path{}, "", "", false
+	}
+	// The SDK names the refused field in its message. Matching that name is
+	// matching our own pinned SDK's text, so TestCleartextSDKDiagnostic runs the
+	// real constructors: a bump that rewords it fails there, not in front of a
+	// user reading the wrong attribute.
+	attr := path.Root("endpoint")
+	if userAuthURL && strings.Contains(err.Error(), "ClientCredentialsOptions.AuthURL") {
+		attr = path.Root("auth_url")
+	}
+	return attr, "Credentials may only be sent over https", err.Error() +
+		"\n\nUse an https:// URL. http:// is accepted only on a loopback address (127.0.0.1, [::1] or localhost) for a local stack.", true
+}
+
 type tlsSettings interface {
 	CheckOptIn(explicit bool) error
 	InsecureFor(target string, explicit bool) bool
