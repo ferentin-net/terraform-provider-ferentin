@@ -24,10 +24,17 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - The `auth_url` descriptions gave the per-tenant subdomain form as
   `https://<tenant>-sso.auth.<domain>`, a shape that does not exist; it is
   `https://<tenant-shortname>.auth.<domain>`.
-- Takes ferentin-cli-app `ac27b16`: the #183 Low fixes, including redirect
-  confinement tightened to port 80 -> 443 upgrades, per-profile state
-  directories keyed by a digest of the name, and bounded, sanitised error
-  bodies.
+- Takes ferentin-cli-app `41c9821` (#194-#218). Provider-visible besides the
+  above:
+  - A profile's `insecure: true` now covers exactly its own endpoint's origin
+    (scheme, host and port); it no longer extends from `http://h` to
+    `https://h`.
+  - A profile whose issuer's discovery document names a non-loopback
+    `http://` token, authorization or JWKS endpoint is refused on the first
+    token refresh, the first API call, rather than at configuration.
+  - Redirects that would carry a credential are followed only within an
+    origin, or from port 80 to 443.
+  - Error bodies from the platform are bounded and sanitised.
 
 - **`ferentin_llm_provider_instance` renamed to `ferentin_llm_provider`.**
   The longer name was awkward in CLI/HCL alike; the new noun matches

@@ -37,6 +37,23 @@ func TestCleartextSDKDiagnostic(t *testing.T) {
 		t.Fatalf("diagnostic echoes userinfo: %q", detail)
 	}
 
+	// A DERIVED auth_url inherits the endpoint's scheme, so its refusal is the
+	// endpoint's to fix: the user never wrote auth_url.
+	attr, _, _, ok = cleartextSDKDiagnostic(err, false)
+	if !ok || !attr.Equal(path.Root("endpoint")) {
+		t.Fatalf("derived cleartext auth_url blamed on %v, want endpoint", attr)
+	}
+
+	// And the match is on the auth_url field: an http endpoint with an https
+	// auth_url is still the endpoint's refusal, even in client_credentials.
+	_, err = adminapi.NewWithClientCredentials(
+		adminapi.SDKOptions{Endpoint: "http://api.example.com"},
+		adminapi.ClientCredentialsOptions{AuthURL: "https://auth.example.com/tenant/1", ClientID: "c", ClientSecret: "s"})
+	attr, _, _, ok = cleartextSDKDiagnostic(err, true)
+	if !ok || !attr.Equal(path.Root("endpoint")) {
+		t.Fatalf("cleartext endpoint under client_credentials blamed on %v, want endpoint (err=%v)", attr, err)
+	}
+
 	if _, _, _, ok := cleartextSDKDiagnostic(errors.New("something else"), false); ok {
 		t.Fatal("an unrelated error was claimed as a cleartext refusal")
 	}

@@ -248,6 +248,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	clientID := stringOrEnv(data.ClientID, envClientID)
 	clientSecret := stringOrEnv(data.ClientSecret, envClientSecret)
 	authURL := stringOrEnv(data.AuthURL, envAuthURL)
+	authURLSupplied := authURL != ""
 	profileName := stringOrEnv(data.Profile, envProfile)
 	sharedConfigFile := stringOrEnv(data.SharedConfigFile, envSharedConfigFile)
 	explicitInsecure := boolOrEnv(data.InsecureSkipVerify, envInsecure)
@@ -261,10 +262,13 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 		resp.Diagnostics.AddError(summary, detail)
 		return
 	}
-	if w := settings.SuppressedInsecure(); w != nil {
+	// Not when the caller opted in explicitly: CheckOptIn (in resolveConnection,
+	// below) refuses that opt-in for the same cause, and one cause earns one
+	// diagnostic.
+	if w := settings.SuppressedInsecure(); w != nil && !explicitInsecure {
 		resp.Diagnostics.AddWarning("The profile's `insecure: true` is not in effect", w.Error()+
-			"\n\nA certificate error from this run is the verification the managed configuration requires, "+
-			"not a broken endpoint. Trust the endpoint's certificate authority instead.")
+			"\n\nA certificate error from this run means verification stayed on, "+
+			"not that the endpoint is broken. Trust the endpoint's certificate authority instead.")
 	}
 	conn, err := resolveConnection(settings, endpoint, settings.Endpoint, explicitInsecure)
 	if err != nil {
@@ -415,7 +419,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 		authMode = "static_token"
 	}
 	if err != nil {
-		if attr, summary, detail, ok := cleartextSDKDiagnostic(err, ccPresent && !profilePresent); ok {
+		if attr, summary, detail, ok := cleartextSDKDiagnostic(err, ccPresent && !profilePresent && authURLSupplied); ok {
 			resp.Diagnostics.AddAttributeError(attr, summary, detail)
 			return
 		}
@@ -585,10 +589,12 @@ func settingsLoadDiagnostic(err error) (summary, detail string) {
 }
 
 // cleartextSDKDiagnostic points a cleartext refusal from the SDK at the
-// attribute that supplied the URL: `auth_url` for client_credentials, where
-// the token endpoint is the URL checked second, and `endpoint` otherwise. The
-// SDK's message already redacts userinfo and query, so it is shown as is.
-func cleartextSDKDiagnostic(err error, clientCredentials bool) (path.Path, string, string, bool) {
+// attribute that supplied the URL. `auth_url` is blamed only when the user SET
+// it: a derived auth_url inherits the endpoint's scheme (deriveAuthURL keeps
+// it), so a refusal of the derived value is fixed by changing `endpoint`, and
+// pointing at an attribute the user never wrote sends them to the wrong line.
+// The SDK's message already redacts userinfo and query, so it is shown as is.
+func cleartextSDKDiagnostic(err error, userAuthURL bool) (path.Path, string, string, bool) {
 	if !errors.Is(err, adminapi.ErrCleartextEndpoint) {
 		return path.Path{}, "", "", false
 	}
@@ -597,7 +603,7 @@ func cleartextSDKDiagnostic(err error, clientCredentials bool) (path.Path, strin
 	// real constructors: a bump that rewords it fails there, not in front of a
 	// user reading the wrong attribute.
 	attr := path.Root("endpoint")
-	if clientCredentials && strings.Contains(err.Error(), "ClientCredentialsOptions.AuthURL") {
+	if userAuthURL && strings.Contains(err.Error(), "ClientCredentialsOptions.AuthURL") {
 		attr = path.Root("auth_url")
 	}
 	return attr, "Credentials may only be sent over https", err.Error() +
