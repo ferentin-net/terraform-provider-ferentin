@@ -31,7 +31,7 @@ INSTALL_DIR := $(HOME)/.terraform.d/plugins/$(HOSTNAME)/$(NAMESPACE)/$(NAME)/$(V
 # is per-platform source, the offending construct is in a Linux-only file, and
 # a scan on darwin never parses it. Reproduce with
 # `GOOS=linux GOARCH=amd64 golangci-lint run ./...`.
-GOLANGCI_LINT_VERSION := v2.13.1
+GOLANGCI_LINT_VERSION := v2.14.0
 
 # Built from source at that version, not downloaded prebuilt, matching the
 # workflow's `install-mode: goinstall`. A released binary type-checks with the
