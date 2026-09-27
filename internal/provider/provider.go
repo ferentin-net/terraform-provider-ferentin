@@ -155,7 +155,10 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 				MarkdownDescription: "Admin-api base URL. Defaults to `https://api.ferentin.net` (production); " +
 					"override for local-dev or air-gapped deployments (e.g. `https://api.local.ferentin.test`). " +
 					"Falls back to env `FERENTIN_ENDPOINT`, then to the named profile's `endpoint` value " +
-					"in the shared config file, then to the production default.",
+					"in the shared config file, then to the production default.\n\n" +
+					"Must use `https://`. Plain `http://` is refused (an admin token sent over it can be read " +
+					"and replayed on the network path) except on a loopback address — `127.0.0.1`, `[::1]` or " +
+					"`localhost` — for a local stack. The same applies to a profile's or managed `endpoint`.",
 				Optional: true,
 			},
 			"tenant_id": schema.StringAttribute{
@@ -203,7 +206,9 @@ func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, r
 					"Defaults to `endpoint` with `auth.` substituted for `api.` plus `/tenant/<tenant_id>` " +
 					"— e.g. endpoint `https://api.ferentin.net` with tenant `abc…` derives " +
 					"`https://auth.ferentin.net/tenant/abc…`. Set it explicitly for the subdomain form, " +
-					"or when the endpoint host does not start with `api.`.",
+					"or when the endpoint host does not start with `api.`.\n\n" +
+					"Must use `https://`; `http://` is accepted only on `127.0.0.1`, `[::1]` or `localhost`. " +
+					"A derived value inherits the scheme of `endpoint`.",
 				Optional: true,
 			},
 			"profile": schema.StringAttribute{

@@ -73,6 +73,12 @@ resource "ferentin_workload_oauth_client" "snowflake_cc" {
   private_key_jwt_private_key_wo_version = 1
 
   default_audience = "https://acme.snowflakecomputing.com"
+
+  # By default the platform derives an RFC 8707 `resource` from the MCP
+  # server's endpoint when neither the server override nor default_resource
+  # supplies one. Turn that off for an authorization server that rejects an
+  # unexpected `resource` parameter.
+  send_resource_parameter = false
 }
 
 variable "salesforce_client_secret" {
@@ -117,6 +123,7 @@ variable "snowflake_private_key_pem" {
 - `private_key_jwt_kid` (String) JWT `kid` header value.
 - `private_key_jwt_private_key` (String, Sensitive, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) PEM-encoded private key for `private_key_jwt` auth. **WriteOnly**. Bump `private_key_jwt_private_key_wo_version` to rotate.
 - `private_key_jwt_private_key_wo_version` (Number) Companion to write-only `private_key_jwt_private_key`. Bump to rotate.
+- `send_resource_parameter` (Boolean) Derive and send the RFC 8707 `resource` from the upstream endpoint when neither the MCP server's `cc_federated_resource_override` nor `default_resource` supplies one. The platform defaults to `true`; set `false` for an authorization server that rejects an unexpected `resource`.
 - `sso_idp_id` (String) Optional FK to a `ferentin_identity_provider` for SSO inheritance.
 - `tenant_id` (String) Tenant UUID. Defaults to provider-level `tenant_id`.
 

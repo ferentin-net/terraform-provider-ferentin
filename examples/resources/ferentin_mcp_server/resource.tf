@@ -22,7 +22,7 @@ resource "ferentin_mcp_server" "internal_search_us" {
 
   # Routing.
   deployment_mode        = "edge_routed"
-  upstream_auth_strategy = "oauth2_shared"
+  upstream_auth_strategy = "oauth2_user"
   transport_type         = "sse"
   edge_site_id           = "prod-us-east-1a"
 
@@ -72,7 +72,8 @@ resource "ferentin_mcp_server" "salesforce_read_only" {
   description = "Read-only Salesforce MCP — narrower scopes than the default."
 
   transport_type         = "streamable_http"
-  deployment_mode        = "public"
+  deployment_mode        = "edge_routed"
+  edge_site_id           = "prod-us-east-1a"
   upstream_auth_strategy = "cc_federated"
 
   # The federation knob: which workload client mints the upstream token.
@@ -98,4 +99,47 @@ data "ferentin_workload_oauth_client_test" "salesforce_check" {
 
 output "salesforce_idp_reachable" {
   value = data.ferentin_workload_oauth_client_test.salesforce_check.overall_pass
+}
+
+# --- Enterprise-managed authorization (ema_federated) --------------------
+# The platform exchanges the user's identity assertion from a tenant IdP for
+# an ID-JAG, then redeems it at the upstream's RESOURCE authorization server.
+# That server issues the redeeming client its own registration, which is what
+# ema_resource_client_id names — it is not the IdP client id.
+
+resource "ferentin_mcp_server" "todos_ema" {
+  provider_id = "33333333-3333-3333-3333-333333333333" # ferentin_mcp_provider.todos.id
+
+  name     = "todos-ema"
+  endpoint = "https://todos.internal.example.com/mcp"
+
+  transport_type         = "streamable_http"
+  deployment_mode        = "edge_routed"
+  edge_site_id           = "prod-us-east-1a"
+  upstream_auth_strategy = "ema_federated"
+
+  # The tenant OIDC IdP whose per-user assertion backs the exchange.
+  ema_federated_identity_provider_id = "44444444-4444-4444-4444-444444444444"
+
+  # Client registration at the resource AS. Leave both unset only when that
+  # server treats the client as public or CIMD.
+  ema_resource_client_id = "todos-mcp-redeemer"
+  env = {
+    ema_resource_client_secret = var.todos_resource_client_secret
+  }
+
+  # The resource scopes the ID-JAG is minted for. Not discoverable from the
+  # upstream, so it has to be set here.
+  upstream_scopes_override = "todos.read mcp.access"
+}
+
+variable "todos_resource_client_secret" {
+  type        = string
+  description = "Client secret issued by the todos resource authorization server."
+  sensitive   = true
+}
+
+output "todos_resource_secret_stored" {
+  description = "Whether the platform holds a resource client secret (the value is never returned)."
+  value       = ferentin_mcp_server.todos_ema.has_resource_client_secret
 }

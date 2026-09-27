@@ -73,6 +73,7 @@ type WorkloadIdentityProviderResourceModel struct {
 	CloudProviderDisplayName types.String `tfsdk:"cloud_provider_display_name"`
 	AWS                      types.Bool   `tfsdk:"aws"`
 	Azure                    types.Bool   `tfsdk:"azure"`
+	Cursor                   types.Bool   `tfsdk:"cursor"`
 	GCP                      types.Bool   `tfsdk:"gcp"`
 	GenericOIDC              types.Bool   `tfsdk:"generic_oidc"`
 	GitHub                   types.Bool   `tfsdk:"github"`
@@ -89,9 +90,10 @@ func NewWorkloadIdentityProviderResource() resource.Resource {
 }
 
 var (
-	_ resource.Resource                = (*WorkloadIdentityProviderResource)(nil)
-	_ resource.ResourceWithConfigure   = (*WorkloadIdentityProviderResource)(nil)
-	_ resource.ResourceWithImportState = (*WorkloadIdentityProviderResource)(nil)
+	_ resource.Resource                   = (*WorkloadIdentityProviderResource)(nil)
+	_ resource.ResourceWithConfigure      = (*WorkloadIdentityProviderResource)(nil)
+	_ resource.ResourceWithImportState    = (*WorkloadIdentityProviderResource)(nil)
+	_ resource.ResourceWithValidateConfig = (*WorkloadIdentityProviderResource)(nil)
 )
 
 func (r *WorkloadIdentityProviderResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -115,7 +117,7 @@ func (r *WorkloadIdentityProviderResource) Configure(_ context.Context, req reso
 func (r *WorkloadIdentityProviderResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Inbound trust configuration for accepting workload identity tokens from a customer's " +
-			"cloud (AWS / GCP / Azure / OCI / generic OIDC / GitHub). Workloads in that cloud authenticate to " +
+			"cloud (AWS / GCP / Azure / OCI / generic OIDC / GitHub / Cursor Cloud Agents). Workloads in that cloud authenticate to " +
 			"Ferentin without a pre-provisioned client_secret by presenting their cloud-issued JWT, which Ferentin " +
 			"validates against this trust config.\n\n" +
 			"This resource doesn't use optimistic concurrency (no `version` field); Update / Delete are last-write-wins.\n\n" +
@@ -144,10 +146,10 @@ func (r *WorkloadIdentityProviderResource) Schema(_ context.Context, _ resource.
 
 			"name": schema.StringAttribute{Required: true, MarkdownDescription: "Human-readable name (e.g. `aws-prod-eks`)."},
 			"cloud_provider": schema.StringAttribute{
-				MarkdownDescription: "Cloud provider type. Allowed: `aws`, `azure`, `gcp`, `generic_oidc`, `github`, `oci`.",
+				MarkdownDescription: "Cloud provider type. Allowed: `aws`, `azure`, `cursor`, `gcp`, `generic_oidc`, `github`, `oci`.",
 				Required:            true,
 				Validators: []validator.String{
-					stringvalidator.OneOf("aws", "azure", "gcp", "generic_oidc", "github", "oci"),
+					stringvalidator.OneOf("aws", "azure", "cursor", "gcp", "generic_oidc", "github", "oci"),
 				},
 			},
 			"protocol_type": schema.StringAttribute{
@@ -198,6 +200,7 @@ func (r *WorkloadIdentityProviderResource) Schema(_ context.Context, _ resource.
 			"cloud_provider_display_name": schema.StringAttribute{Computed: true},
 			"aws":                         schema.BoolAttribute{Computed: true},
 			"azure":                       schema.BoolAttribute{Computed: true},
+			"cursor":                      schema.BoolAttribute{Computed: true},
 			"gcp":                         schema.BoolAttribute{Computed: true},
 			"generic_oidc":                schema.BoolAttribute{Computed: true},
 			"github":                      schema.BoolAttribute{Computed: true},
@@ -416,6 +419,7 @@ func workloadIdentityProviderToModel(tenantID string, p *adminapi.WorkloadIdenti
 	m.GCP = boolPtrOrDefault(p.Gcp)
 	m.GenericOIDC = boolPtrOrDefault(p.GenericOidc)
 	m.GitHub = boolPtrOrDefault(p.GitHub)
+	m.Cursor = boolPtrOrDefault(p.Cursor)
 	m.OCI = boolPtrOrDefault(p.Oci)
 	m.OIDC = boolPtrOrDefault(p.Oidc)
 	m.SAML = boolPtrOrDefault(p.Saml)

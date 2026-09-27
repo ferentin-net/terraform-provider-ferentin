@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -379,4 +380,87 @@ func TestEdgeSiteToModel_Tags(t *testing.T) {
 			t.Errorf("stringMapToSDK(null) = %v, want nil", got)
 		}
 	})
+}
+
+// EMA (ID-JAG) fields: response → state, and state → both request bodies.
+// The resource-client secret has no field of its own (it travels in env), so
+// only its presence flag comes back.
+func TestMcpServer_EmaFields(t *testing.T) {
+	srvID := mustParseUUID(t, "11111111-1111-4111-8111-111111111111")
+	idpID := mustParseUUID(t, "55555555-5555-4555-8555-555555555555")
+	strategy := gen.McpServerResponseDtoUpstreamAuthStrategy("ema_federated")
+	srv := &adminapi.MCPServer{
+		Id:                             &srvID,
+		UpstreamAuthStrategy:           &strategy,
+		EmaFederatedIdentityProviderId: &idpID,
+		EmaResourceClientId:            strPtr("todo-resource-client"),
+		HasResourceClientSecret:        boolPtr(true),
+		UpstreamScopesOverride:         strPtr("todos.read mcp.access"),
+	}
+
+	m := mcpServerToModel(fixtureTenantID, srv)
+	if got := m.EmaFederatedIdentityProviderID.ValueString(); got != idpID.String() {
+		t.Errorf("EmaFederatedIdentityProviderID = %q", got)
+	}
+	if got := m.EmaResourceClientID.ValueString(); got != "todo-resource-client" {
+		t.Errorf("EmaResourceClientID = %q", got)
+	}
+	if !m.HasResourceClientSecret.ValueBool() {
+		t.Error("HasResourceClientSecret should be true")
+	}
+	if got := m.UpstreamScopesOverride.ValueString(); got != "todos.read mcp.access" {
+		t.Errorf("UpstreamScopesOverride = %q", got)
+	}
+
+	m.ProviderID = types.StringValue("22222222-2222-4222-8222-222222222222")
+	m.Name = types.StringValue("todos")
+	create, err := m.toCreateBody(context.Background())
+	if err != nil {
+		t.Fatalf("toCreateBody: %v", err)
+	}
+	if create.EmaFederatedIdentityProviderId == nil || *create.EmaFederatedIdentityProviderId != idpID {
+		t.Errorf("create EmaFederatedIdentityProviderId = %v", create.EmaFederatedIdentityProviderId)
+	}
+	if create.EmaResourceClientId == nil || *create.EmaResourceClientId != "todo-resource-client" {
+		t.Errorf("create EmaResourceClientId = %v", create.EmaResourceClientId)
+	}
+	if create.UpstreamScopesOverride == nil || *create.UpstreamScopesOverride != "todos.read mcp.access" {
+		t.Errorf("create UpstreamScopesOverride = %v", create.UpstreamScopesOverride)
+	}
+	update, err := m.toUpdateBody(context.Background())
+	if err != nil {
+		t.Fatalf("toUpdateBody: %v", err)
+	}
+	if update.EmaFederatedIdentityProviderId == nil || *update.EmaFederatedIdentityProviderId != idpID {
+		t.Errorf("update EmaFederatedIdentityProviderId = %v", update.EmaFederatedIdentityProviderId)
+	}
+	if update.EmaResourceClientId == nil || update.UpstreamScopesOverride == nil {
+		t.Error("update body dropped ema_resource_client_id / upstream_scopes_override")
+	}
+
+	m.EmaFederatedIdentityProviderID = types.StringValue("not-a-uuid")
+	if _, err := m.toCreateBody(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "ema_federated_identity_provider_id") {
+		t.Errorf("toCreateBody with a bad UUID: err = %v, want one naming the attribute", err)
+	}
+}
+
+// A non-EMA server carries none of these; they must read as null, not as
+// zero values that would then be sent back on the next update.
+func TestMcpServer_EmaFieldsAbsent(t *testing.T) {
+	srvID := mustParseUUID(t, "11111111-1111-4111-8111-111111111111")
+	m := mcpServerToModel(fixtureTenantID, &adminapi.MCPServer{Id: &srvID})
+	if !m.EmaFederatedIdentityProviderID.IsNull() || !m.EmaResourceClientID.IsNull() ||
+		!m.HasResourceClientSecret.IsNull() || !m.UpstreamScopesOverride.IsNull() {
+		t.Errorf("EMA fields should be null: idp=%v client=%v secret=%v scopes=%v",
+			m.EmaFederatedIdentityProviderID, m.EmaResourceClientID,
+			m.HasResourceClientSecret, m.UpstreamScopesOverride)
+	}
+	body, err := m.toUpdateBody(context.Background())
+	if err != nil {
+		t.Fatalf("toUpdateBody: %v", err)
+	}
+	if body.EmaFederatedIdentityProviderId != nil || body.EmaResourceClientId != nil || body.UpstreamScopesOverride != nil {
+		t.Error("null EMA fields must be omitted from the update body")
+	}
 }

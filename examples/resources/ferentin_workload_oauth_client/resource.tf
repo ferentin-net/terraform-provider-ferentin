@@ -43,6 +43,12 @@ resource "ferentin_workload_oauth_client" "snowflake_cc" {
   private_key_jwt_private_key_wo_version = 1
 
   default_audience = "https://acme.snowflakecomputing.com"
+
+  # By default the platform derives an RFC 8707 `resource` from the MCP
+  # server's endpoint when neither the server override nor default_resource
+  # supplies one. Turn that off for an authorization server that rejects an
+  # unexpected `resource` parameter.
+  send_resource_parameter = false
 }
 
 variable "salesforce_client_secret" {

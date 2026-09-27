@@ -68,6 +68,7 @@ type WorkloadOAuthClientResourceModel struct {
 	PrivateKeyJwtKid     types.String `tfsdk:"private_key_jwt_kid"`
 	SsoIdpID             types.String `tfsdk:"sso_idp_id"`
 	IsActive             types.Bool   `tfsdk:"is_active"`
+	SendResourceParam    types.Bool   `tfsdk:"send_resource_parameter"`
 
 	// Computed / server-set
 	Version             types.Int64  `tfsdk:"version"`
@@ -230,6 +231,14 @@ func (r *WorkloadOAuthClientResource) Schema(_ context.Context, _ resource.Schem
 			"private_key_jwt_jwks_url": schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "JWKS URL where the customer publishes the public key for this private_key_jwt config."},
 			"private_key_jwt_kid":      schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "JWT `kid` header value."},
 			"sso_idp_id":               schema.StringAttribute{Optional: true, Computed: true, MarkdownDescription: "Optional FK to a `ferentin_identity_provider` for SSO inheritance."},
+			"send_resource_parameter": schema.BoolAttribute{
+				MarkdownDescription: "Derive and send the RFC 8707 `resource` from the upstream endpoint when neither " +
+					"the MCP server's `cc_federated_resource_override` nor `default_resource` supplies one. The " +
+					"platform defaults to `true`; set `false` for an authorization server that rejects an " +
+					"unexpected `resource`.",
+				Optional: true,
+				Computed: true,
+			},
 			"is_active": schema.BoolAttribute{
 				MarkdownDescription: "Whether the client is active for outbound mints. Default `true`.",
 				Optional:            true,
@@ -279,6 +288,7 @@ func (r *WorkloadOAuthClientResource) Create(ctx context.Context, req resource.C
 	setStringPtr(plan.DefaultScopes, &body.DefaultScopes)
 	setStringPtr(plan.PrivateKeyJwtJwksURL, &body.PrivateKeyJwtJwksUrl)
 	setStringPtr(plan.PrivateKeyJwtKid, &body.PrivateKeyJwtKid)
+	setBoolPtr(plan.SendResourceParam, &body.SendResourceParameter)
 	if !plan.PrivateKeyJwtAlg.IsNull() && !plan.PrivateKeyJwtAlg.IsUnknown() {
 		v := gen.WorkloadOAuthClientCreateRequestPrivateKeyJwtAlg(plan.PrivateKeyJwtAlg.ValueString())
 		body.PrivateKeyJwtAlg = &v
@@ -356,6 +366,7 @@ func (r *WorkloadOAuthClientResource) Update(ctx context.Context, req resource.U
 	setStringPtr(plan.PrivateKeyJwtJwksURL, &body.PrivateKeyJwtJwksUrl)
 	setStringPtr(plan.PrivateKeyJwtKid, &body.PrivateKeyJwtKid)
 	setBoolPtr(plan.IsActive, &body.IsActive)
+	setBoolPtr(plan.SendResourceParam, &body.SendResourceParameter)
 	if !plan.IdpType.IsNull() && !plan.IdpType.IsUnknown() {
 		v := gen.WorkloadOAuthClientUpdateRequestIdpType(plan.IdpType.ValueString())
 		body.IdpType = &v
@@ -471,6 +482,7 @@ func workloadOAuthClientToModel(tenantID string, c *adminapi.WorkloadOAuthClient
 		m.SsoIdpID = types.StringNull()
 	}
 	m.IsActive = boolPtrOrDefault(c.IsActive)
+	m.SendResourceParam = boolPtrOrDefault(c.SendResourceParameter)
 	m.Direction = strPtrToTF(c.Direction)
 	m.HasClientSecret = boolPtrOrDefault(c.HasClientSecret)
 	m.HasPrivateKeyJwtKey = boolPtrOrDefault(c.HasPrivateKeyJwtKey)

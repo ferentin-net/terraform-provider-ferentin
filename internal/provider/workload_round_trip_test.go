@@ -153,3 +153,55 @@ func TestWorkloadIdentityProviderToModel_RoundTrip(t *testing.T) {
 		t.Error("RequiredClaims should have 2 elements")
 	}
 }
+
+// sendResourceParameter defaults to true server-side; false is the one an
+// operator sets deliberately, so that is the value worth round-tripping. An
+// older platform that does not send the field must read as null, not false.
+func TestWorkloadOAuthClientToModel_SendResourceParameter(t *testing.T) {
+	id := mustParseUUID(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+
+	m := workloadOAuthClientToModel(fixtureTenantID, &adminapi.WorkloadOAuthClient{
+		Id:                    &id,
+		SendResourceParameter: boolPtr(false),
+	})
+	if m.SendResourceParam.IsNull() || m.SendResourceParam.ValueBool() {
+		t.Errorf("SendResourceParam = %v, want false", m.SendResourceParam)
+	}
+
+	m = workloadOAuthClientToModel(fixtureTenantID, &adminapi.WorkloadOAuthClient{Id: &id})
+	if !m.SendResourceParam.IsNull() {
+		t.Errorf("SendResourceParam = %v, want null when absent", m.SendResourceParam)
+	}
+}
+
+func TestWorkloadIdentityProviderToModel_Cursor(t *testing.T) {
+	id := mustParseUUID(t, "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
+	p := &adminapi.WorkloadIdentityProvider{
+		Id:                &id,
+		TenantId:          mustParseUUID(t, fixtureTenantID),
+		Name:              "cursor-agents",
+		CloudProvider:     "cursor",
+		ProtocolType:      "WORKLOAD_IDENTITY",
+		JwksUri:           "https://api.cursor.com/keys",
+		AllowedIssuers:    []string{"https://api.cursor.com"},
+		ExpectedAudiences: []string{"https://auth.example.com"},
+		IdentityClaim:     strPtr("cloud_agent_id"),
+		CloudConfig:       strPtr(`{"allowed_team_ids":["team_abc123"]}`),
+		Cursor:            boolPtr(true),
+		Aws:               boolPtr(false),
+	}
+
+	m := workloadIdentityProviderToModel(fixtureTenantID, p)
+	if m.CloudProvider.ValueString() != "cursor" {
+		t.Errorf("CloudProvider = %q", m.CloudProvider.ValueString())
+	}
+	if !m.Cursor.ValueBool() {
+		t.Error("Cursor discriminator should be true")
+	}
+	if m.AWS.ValueBool() {
+		t.Error("AWS discriminator should be false")
+	}
+	if m.IdentityClaim.ValueString() != "cloud_agent_id" {
+		t.Errorf("IdentityClaim = %q", m.IdentityClaim.ValueString())
+	}
+}

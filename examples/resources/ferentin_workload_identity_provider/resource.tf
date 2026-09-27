@@ -1,5 +1,5 @@
 # Inbound workload identity trust — accepts cloud-issued JWTs (AWS / GCP /
-# Azure / OCI / GitHub) so workloads in those environments authenticate
+# Azure / OCI / GitHub / Cursor) so workloads in those environments authenticate
 # without a pre-provisioned client_secret.
 
 # AWS EKS pod identity → Ferentin.
@@ -40,4 +40,29 @@ resource "ferentin_workload_identity_provider" "github_actions" {
   expected_audiences = ["api.ferentin.net"]
 
   required_claims = ["repository", "ref"]
+}
+
+# Cursor Cloud Agents → Ferentin.
+#
+# Cursor mints a token for any audience a caller asks for, so `aud` alone does
+# not tie a token to your organisation — `team_id` does. cloud_config must list
+# your team in allowed_team_ids (a bare "*" is refused); the provider fails the
+# plan otherwise, because the platform would reject every token.
+resource "ferentin_workload_identity_provider" "cursor_agents" {
+  name           = "cursor-agents"
+  cloud_provider = "cursor"
+  protocol_type  = "WORKLOAD_IDENTITY"
+
+  jwks_uri           = "https://api.cursor.com/keys"
+  allowed_issuers    = ["https://api.cursor.com"]
+  expected_audiences = ["https://auth.ferentin.net"]
+
+  # Cursor's `sub` is the human who launched the agent; key on the agent run.
+  identity_claim  = "cloud_agent_id"
+  required_claims = ["sub", "iss", "aud", "cloud_agent_id", "team_id", "agent_runtime"]
+
+  cloud_config = jsonencode({
+    allowed_team_ids     = ["team_abc123"]
+    allowed_repositories = ["github.com/acme/*"]
+  })
 }

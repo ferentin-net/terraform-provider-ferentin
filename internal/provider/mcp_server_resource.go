@@ -79,6 +79,16 @@ type MCPServerResourceModel struct {
 	CcFederatedResourceOverride types.String `tfsdk:"cc_federated_resource_override"`
 	CcFederatedScopesOverride   types.String `tfsdk:"cc_federated_scopes_override"`
 
+	// ID-JAG (EMA) redemption — only meaningful when upstream_auth_strategy is
+	// ema_federated or ema_ferentin. The resource client's secret has no field
+	// of its own: it travels in `env` as ema_resource_client_secret.
+	EmaFederatedIdentityProviderID types.String `tfsdk:"ema_federated_identity_provider_id"`
+	EmaResourceClientID            types.String `tfsdk:"ema_resource_client_id"`
+	HasResourceClientSecret        types.Bool   `tfsdk:"has_resource_client_secret"`
+
+	// Strategy-neutral scopes requested on a token exchange / mint.
+	UpstreamScopesOverride types.String `tfsdk:"upstream_scopes_override"`
+
 	// Computed-only: ProviderAuthType is inferred by the platform from the
 	// upstream_auth_strategy + provider config; not user-settable through this
 	// input DTO. The response exposes it; v0.1 surfaces it as read-only.
@@ -299,8 +309,9 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"env": schema.MapAttribute{
 				MarkdownDescription: "Plain-text upstream credentials. Values are string-only — these are " +
 					"env-var assignments, not arbitrary structured data. Use `bearer_token` instead for the " +
-					"common single-token case. Encrypted server-side at rest; sensitive — redacted in logs " +
-					"and plan output.",
+					"common single-token case. For `ema_federated` / `ema_ferentin`, the resource client secret " +
+					"paired with `ema_resource_client_id` goes here as `ema_resource_client_secret`. " +
+					"Encrypted server-side at rest; sensitive — redacted in logs and plan output.",
 				Optional:    true,
 				Sensitive:   true,
 				ElementType: types.StringType,
@@ -354,6 +365,45 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"`default_scopes` for just this server. Only meaningful with `cc_federated`.",
 				Optional: true,
 				Computed: true,
+			},
+
+			// ID-JAG (EMA) redemption — only set these when
+			// upstream_auth_strategy is ema_federated or ema_ferentin; the
+			// platform refuses them on any other strategy.
+			"ema_federated_identity_provider_id": schema.StringAttribute{
+				MarkdownDescription: "UUID of the tenant OIDC identity provider whose per-user identity assertion " +
+					"backs the ID-JAG exchange. Required when `upstream_auth_strategy = ema_federated`; " +
+					"refused otherwise.",
+				Optional: true,
+				Computed: true,
+			},
+			"ema_resource_client_id": schema.StringAttribute{
+				MarkdownDescription: "Client id presented at the upstream **resource** authorization server when " +
+					"redeeming an ID-JAG (`ema_federated` / `ema_ferentin` only). Distinct from the IdP client id: " +
+					"the resource AS issues the redeeming client its own registration. Its secret goes in `env` " +
+					"as `ema_resource_client_secret` and is never returned; see `has_resource_client_secret`. " +
+					"Leave unset only for a public or CIMD client.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(255),
+				},
+			},
+			"has_resource_client_secret": schema.BoolAttribute{
+				MarkdownDescription: "Whether a resource client secret (`ema_resource_client_secret`) is stored. " +
+					"Presence only — the secret is never returned. Null for a non-EMA server.",
+				Computed: true,
+			},
+			"upstream_scopes_override": schema.StringAttribute{
+				MarkdownDescription: "Space-delimited scopes requested from the upstream on a token exchange / mint. " +
+					"Applies to any strategy. For `ema_federated` / `ema_ferentin` this is the resource scope set " +
+					"the ID-JAG is minted for (e.g. `todos.read mcp.access`) and must be configured: it is not " +
+					"discoverable from the upstream.",
+				Optional: true,
+				Computed: true,
+				Validators: []validator.String{
+					stringvalidator.LengthAtMost(2048),
+				},
 			},
 
 			// Computed
@@ -648,6 +698,13 @@ func (m *MCPServerResourceModel) toCreateBody(ctx context.Context) (adminapi.MCP
 	setStringPtr(m.CcFederatedAudienceOverride, &body.CcFederatedAudienceOverride)
 	setStringPtr(m.CcFederatedResourceOverride, &body.CcFederatedResourceOverride)
 	setStringPtr(m.CcFederatedScopesOverride, &body.CcFederatedScopesOverride)
+	idp, err := m.emaFederatedIdentityProviderID()
+	if err != nil {
+		return body, err
+	}
+	body.EmaFederatedIdentityProviderId = idp
+	setStringPtr(m.EmaResourceClientID, &body.EmaResourceClientId)
+	setStringPtr(m.UpstreamScopesOverride, &body.UpstreamScopesOverride)
 	return body, nil
 }
 
@@ -709,7 +766,29 @@ func (m *MCPServerResourceModel) toUpdateBody(ctx context.Context) (adminapi.MCP
 	setStringPtr(m.CcFederatedAudienceOverride, &body.CcFederatedAudienceOverride)
 	setStringPtr(m.CcFederatedResourceOverride, &body.CcFederatedResourceOverride)
 	setStringPtr(m.CcFederatedScopesOverride, &body.CcFederatedScopesOverride)
+	idp, err := m.emaFederatedIdentityProviderID()
+	if err != nil {
+		return body, err
+	}
+	body.EmaFederatedIdentityProviderId = idp
+	setStringPtr(m.EmaResourceClientID, &body.EmaResourceClientId)
+	setStringPtr(m.UpstreamScopesOverride, &body.UpstreamScopesOverride)
 	return body, nil
+}
+
+// emaFederatedIdentityProviderID parses the optional EMA identity-provider FK;
+// nil when unset.
+func (m *MCPServerResourceModel) emaFederatedIdentityProviderID() (*openapi_types.UUID, error) {
+	v := m.EmaFederatedIdentityProviderID
+	if v.IsNull() || v.IsUnknown() || v.ValueString() == "" {
+		return nil, nil
+	}
+	id, err := uuid.Parse(v.ValueString())
+	if err != nil {
+		return nil, fmt.Errorf("ema_federated_identity_provider_id %q is not a UUID: %w", v.ValueString(), err)
+	}
+	u := openapi_types.UUID(id)
+	return &u, nil
 }
 
 // mcpServerToModel maps the SDK response (gen.McpServerResponseDto) into
@@ -799,6 +878,15 @@ func mcpServerToModel(tenantID string, srv *adminapi.MCPServer) MCPServerResourc
 	m.CcFederatedAudienceOverride = strPtrToTF(srv.CcFederatedAudienceOverride)
 	m.CcFederatedResourceOverride = strPtrToTF(srv.CcFederatedResourceOverride)
 	m.CcFederatedScopesOverride = strPtrToTF(srv.CcFederatedScopesOverride)
+
+	if srv.EmaFederatedIdentityProviderId != nil {
+		m.EmaFederatedIdentityProviderID = types.StringValue(srv.EmaFederatedIdentityProviderId.String())
+	} else {
+		m.EmaFederatedIdentityProviderID = types.StringNull()
+	}
+	m.EmaResourceClientID = strPtrToTF(srv.EmaResourceClientId)
+	m.HasResourceClientSecret = boolPtrOrDefault(srv.HasResourceClientSecret)
+	m.UpstreamScopesOverride = strPtrToTF(srv.UpstreamScopesOverride)
 
 	return m
 }

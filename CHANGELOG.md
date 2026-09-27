@@ -16,6 +16,40 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   profile, says where the endpoint is set). From ferentin-cli-app #211/#214
   (ferentin-net/ferentin-cli-app#183).
 
+### Added
+- **`ferentin_mcp_server` can configure enterprise-managed authorization.**
+  New `ema_federated_identity_provider_id` (required by the platform for
+  `ema_federated`), `ema_resource_client_id` (the client registration at the
+  upstream's resource authorization server), and a computed
+  `has_resource_client_secret`. The resource client's secret goes in `env` as
+  `ema_resource_client_secret`. Before this, `ema_federated` and
+  `ema_ferentin` were accepted strategies with nothing to configure them.
+- `ferentin_mcp_server.upstream_scopes_override`: the space-delimited scopes
+  requested on a token exchange or mint, for any strategy. EMA servers need it
+  because the upstream does not advertise them.
+- `ferentin_workload_oauth_client.send_resource_parameter`: set `false` for an
+  authorization server that rejects an unexpected RFC 8707 `resource`. The
+  platform defaults it to `true`.
+- `ferentin_workload_identity_provider` accepts `cloud_provider = "cursor"`
+  (Cursor Cloud Agents), with a computed `cursor` discriminator. The plan
+  **fails** unless `cloud_config` carries a bounded `allowed_team_ids`. Cursor
+  mints tokens for any audience, so the authorization server rejects every
+  token from a Cursor provider without one, but the admin API accepts that
+  config. Without this check the apply would succeed and leave a provider
+  that can never authenticate anything.
+
+### Fixed
+- Examples: `ferentin_mcp_server` used `upstream_auth_strategy =
+  "oauth2_shared"`, which is not a strategy, and a reserved `*.example.com`
+  host on a public deployment. `ferentin_otel_sink` used lowercase
+  `sink_type` / `protocol` values. None of them passed `terraform validate`.
+- The `endpoint` and `auth_url` descriptions now say `https://` is required
+  (`http://` only on a loopback address), matching the refusal above.
+- Takes ferentin-cli-app `ae8c474`, regenerated from the current admin-api
+  spec. Springdoc had renumbered the workload OAuth client's get/update/delete
+  operations so the SDK's old names addressed `workload-aws-identities`; the
+  SDK now calls the right ones.
+
 ### Changed
 - **A profile's `insecure: true` overruled by the managed configuration now
   says so.** When the managed layer sets `insecure: false`, or exists and
