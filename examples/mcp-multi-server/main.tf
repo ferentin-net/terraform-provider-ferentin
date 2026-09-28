@@ -9,6 +9,8 @@
 # production by setting `allowed_tools` / `grant_toolsets` on the effect.
 
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     ferentin = {
       source  = "ferentin-net/ferentin"

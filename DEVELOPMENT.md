@@ -3,7 +3,8 @@
 ## Prerequisites
 
 - Go 1.26+ (Go 1.24+ for the `tool` directive in `go.mod`)
-- Terraform 1.10+ for any `terraform` commands
+- Terraform 1.11+ for any `terraform` commands. 1.11 is the provider's floor: every
+  secret it accepts is a write-only argument, which older Terraform cannot set.
 - A local checkout of [`ferentin-cli-app`](https://github.com/ferentin-net/ferentin-cli-app) **alongside** this repo (`../ferentin-cli-app/`). The SDK is not published as a standalone module; see [Module path quirks](#module-path-quirks) for the `go.work` setup that wires the two together.
 - `GOPRIVATE` configured for the org, once per machine:
 

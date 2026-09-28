@@ -149,7 +149,10 @@ func (p *FerentinProvider) ConfigValidators(_ context.Context) []provider.Config
 func (p *FerentinProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Manages Ferentin admin-api resources (edge sites, LLM/MCP/OTEL policies, OIDC clients, …) " +
-			"under a single tenant.",
+			"under a single tenant.\n\n" +
+			"Requires **Terraform 1.11 or later**. Every secret this provider accepts (LLM provider API " +
+			"keys and credentials, workload OAuth client secrets and private keys) is a write-only " +
+			"argument, which keeps it out of plan and state and which earlier versions cannot set.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
 				MarkdownDescription: "Admin-api base URL. Defaults to `https://api.ferentin.net` (production); " +

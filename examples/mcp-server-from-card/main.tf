@@ -13,6 +13,8 @@
 # and skips writes when the bytes are unchanged.
 
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     ferentin = {
       source  = "ferentin-net/ferentin"

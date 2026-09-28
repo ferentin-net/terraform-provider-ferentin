@@ -6,6 +6,8 @@
 # `depends_on` needed.
 
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     ferentin = {
       source  = "ferentin-net/ferentin"

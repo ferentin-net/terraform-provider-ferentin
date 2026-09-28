@@ -3,16 +3,21 @@
 page_title: "Ferentin Provider"
 description: |-
   Manages Ferentin admin-api resources (edge sites, LLM/MCP/OTEL policies, OIDC clients, …) under a single tenant.
+  Requires Terraform 1.11 or later. Every secret this provider accepts (LLM provider API keys and credentials, workload OAuth client secrets and private keys) is a write-only argument, which keeps it out of plan and state and which earlier versions cannot set.
 ---
 
 # Ferentin Provider
 
 Manages Ferentin admin-api resources (edge sites, LLM/MCP/OTEL policies, OIDC clients, …) under a single tenant.
 
+Requires **Terraform 1.11 or later**. Every secret this provider accepts (LLM provider API keys and credentials, workload OAuth client secrets and private keys) is a write-only argument, which keeps it out of plan and state and which earlier versions cannot set.
+
 ## Example Usage
 
 ```terraform
 terraform {
+  required_version = ">= 1.11"
+
   required_providers {
     ferentin = {
       source  = "ferentin-net/ferentin"

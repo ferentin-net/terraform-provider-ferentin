@@ -16,7 +16,17 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   profile, says where the endpoint is set). From ferentin-cli-app #211/#214
   (ferentin-net/ferentin-cli-app#183).
 
+- **Terraform 1.11 is the minimum supported version.** Every secret the
+  provider accepts is a write-only argument, and Terraform added those in
+  1.11: `ferentin_llm_provider`'s `api_key`, `credentials` and `external_id`,
+  and `ferentin_workload_oauth_client`'s `client_secret` and
+  `private_key_jwt_private_key`. Earlier versions cannot set them. The
+  examples now declare `required_version = ">= 1.11"`, and CI runs the unit
+  tests and fixture validation on 1.11 and on the latest release.
+
 ### Added
+- `SECURITY.md`: how to report a vulnerability, how to verify a release's
+  signature, and what the provider does with secrets and TLS.
 - **`ferentin_mcp_server` can configure enterprise-managed authorization.**
   New `ema_federated_identity_provider_id` (required by the platform for
   `ema_federated`), `ema_resource_client_id` (the client registration at the

@@ -99,8 +99,14 @@ jobs:
           install-mode: goinstall
 
   test:
-    name: Unit tests
+    name: Unit tests (Terraform ${{ matrix.terraform }})
     runs-on: ubuntu-latest
+    # The floor and the newest release. 1.11 is the documented minimum
+    # (write-only arguments); testing it is what keeps that claim true.
+    strategy:
+      fail-fast: false
+      matrix:
+        terraform: ['~1.11.0', 'latest']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7.0.0
@@ -116,6 +122,7 @@ jobs:
       # stale-suite failures were schema drift validate catches on its own.
       - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e  # v4.0.1
         with:
+          terraform_version: ${{ matrix.terraform }}
           terraform_wrapper: false
       - run: go mod download
       - run: go test -v -count=1 -timeout 5m ./...

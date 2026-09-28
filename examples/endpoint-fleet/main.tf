@@ -13,9 +13,10 @@
 # rewriting the rules: the rule set stays constant, the posture tightens.
 
 terraform {
-  # >= 1.9 for the cross-variable validation on `strict_groups`, which catches
-  # a group name that has no matching device_groups entry at plan time.
-  required_version = ">= 1.9"
+  # The provider needs 1.11 (write-only secret arguments). This example also
+  # relies on cross-variable validation on `strict_groups` (1.9+), which
+  # catches a group name with no matching device_groups entry at plan time.
+  required_version = ">= 1.11"
 
   required_providers {
     ferentin = {
