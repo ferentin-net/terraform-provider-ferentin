@@ -2,6 +2,18 @@
 # evaluated on-device, FIRST MATCH WINS by ascending priority — so priority is
 # policy semantics, not cosmetics.
 
+# The device groups these rules target. Declared here so the snippet stands on
+# its own; see ferentin_device_group for the full resource.
+resource "ferentin_device_group" "contractors" {
+  name   = "contractors"
+  source = "manual"
+}
+
+resource "ferentin_device_group" "engineering" {
+  name   = "engineering"
+  source = "manual"
+}
+
 # 1. Block ChatGPT outright for contractors, and only for the ChatGPT desktop
 #    app (a browser hitting the same host is a different code identity).
 resource "ferentin_endpoint_destination_rule" "block_chatgpt_for_contractors" {

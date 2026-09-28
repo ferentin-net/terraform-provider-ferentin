@@ -49,6 +49,15 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **Every example now passes `terraform validate`, and CI checks it.**
+  `TestExamplesValidate` validates each directory under `examples/` against
+  the provider's schema, on Terraform 1.11 and latest. It found eight that did
+  not validate: five snippets referenced resources they never declared, two
+  read files that were not in the repo (`prompts/system.md`,
+  `server-card.json`), and `mcp-multi-server` put a reserved `.example.com`
+  host on a public deployment, which the provider refuses at plan time. The
+  snippets now declare what they use or take it as a variable, the files are
+  added, and `mcp-multi-server` routes through an edge site.
 - Examples: `ferentin_mcp_server` used `upstream_auth_strategy =
   "oauth2_shared"`, which is not a strategy, and a reserved `*.example.com`
   host on a public deployment. `ferentin_otel_sink` used lowercase

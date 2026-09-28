@@ -38,6 +38,14 @@ locals {
   salesforce_catalog = local.catalog_by_slug["salesforce"]
 }
 
+# `.example.com` is a reserved test domain, which the platform's SSRF guard
+# refuses on a public deployment, so this server is reached through an edge
+# site. A real upstream on a public host can use deployment_mode = "public".
+resource "ferentin_edge_site" "primary" {
+  site_id   = "prod-us-east-1a"
+  site_name = "US East 1A"
+}
+
 resource "ferentin_mcp_server" "salesforce_prod" {
   provider_id = local.salesforce_catalog.provider_id
 
@@ -46,7 +54,8 @@ resource "ferentin_mcp_server" "salesforce_prod" {
   description = "Production Salesforce MCP — US region."
 
   transport_type         = "sse"
-  deployment_mode        = "public"
+  deployment_mode        = "edge_routed"
+  edge_site_id           = ferentin_edge_site.primary.site_id
   upstream_auth_strategy = "static_bearer"
 
   enabled  = true

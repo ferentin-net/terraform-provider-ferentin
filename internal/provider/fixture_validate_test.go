@@ -23,29 +23,7 @@ import (
 // What this does NOT cover: anything the platform decides (uniqueness, FK
 // integrity, scope checks). Those still need `make testacc-local`.
 func TestAcceptanceFixturesValidate(t *testing.T) {
-	tfBin, err := exec.LookPath("terraform")
-	if err != nil {
-		t.Skip("terraform not on PATH; skipping fixture validation")
-	}
-
-	// Build the provider once and point a dev_overrides CLI config at it, so
-	// validate resolves the binary under test instead of the registry. Nothing
-	// here talks to a network: dev_overrides skips `terraform init` entirely.
-	binDir := t.TempDir()
-	binPath := filepath.Join(binDir, "terraform-provider-ferentin")
-	build := exec.Command("go", "build", "-o", binPath, "../..")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("go build provider: %v\n%s", err, out)
-	}
-
-	cliConfig := filepath.Join(t.TempDir(), "dev.tfrc")
-	if err := os.WriteFile(cliConfig, []byte(`provider_installation {
-  dev_overrides { "ferentin-net/ferentin" = "`+binDir+`" }
-  direct {}
-}
-`), 0o600); err != nil {
-		t.Fatalf("write CLI config: %v", err)
-	}
+	tfBin, cliConfig := devOverrideTerraform(t)
 
 	// The fixtures embed providerBlock(); swap it for one that also declares
 	// required_providers, which a standalone `terraform validate` needs and the
@@ -63,19 +41,20 @@ provider "ferentin" {}
 `
 
 	fixtures := map[string]string{
-		"edge_site":          configEdgeSite("tf-acc-fixture", "Fixture site", "primary"),
-		"llm_provider":       configLLMProvider("tf-acc-fixture", "test-key", 1),
-		"mcp_server":         configMCPServer("tf-acc-fixture"),
-		"otel_sink":          configOtelSink("tf-acc-fixture"),
-		"mcp_provider":       configMCPProvider("tf-acc-fixture", "Fixture provider"),
-		"mcp_policy":         configMCPPolicy("tf-acc-fixture", "allow", 60),
-		"llm_policy":         configLLMPolicy("tf-acc-fixture", "AND"),
-		"otel_policy":        configOtelPolicy("tf-acc-fixture", "tf-acc-fixture-sink", `["traces", "logs"]`),
-		"ai_agent":           configAIAgent("tf-acc-fixture"),
-		"data_protection":    configDataProtectionPolicy("tf-acc-fixture", "redact", "blocked"),
-		"device_group":       configDeviceGroup("tf-acc-fixture", "Fixture group", "manual"),
-		"endpoint_rule":      configEndpointRule("fixture", 10, "block", ""),
-		"endpoint_rule_hard": configEndpointRule("fixture", 20, "steer", "https://edge.example.com/v1"),
+		"edge_site":            configEdgeSite("tf-acc-fixture", "Fixture site", "primary"),
+		"llm_provider":         configLLMProvider("tf-acc-fixture", "test-key", 1),
+		"mcp_server":           configMCPServer("tf-acc-fixture"),
+		"mcp_server_from_card": configMCPServerFromCard("tf-acc-fixture", 100),
+		"otel_sink":            configOtelSink("tf-acc-fixture"),
+		"mcp_provider":         configMCPProvider("tf-acc-fixture", "Fixture provider"),
+		"mcp_policy":           configMCPPolicy("tf-acc-fixture", "allow", 60),
+		"llm_policy":           configLLMPolicy("tf-acc-fixture", "AND"),
+		"otel_policy":          configOtelPolicy("tf-acc-fixture", "tf-acc-fixture-sink", `["traces", "logs"]`),
+		"ai_agent":             configAIAgent("tf-acc-fixture"),
+		"data_protection":      configDataProtectionPolicy("tf-acc-fixture", "redact", "blocked"),
+		"device_group":         configDeviceGroup("tf-acc-fixture", "Fixture group", "manual"),
+		"endpoint_rule":        configEndpointRule("fixture", 10, "block", ""),
+		"endpoint_rule_hard":   configEndpointRule("fixture", 20, "steer", "https://edge.example.com/v1"),
 		"endpoint_criteria": configEndpointRuleWithCriteria("fixture", `
   criteria_combinator = "AND"
   criteria = [{
@@ -97,13 +76,46 @@ provider "ferentin" {}
 				t.Fatalf("write fixture: %v", err)
 			}
 
-			cmd := exec.Command(tfBin, "validate", "-no-color")
-			cmd.Dir = dir
-			cmd.Env = append(os.Environ(), "TF_CLI_CONFIG_FILE="+cliConfig)
-			if out, err := cmd.CombinedOutput(); err != nil {
+			if out, err := terraformValidate(tfBin, cliConfig, dir); err != nil {
 				t.Errorf("terraform validate failed for the %s fixture: %v\n%s\n--- config ---\n%s",
 					name, err, out, body)
 			}
 		})
 	}
+}
+
+// devOverrideTerraform builds the provider once and writes a dev_overrides CLI
+// config pointing at it, so `terraform validate` resolves the binary under test
+// instead of the registry. Nothing here talks to a network: dev_overrides skips
+// `terraform init` for the provider. Skips the test when terraform is absent.
+func devOverrideTerraform(t *testing.T) (tfBin, cliConfig string) {
+	t.Helper()
+	tfBin, err := exec.LookPath("terraform")
+	if err != nil {
+		t.Skip("terraform not on PATH; skipping validation")
+	}
+
+	binDir := t.TempDir()
+	binPath := filepath.Join(binDir, "terraform-provider-ferentin")
+	build := exec.Command("go", "build", "-o", binPath, "../..")
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("go build provider: %v\n%s", err, out)
+	}
+
+	cliConfig = filepath.Join(t.TempDir(), "dev.tfrc")
+	if err := os.WriteFile(cliConfig, []byte(`provider_installation {
+  dev_overrides { "ferentin-net/ferentin" = "`+binDir+`" }
+  direct {}
+}
+`), 0o600); err != nil {
+		t.Fatalf("write CLI config: %v", err)
+	}
+	return tfBin, cliConfig
+}
+
+func terraformValidate(tfBin, cliConfig, dir string) ([]byte, error) {
+	cmd := exec.Command(tfBin, "validate", "-no-color")
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "TF_CLI_CONFIG_FILE="+cliConfig)
+	return cmd.CombinedOutput()
 }

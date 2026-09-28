@@ -60,6 +60,13 @@ terraform import ferentin_endpoint_policy_settings.contractors <tenant_id>/<devi
 # whatever was last applied. That is fail-closed on purpose. To genuinely stand
 # enforcement down, apply the permissive posture first, then destroy.
 
+# The device groups the per-group override targets. Declared here so the snippet stands on
+# its own; see ferentin_device_group for the full resource.
+resource "ferentin_device_group" "contractors" {
+  name   = "contractors"
+  source = "manual"
+}
+
 # Tenant default: observe and report, enforce nothing. This is the Phase 1
 # shadow-AI-visibility posture — tightening is a deliberate act.
 resource "ferentin_endpoint_policy_settings" "default" {
