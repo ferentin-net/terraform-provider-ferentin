@@ -25,6 +25,14 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   tests and fixture validation on 1.11 and on the latest release.
 
 ### Added
+- **`ferentin_data_protection_policy` can target enrolled endpoints.** New
+  `apply_to_tool_input`, `apply_to_prompt_input` and `apply_to_tool_output`
+  (each default `false`), `tool_output_unscanned_action` (`pass` / `withhold`,
+  default `pass`), `device_group_ids` (empty = every device), and a computed
+  `endpoint_effect_mapping` showing how each authored effect is enforced on a
+  device (`tokenize` never reaches one). Removing `device_group_ids` from
+  config clears the targeting rather than keeping the old list.
+  (ferentin-net/ferentin-platform#2872)
 - `SECURITY.md`: how to report a vulnerability, how to verify a release's
   signature, and what the provider does with secrets and TLS.
 - **`ferentin_mcp_server` can configure enterprise-managed authorization.**

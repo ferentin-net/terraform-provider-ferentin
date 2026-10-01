@@ -5,7 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
@@ -39,6 +41,16 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 		ApplyToLlmOutput:   boolPtr(true),
 		ApplyToMcpInput:    boolPtr(false),
 		ApplyToMcpOutput:   boolPtr(true),
+		// Endpoint scopes (ferentin-platform#2872).
+		ApplyToToolInput:          boolPtr(true),
+		ApplyToPromptInput:        boolPtr(false),
+		ApplyToToolOutput:         boolPtr(true),
+		ToolOutputUnscannedAction: strPtr("withhold"),
+		DeviceGroupIds:            &[]string{"44444444-4444-4444-8444-444444444444"},
+		EndpointEffectMapping: &map[string]map[string]string{
+			"tool_input":  {"tokenize": "redact"},
+			"tool_output": {"tokenize": "redact"},
+		},
 		Criteria: &[]gen.PolicyCriteria{
 			{
 				Operator: gen.PolicyCriteriaOperator("AND"),
@@ -102,6 +114,25 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 
 	ctx := context.Background()
 
+	// Endpoint scopes — the false one proves the flags are not read from a neighbour.
+	if !m.ApplyToToolInput.ValueBool() || m.ApplyToPromptInput.ValueBool() || !m.ApplyToToolOutput.ValueBool() {
+		t.Errorf("endpoint scopes = %v/%v/%v; want true/false/true",
+			m.ApplyToToolInput, m.ApplyToPromptInput, m.ApplyToToolOutput)
+	}
+	if m.ToolOutputUnscannedAction.ValueString() != "withhold" {
+		t.Errorf("ToolOutputUnscannedAction = %q", m.ToolOutputUnscannedAction.ValueString())
+	}
+	var groups []string
+	_ = m.DeviceGroupIDs.ElementsAs(ctx, &groups, false)
+	if len(groups) != 1 || groups[0] != "44444444-4444-4444-8444-444444444444" {
+		t.Errorf("device_group_ids = %v", groups)
+	}
+	var mapping map[string]map[string]string
+	_ = m.EndpointEffectMapping.ElementsAs(ctx, &mapping, false)
+	if mapping["tool_input"]["tokenize"] != "redact" || len(mapping) != 2 {
+		t.Errorf("endpoint_effect_mapping = %v", mapping)
+	}
+
 	// enabled_profiles
 	var profiles []string
 	_ = m.EnabledProfiles.ElementsAs(ctx, &profiles, false)
@@ -156,5 +187,61 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 	}
 	if cond.Value.ValueString() != `"legal"` {
 		t.Errorf("condition value = %q; want %q", cond.Value.ValueString(), `"legal"`)
+	}
+}
+
+// An admin-api that predates the endpoint scopes omits them. The model must read them as the
+// schema defaults (false / "pass" / [] / {}): a null against a defaulted plan value is a
+// "provider produced inconsistent result" error on every apply.
+func TestDataProtectionPolicyToModel_EndpointFieldsAbsent(t *testing.T) {
+	polID := mustParseUUID(t, "33333333-3333-4333-8333-333333333334")
+	var diags diag.Diagnostics
+	m := dataProtectionPolicyToModel(fixtureTenantID, &adminapi.DataProtectionPolicy{Id: &polID}, &diags)
+	if diags.HasError() {
+		t.Fatalf("unexpected diagnostics: %v", diags.Errors())
+	}
+	if m.ApplyToToolInput.IsNull() || m.ApplyToToolInput.ValueBool() ||
+		m.ApplyToPromptInput.ValueBool() || m.ApplyToToolOutput.ValueBool() {
+		t.Errorf("absent endpoint scopes must read as false, got %v/%v/%v",
+			m.ApplyToToolInput, m.ApplyToPromptInput, m.ApplyToToolOutput)
+	}
+	if m.ToolOutputUnscannedAction.ValueString() != "pass" {
+		t.Errorf("ToolOutputUnscannedAction = %q; want pass", m.ToolOutputUnscannedAction.ValueString())
+	}
+	if m.DeviceGroupIDs.IsNull() || len(m.DeviceGroupIDs.Elements()) != 0 {
+		t.Errorf("device_group_ids = %v; want an empty list", m.DeviceGroupIDs)
+	}
+	if m.EndpointEffectMapping.IsNull() || len(m.EndpointEffectMapping.Elements()) != 0 {
+		t.Errorf("endpoint_effect_mapping = %v; want an empty map", m.EndpointEffectMapping)
+	}
+}
+
+// A malformed device group id is returned rather than skipped (skipping could leave an empty
+// list, which targets every device). An empty set is still SENT: that is how an update clears
+// the targeting.
+func TestDeviceGroupIDsToSDK(t *testing.T) {
+	ctx := context.Background()
+	var out *[]adminapi.UUID
+	bad := types.SetValueMust(types.StringType, []attr.Value{
+		types.StringValue("44444444-4444-4444-8444-444444444444"), types.StringValue("not-a-uuid")})
+	if invalid := uuidSetToSDK(ctx, bad, &out); len(invalid) != 1 || out != nil {
+		t.Fatalf("invalid = %v, out = %v; want one invalid id and nothing sent", invalid, out)
+	}
+	empty := types.SetValueMust(types.StringType, []attr.Value{})
+	if invalid := uuidSetToSDK(ctx, empty, &out); invalid != nil || out == nil || len(*out) != 0 {
+		t.Fatalf("an empty set must be sent as [] to clear targeting; out = %v", out)
+	}
+}
+
+// The attribute error for invalid ids, anchored on device_group_ids.
+func TestAddInvalidDeviceGroups(t *testing.T) {
+	var diags diag.Diagnostics
+	addInvalidDeviceGroups(&diags, nil)
+	if diags.HasError() {
+		t.Fatalf("no invalid ids must add no error")
+	}
+	addInvalidDeviceGroups(&diags, []string{"not-a-uuid"})
+	if !diags.HasError() || len(diags.Errors()) != 1 {
+		t.Fatalf("want one error, got %v", diags)
 	}
 }

@@ -174,6 +174,19 @@ func dataProtectionPolicyToModel(tenantID string, pol *adminapi.DataProtectionPo
 	m.ApplyToMcpInput = boolPtrOrDefault(pol.ApplyToMcpInput)
 	m.ApplyToMcpOutput = boolPtrOrDefault(pol.ApplyToMcpOutput)
 
+	// Endpoint scopes. Absent in a response from an admin-api that predates them; read as the
+	// schema defaults so such a server does not produce a perpetual diff or an inconsistent result.
+	m.ApplyToToolInput = boolPtrOrFalse(pol.ApplyToToolInput)
+	m.ApplyToPromptInput = boolPtrOrFalse(pol.ApplyToPromptInput)
+	m.ApplyToToolOutput = boolPtrOrFalse(pol.ApplyToToolOutput)
+	if pol.ToolOutputUnscannedAction != nil && *pol.ToolOutputUnscannedAction != "" {
+		m.ToolOutputUnscannedAction = types.StringValue(*pol.ToolOutputUnscannedAction)
+	} else {
+		m.ToolOutputUnscannedAction = types.StringValue("pass")
+	}
+	m.DeviceGroupIDs = stringSliceToSetOrEmpty(pol.DeviceGroupIds)
+	m.EndpointEffectMapping = effectMappingToTF(pol.EndpointEffectMapping)
+
 	m.Criteria = criteriaListFromSDK(pol.Criteria)
 
 	m.ProfileCount = int32PtrToTF(pol.ProfileCount)
@@ -182,4 +195,63 @@ func dataProtectionPolicyToModel(tenantID string, pol *adminapi.DataProtectionPo
 	m.UpdatedAt = timePtrToTF(pol.UpdatedAt)
 	m.UpdatedBy = strPtrToTF(pol.UpdatedBy)
 	return m
+}
+
+// boolPtrOrFalse reads an absent flag as false, the schema default of the endpoint scopes.
+func boolPtrOrFalse(p *bool) types.Bool {
+	return types.BoolValue(p != nil && *p)
+}
+
+// stringSliceToSetOrEmpty renders a string slice as a set, an absent one as empty — which is
+// what device_group_ids means when unset (every device).
+func stringSliceToSetOrEmpty(p *[]string) types.Set {
+	elems := []attr.Value{}
+	if p != nil {
+		for _, v := range *p {
+			elems = append(elems, types.StringValue(v))
+		}
+	}
+	return types.SetValueMust(types.StringType, elems)
+}
+
+// uuidSetToSDK converts a set of UUID strings for the SDK. A known set is always sent, empty
+// included: an empty list is how an update clears targeting. A malformed id is returned, never
+// skipped — dropping it could leave an empty list, which targets every device.
+func uuidSetToSDK(ctx context.Context, in types.Set, out **[]adminapi.UUID) (invalid []string) {
+	if in.IsNull() || in.IsUnknown() {
+		return nil
+	}
+	var raw []string
+	_ = in.ElementsAs(ctx, &raw, false)
+	ids := make([]adminapi.UUID, 0, len(raw))
+	for _, s := range raw {
+		u, err := parseUUID(s)
+		if err != nil {
+			invalid = append(invalid, s)
+			continue
+		}
+		ids = append(ids, u)
+	}
+	if len(invalid) > 0 {
+		return invalid
+	}
+	*out = &ids
+	return nil
+}
+
+// effectMappingToTF renders endpoint_effect_mapping (scope -> authored -> applied). An absent
+// mapping is an empty map: the policy opts into no endpoint scope.
+func effectMappingToTF(p *map[string]map[string]string) types.Map {
+	inner := types.MapType{ElemType: types.StringType}
+	elems := map[string]attr.Value{}
+	if p != nil {
+		for scope, mapping := range *p {
+			vals := make(map[string]attr.Value, len(mapping))
+			for authored, applied := range mapping {
+				vals[authored] = types.StringValue(applied)
+			}
+			elems[scope] = types.MapValueMust(types.StringType, vals)
+		}
+	}
+	return types.MapValueMust(inner, elems)
 }

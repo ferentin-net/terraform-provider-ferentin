@@ -7,12 +7,17 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/mapvalidator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -62,6 +67,14 @@ type DataProtectionPolicyResourceModel struct {
 	ApplyToLlmOutput types.Bool `tfsdk:"apply_to_llm_output"`
 	ApplyToMcpInput  types.Bool `tfsdk:"apply_to_mcp_input"`
 	ApplyToMcpOutput types.Bool `tfsdk:"apply_to_mcp_output"`
+
+	// Endpoint scopes (ferentin-platform#2872): evaluated on enrolled devices.
+	ApplyToToolInput          types.Bool   `tfsdk:"apply_to_tool_input"`
+	ApplyToPromptInput        types.Bool   `tfsdk:"apply_to_prompt_input"`
+	ApplyToToolOutput         types.Bool   `tfsdk:"apply_to_tool_output"`
+	ToolOutputUnscannedAction types.String `tfsdk:"tool_output_unscanned_action"`
+	DeviceGroupIDs            types.Set    `tfsdk:"device_group_ids"`        // []uuid-string
+	EndpointEffectMapping     types.Map    `tfsdk:"endpoint_effect_mapping"` // scope -> authored -> applied
 
 	Criteria []PolicyCriteriaModel `tfsdk:"criteria"`
 
@@ -206,6 +219,58 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 			"apply_to_mcp_input":  schema.BoolAttribute{MarkdownDescription: "Scan MCP tool-call arguments. Default `false`.", Optional: true, Computed: true},
 			"apply_to_mcp_output": schema.BoolAttribute{MarkdownDescription: "Scan MCP tool-call results. Default `false`.", Optional: true, Computed: true},
 
+			// Endpoint scopes. Unlike the four above these default to false in the schema, so
+			// removing one from config turns that scope off rather than leaving it as it was.
+			"apply_to_tool_input": schema.BoolAttribute{
+				MarkdownDescription: "Evaluate on enrolled endpoints, against AI agents' native tool calls: shell " +
+					"commands, fetched URLs and bodies, file writes. `tokenize` is enforced there as `redact` " +
+					"(as `block` on an agent that cannot rewrite tool input). Default `false`.",
+				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
+			},
+			"apply_to_prompt_input": schema.BoolAttribute{
+				MarkdownDescription: "Evaluate on enrolled endpoints, against prompts developers submit to AI " +
+					"agents, before they reach the model. A prompt cannot be rewritten, so `redact` and " +
+					"`tokenize` are enforced as `block`. Default `false`.",
+				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
+			},
+			"apply_to_tool_output": schema.BoolAttribute{
+				MarkdownDescription: "Evaluate on enrolled endpoints, against what a tool returns before the " +
+					"agent's model sees it: `block` replaces the affected text with a notice and `redact` masks " +
+					"the match. The tool has already run, so this protects the model's context, not the action. " +
+					"Enforced only on agents whose hooks can replace tool output. Default `false`.",
+				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
+			},
+			"tool_output_unscanned_action": schema.StringAttribute{
+				MarkdownDescription: "With `apply_to_tool_output`: what a device does with tool output it knows it " +
+					"could not scan (over its size cap, or out of scan time). `pass` lets it through and counts " +
+					"it; `withhold` replaces it with a notice. Best effort: output the agent itself lets through " +
+					"(its own hook timeout) reaches the model regardless. Default `pass`.",
+				Optional: true, Computed: true, Default: stringdefault.StaticString("pass"),
+				Validators: []validator.String{stringvalidator.OneOf("pass", "withhold")},
+			},
+			"device_group_ids": schema.SetAttribute{
+				MarkdownDescription: "Device groups this policy targets on its endpoint scopes — reference " +
+					"`ferentin_device_group.<name>.group_id`. Empty or unset = **every device in the tenant**. " +
+					"Ignored by edge and cloud enforcement. At most 100.\n\n" +
+					"~> A group id belonging to another tenant is rejected with 404 (the platform deliberately " +
+					"does not distinguish \"not yours\" from \"does not exist\").",
+				Optional: true, Computed: true, ElementType: types.StringType,
+				// Unset means every device, so removing the attribute must clear the targeting rather
+				// than keep the old, narrower list in state.
+				// A set, not a list: the platform stores the ids de-duplicated and SORTED, so a list in
+				// any other order would come back reordered and fail as an inconsistent result.
+				Default:    setdefault.StaticValue(types.SetValueMust(types.StringType, []attr.Value{})),
+				Validators: []validator.Set{setvalidator.SizeAtMost(100)},
+			},
+			"endpoint_effect_mapping": schema.MapAttribute{
+				MarkdownDescription: "Read-only. Per endpoint scope this policy opts into, the authored effects a " +
+					"device enforces differently (authored → applied), e.g. " +
+					"`{ tool_input = { tokenize = \"redact\" } }`. The format-preserving key never reaches a " +
+					"device, so `tokenize` is always mapped. Empty when no endpoint scope is set.",
+				Computed:    true,
+				ElementType: types.MapType{ElemType: types.StringType},
+			},
+
 			"criteria": criteriaSchemaAttribute(criteriaSchemaOptions{
 				Description: "ABAC criteria for conditional application. Each entry combines `conditions` " +
 					"with a logical operator (`AND`/`OR`); multiple criteria entries are themselves ANDed.",
@@ -267,6 +332,14 @@ func (r *DataProtectionPolicyResource) Create(ctx context.Context, req resource.
 	setBoolPtr(plan.ApplyToLlmOutput, &body.ApplyToLlmOutput)
 	setBoolPtr(plan.ApplyToMcpInput, &body.ApplyToMcpInput)
 	setBoolPtr(plan.ApplyToMcpOutput, &body.ApplyToMcpOutput)
+	setBoolPtr(plan.ApplyToToolInput, &body.ApplyToToolInput)
+	setBoolPtr(plan.ApplyToPromptInput, &body.ApplyToPromptInput)
+	setBoolPtr(plan.ApplyToToolOutput, &body.ApplyToToolOutput)
+	if !plan.ToolOutputUnscannedAction.IsNull() && !plan.ToolOutputUnscannedAction.IsUnknown() {
+		a := gen.DataProtectionPolicyCreateRequestToolOutputUnscannedAction(plan.ToolOutputUnscannedAction.ValueString())
+		body.ToolOutputUnscannedAction = &a
+	}
+	addInvalidDeviceGroups(&resp.Diagnostics, uuidSetToSDK(ctx, plan.DeviceGroupIDs, &body.DeviceGroupIds))
 	crits, critDiags := criteriaListToSDK(plan.Criteria)
 	resp.Diagnostics.Append(critDiags...)
 	if len(crits) > 0 {
@@ -339,6 +412,16 @@ func (r *DataProtectionPolicyResource) Update(ctx context.Context, req resource.
 	setBoolPtr(plan.ApplyToLlmOutput, &body.ApplyToLlmOutput)
 	setBoolPtr(plan.ApplyToMcpInput, &body.ApplyToMcpInput)
 	setBoolPtr(plan.ApplyToMcpOutput, &body.ApplyToMcpOutput)
+	setBoolPtr(plan.ApplyToToolInput, &body.ApplyToToolInput)
+	setBoolPtr(plan.ApplyToPromptInput, &body.ApplyToPromptInput)
+	setBoolPtr(plan.ApplyToToolOutput, &body.ApplyToToolOutput)
+	if !plan.ToolOutputUnscannedAction.IsNull() && !plan.ToolOutputUnscannedAction.IsUnknown() {
+		a := gen.DataProtectionPolicyUpdateRequestToolOutputUnscannedAction(plan.ToolOutputUnscannedAction.ValueString())
+		body.ToolOutputUnscannedAction = &a
+	}
+	// Always sent when known: an empty list is how an update clears the targeting (the API
+	// treats an omitted field as "unchanged").
+	addInvalidDeviceGroups(&resp.Diagnostics, uuidSetToSDK(ctx, plan.DeviceGroupIDs, &body.DeviceGroupIds))
 	crits, critDiags := criteriaListToSDK(plan.Criteria)
 	resp.Diagnostics.Append(critDiags...)
 	if len(crits) > 0 {
@@ -390,6 +473,17 @@ func (r *DataProtectionPolicyResource) ImportState(ctx context.Context, req reso
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), tenantID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("policy_id"), policyID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), tenantID+"/"+policyID)...)
+}
+
+// addInvalidDeviceGroups reports malformed device_group_ids as an attribute error. Never
+// skipped: an empty target list means every device, so dropping a bad id would widen the
+// policy instead of narrowing it.
+func addInvalidDeviceGroups(diags *diag.Diagnostics, invalid []string) {
+	if len(invalid) == 0 {
+		return
+	}
+	diags.AddAttributeError(path.Root("device_group_ids"), "Invalid device group id",
+		fmt.Sprintf("device_group_ids must be UUIDs (ferentin_device_group.<name>.group_id); got %q.", invalid))
 }
 
 func (r *DataProtectionPolicyResource) resolveTenant(perResource types.String) string {
