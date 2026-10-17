@@ -31,7 +31,8 @@ import (
 //     FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET (+ optional FERENTIN_AUTH_URL)
 //
 // Optional:
-//   FERENTIN_INSECURE_SKIP_VERIFY=1   for self-signed local certs
+//   FERENTIN_INSECURE_SKIP_VERIFY=1   only where the local CA is not trusted and
+//                                     the machine allows skipping verification
 
 // testAccProtoV6ProviderFactories yields the provider under test wrapped as a
 // proto-v6 server, as required by terraform-plugin-testing for framework-
