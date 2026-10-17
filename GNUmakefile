@@ -91,6 +91,12 @@ test:
 testacc:
 	TF_ACC=1 go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
+# The local dev admin-api, used when FERENTIN_ENDPOINT is unset. The preflight
+# prefers /usr/bin/curl, which (like Go on macOS) checks the system keychain; it
+# warns only when the provider would verify (FERENTIN_INSECURE_SKIP_VERIFY is
+# not 1 or true, the provider's own rule).
+LOCAL_ENDPOINT ?= https://api.local.ferentin.test
+
 # Acceptance run against LOCAL DEV (the `nginx` profile on this machine).
 #
 # This is the acceptance gate today: the platform has only local dev and
@@ -101,7 +107,10 @@ testacc:
 # Requires admin-api-server running (`feri a`) and credentials for a principal
 # holding policy:rw plus devices:groups:rw or devices:rw. Export FERENTIN_TOKEN,
 # or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET, and FERENTIN_TENANT_ID first.
-# INSECURE_SKIP_VERIFY is set because local dev serves a self-signed cert.
+#
+# TLS is verified; trust the local CA. See DEVELOPMENT.md, "Running acceptance
+# tests". The preflight fails fast when admin-api is unreachable and warns when
+# curl does not trust its certificate.
 #
 # Pass RUN= to run a subset, which is usually what you want when validating one
 # resource:
@@ -119,9 +128,18 @@ testacc-local:
 	@test -n "$$FERENTIN_TENANT_ID" || { echo "FERENTIN_TENANT_ID must be set"; exit 1; }
 	@test -n "$$FERENTIN_TOKEN" -o -n "$$FERENTIN_CLIENT_ID" || \
 		{ echo "set FERENTIN_TOKEN, or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET"; exit 1; }
+	@ep="$${FERENTIN_ENDPOINT:-$(LOCAL_ENDPOINT)}"; \
+	c=/usr/bin/curl; [ -x "$$c" ] || c=curl; \
+	"$$c" -sk -o /dev/null --max-time 5 "$$ep/" || \
+		{ echo "$$ep is not reachable: is admin-api-server running (feri a)?"; exit 1; }; \
+	if ! "$$c" -s -o /dev/null --max-time 5 "$$ep/"; then \
+		case "$$FERENTIN_INSECURE_SKIP_VERIFY" in \
+			1|true) ;; \
+			*) echo "warning: curl does not trust $$ep's certificate. If the tests fail with an x509 error, trust the local CA (see DEVELOPMENT.md)." ;; \
+		esac; \
+	fi
 	TF_ACC=1 \
-	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test} \
-	FERENTIN_INSECURE_SKIP_VERIFY=1 \
+	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-$(LOCAL_ENDPOINT)} \
 	go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
 tidy:
