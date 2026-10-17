@@ -102,13 +102,9 @@ testacc:
 # holding policy:rw plus devices:groups:rw or devices:rw. Export FERENTIN_TOKEN,
 # or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET, and FERENTIN_TENANT_ID first.
 #
-# TLS is verified. Local dev's certificate is signed by the local CA, and a
-# machine that trusts it (as a dev machine set up for local dev does) needs no
-# skip. FERENTIN_INSECURE_SKIP_VERIFY is NOT forced on: a machine whose managed
-# (MDM) configuration forbids skipping verification refuses it, and the whole
-# run then fails before reaching the platform with "Certificate verification
-# cannot be skipped on this machine". Export it yourself only on a machine that
-# does not trust the local CA and allows skipping.
+# TLS is verified; trust the local CA. See DEVELOPMENT.md, "Running acceptance
+# tests". The preflight fails fast when admin-api is unreachable and warns when
+# curl does not trust its certificate.
 #
 # Pass RUN= to run a subset, which is usually what you want when validating one
 # resource:
@@ -126,6 +122,11 @@ testacc-local:
 	@test -n "$$FERENTIN_TENANT_ID" || { echo "FERENTIN_TENANT_ID must be set"; exit 1; }
 	@test -n "$$FERENTIN_TOKEN" -o -n "$$FERENTIN_CLIENT_ID" || \
 		{ echo "set FERENTIN_TOKEN, or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET"; exit 1; }
+	@ep="$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test}"; \
+	curl -sk -o /dev/null --max-time 5 "$$ep/" || \
+		{ echo "$$ep is not reachable: is admin-api-server running (feri a)?"; exit 1; }; \
+	curl -s -o /dev/null --max-time 5 "$$ep/" || [ -n "$$FERENTIN_INSECURE_SKIP_VERIFY" ] || \
+		echo "warning: curl does not trust $$ep's certificate. If the tests fail with an x509 error, trust the local CA (see DEVELOPMENT.md)."
 	TF_ACC=1 \
 	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test} \
 	go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)

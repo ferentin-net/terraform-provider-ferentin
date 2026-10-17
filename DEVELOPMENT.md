@@ -96,8 +96,21 @@ make testacc-local
 
 `testacc-local` defaults `FERENTIN_ENDPOINT` to `https://api.local.ferentin.test`
 and verifies TLS. Local dev's certificate is signed by the local CA, so a machine
-that trusts that CA needs nothing more; check with
-`curl -s -o /dev/null -w '%{http_code}' https://api.local.ferentin.test/` (no `-k`).
+that trusts that CA needs nothing more. Check with
+
+```sh
+/usr/bin/curl -sS -o /dev/null -w '%{http_code}\n' https://api.local.ferentin.test/
+```
+
+Any HTTP status (a `404` or `401` is fine) means the certificate is trusted; a
+certificate error means it is not. On macOS use `/usr/bin/curl`: Go checks
+certificates against the system keychain, as Apple's curl does, while a
+Homebrew curl may use its own CA bundle and disagree. On Linux, Go reads
+`SSL_CERT_FILE` / `SSL_CERT_DIR`; pointing those at the local CA is a better fix
+than skipping verification.
+
+The target fails fast if admin-api is unreachable, and warns if curl does not
+trust its certificate.
 
 `FERENTIN_INSECURE_SKIP_VERIFY` is not set for you. On a machine whose managed
 (MDM) configuration forbids skipping verification the provider refuses it, and
