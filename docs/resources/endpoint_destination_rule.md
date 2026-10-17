@@ -195,7 +195,9 @@ Default `ai_provider`.
 
 Evaluated on the device. A device whose posture is unknown counts as not compliant for an `allow` rule, and does not escape a `block` rule.
 
-~> **Removing the condition widens the rule.** An `allow` or `steer` rule then applies to non-compliant devices too. So `plan` fails when the rule has a condition (for example one set in the admin console) and the config omits this attribute: write `{ require_compliant = true }` to keep it, or `{ require_compliant = false }` to remove it. (see [below for nested schema](#nestedatt--posture_predicate))
+~> **Removing the condition widens the rule.** An `allow` or `steer` rule then applies to non-compliant devices too. So `plan` fails when the rule has a condition (for example one set in the admin console) and the config omits this attribute: write `{ require_compliant = true }` to keep it, or `{ require_compliant = false }` to remove it. After that apply the attribute can be left out, which plans one no-op update.
+
+~> A plan with `-refresh=false` does not see a condition set in the console since the last refresh, so it cannot fail, and its apply erases that condition. Refresh before applying. (see [below for nested schema](#nestedatt--posture_predicate))
 - `priority` (Number) Evaluation order — 1 is highest, first match wins. Default `100`.
 
 ~> **Ownership warning.** Because ordering *is* the policy semantics here, do not split ownership of `priority` between Terraform and the console. The console's reorder arrows swap two rows' priorities directly; if Terraform also declares `priority`, the next `plan` shows drift and the two fight over evaluation order.

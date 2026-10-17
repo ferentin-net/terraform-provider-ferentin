@@ -333,7 +333,11 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 					"applies to non-compliant devices too. So `plan` fails when the rule has a condition " +
 					"(for example one set in the admin console) and the config omits this attribute: " +
 					"write `{ require_compliant = true }` to keep it, or `{ require_compliant = false }` " +
-					"to remove it.",
+					"to remove it. After that apply the attribute can be left out, which plans one no-op " +
+					"update.\n\n" +
+					"~> A plan with `-refresh=false` does not see a condition set in the console since the " +
+					"last refresh, so it cannot fail, and its apply erases that condition. Refresh before " +
+					"applying.",
 				Optional: true,
 				Attributes: map[string]schema.Attribute{
 					"require_compliant": schema.BoolAttribute{
@@ -657,7 +661,8 @@ func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req re
 // it widens access. A warning does not stop `apply -auto-approve`. The config
 // must say which it wants: `require_compliant = true` keeps the condition,
 // `false` removes it (with a warning). keepEmptyForms keeps that `false` in
-// state, so the attribute can be left out afterwards.
+// state, so the attribute can be left out afterwards: that plans one no-op
+// update, `{false} -> null`, which sends no predicate either way.
 //
 // An unknown plan value may resolve either way, so it never warns or fails.
 func checkPosturePredicateRemoval(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
@@ -693,7 +698,7 @@ func checkPosturePredicateRemoval(ctx context.Context, req resource.ModifyPlanRe
 				"Say which you want in the config:\n\n"+
 				"* `posture_predicate = { require_compliant = true }` keeps the condition.\n"+
 				"* `posture_predicate = { require_compliant = false }` removes it. After that apply, "+
-				"the attribute can be left out.", name.ValueString()))
+				"the attribute can be left out (that plans one no-op update).", name.ValueString()))
 		return
 	}
 	resp.Diagnostics.AddAttributeWarning(path.Root("posture_predicate"),

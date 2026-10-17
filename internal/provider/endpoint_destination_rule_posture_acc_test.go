@@ -20,7 +20,7 @@ import (
 //
 //   - Step 2 is the regression guard: an unrelated change (priority) keeps it.
 //   - Steps 4-5 remove it the supported way, `require_compliant = false`, after
-//     which the attribute can be left out.
+//     which the attribute can be left out (step 5 is the one no-op update).
 //   - Step 6 sets it outside Terraform, as the console does. A config that
 //     omits it must fail the plan, not erase it (before #20 the plan was empty
 //     and the next apply erased it).

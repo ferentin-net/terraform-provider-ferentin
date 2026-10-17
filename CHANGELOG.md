@@ -107,7 +107,9 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   state. **`terraform plan` fails when a rule has a condition and the config
   omits `posture_predicate`**, since applying would widen the rule: write
   `{ require_compliant = true }` to keep it, or `{ require_compliant = false }`
-  to remove it (which warns), after which the attribute can be left out.
+  to remove it (which warns), after which the attribute can be left out (one
+  no-op update). A plan with `-refresh=false` cannot see a condition set since
+  the last refresh, so refresh before applying.
   (ferentin-net/terraform-provider-ferentin#20)
 - **`ferentin_endpoint_destination_rule`: removing `description`,
   `destination_hosts`, `app_bundle_ids`, `app_signing_ids`, `app_team_ids` or
