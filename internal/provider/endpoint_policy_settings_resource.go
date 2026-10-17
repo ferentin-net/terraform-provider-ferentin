@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -280,41 +281,34 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				Validators:    []validator.String{stringvalidator.OneOf("shadow", "enforce")},
 			},
-			"local_mcp_risk_policy": schema.SingleNestedAttribute{
-				MarkdownDescription: "What an unvetted local MCP tool gets at each risk rating: `allow`, " +
-					"`ask_once`, `ask_every_call` or `deny` for each of `low`, `medium` and `high`. Unset on " +
-					"the platform means the legacy behaviour (step up when approval routing exists, deny " +
-					"otherwise).\n\n" +
+			// An ObjectAttribute, not a SingleNestedAttribute. An Optional+Computed
+			// NESTED attribute left out of config does not propose its prior value,
+			// so the framework sees a change and marks every computed attribute
+			// (version, updated_at, provenance) unknown on every plan: a permanent
+			// no-op update, found running the acceptance suite. A plain object
+			// attribute keeps its prior value like any Optional+Computed attribute.
+			// The tier rules the nested schema expressed live in
+			// localMcpRiskPolicyTiers instead.
+			"local_mcp_risk_policy": schema.ObjectAttribute{
+				MarkdownDescription: "What an unvetted local MCP tool gets at each risk rating: an object " +
+					"with `low`, `medium` and `high`, each one of `allow`, `ask_once`, `ask_every_call` or " +
+					"`deny`. All three are required. Unset on the platform means the legacy behaviour (step " +
+					"up when approval routing exists, deny otherwise).\n\n" +
 					"**Tenant default only**: the decision is read from the tenant-default row alone, so the " +
 					"platform refuses it on a device-group override, and this fails at plan when " +
 					"`device_group_id` is set.\n\n" +
 					"~> Any `ask_*` tier needs approval routing (`localMcpApprovalConfig` with at least one " +
 					"channel), which this resource does not manage; set it up in the admin console first or " +
 					"the platform rejects the write.\n\n" +
-					"Removing this block from config leaves the stored policy in place. Clearing it is done " +
-					"in the admin console.",
-				Optional:      true,
-				Computed:      true,
-				PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+					"Removing this attribute from config leaves the stored policy in place. Clearing it is " +
+					"done in the admin console.",
+				Optional:       true,
+				Computed:       true,
+				AttributeTypes: localMcpRiskPolicyAttrTypes,
+				PlanModifiers:  []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
 				Validators: []validator.Object{
 					objectvalidator.ConflictsWith(path.MatchRoot("device_group_id")),
-				},
-				Attributes: map[string]schema.Attribute{
-					"low": schema.StringAttribute{
-						MarkdownDescription: "Action for a low-risk tool.",
-						Required:            true,
-						Validators:          []validator.String{stringvalidator.OneOf(localMcpRiskActions...)},
-					},
-					"medium": schema.StringAttribute{
-						MarkdownDescription: "Action for a medium-risk tool.",
-						Required:            true,
-						Validators:          []validator.String{stringvalidator.OneOf(localMcpRiskActions...)},
-					},
-					"high": schema.StringAttribute{
-						MarkdownDescription: "Action for a high-risk tool.",
-						Required:            true,
-						Validators:          []validator.String{stringvalidator.OneOf(localMcpRiskActions...)},
-					},
+					localMcpRiskPolicyTiers{},
 				},
 			},
 
@@ -688,4 +682,42 @@ func addEndpointSettingsWriteError(diags *diag.Diagnostics, op string, err error
 		return
 	}
 	addSDKError(diags, op, err)
+}
+
+// localMcpRiskPolicyTiers requires all three tiers of local_mcp_risk_policy and
+// checks each against localMcpRiskActions — what Required + OneOf expressed when
+// the attribute was a nested schema. The platform refuses a policy with fewer
+// tiers (400), so this moves that to plan time.
+type localMcpRiskPolicyTiers struct{}
+
+func (localMcpRiskPolicyTiers) Description(context.Context) string {
+	return "low, medium and high are each required and one of " + strings.Join(localMcpRiskActions, ", ")
+}
+
+func (v localMcpRiskPolicyTiers) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (localMcpRiskPolicyTiers) ValidateObject(_ context.Context, req validator.ObjectRequest, resp *validator.ObjectResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	attrs := req.ConfigValue.Attributes()
+	for _, tier := range []string{"low", "medium", "high"} {
+		v, ok := attrs[tier].(types.String)
+		if !ok || v.IsUnknown() {
+			continue
+		}
+		if v.IsNull() {
+			resp.Diagnostics.AddAttributeError(req.Path.AtName(tier),
+				fmt.Sprintf("local_mcp_risk_policy.%s is required", tier),
+				"Set all three tiers (low, medium, high); the platform refuses a policy with fewer.")
+			continue
+		}
+		if !slices.Contains(localMcpRiskActions, v.ValueString()) {
+			resp.Diagnostics.AddAttributeError(req.Path.AtName(tier),
+				fmt.Sprintf("local_mcp_risk_policy.%s must be one of %s", tier, strings.Join(localMcpRiskActions, ", ")),
+				fmt.Sprintf("Got %q.", v.ValueString()))
+		}
+	}
 }

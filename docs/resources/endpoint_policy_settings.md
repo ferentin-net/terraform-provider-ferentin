@@ -131,13 +131,13 @@ This is part of the resource **identity**, not a mutable field: changing it forc
 Omit to keep the current value (the platform's default on a new row).
 
 ~> Moving a row to `enforce` is refused with 409 until every active device in its scope runs an agent build that enforces call-time rules (see `hookRuleEnforcementCoverage` on the posture fleet status in the console). A row already on `enforce` saves normally.
-- `local_mcp_risk_policy` (Attributes) What an unvetted local MCP tool gets at each risk rating: `allow`, `ask_once`, `ask_every_call` or `deny` for each of `low`, `medium` and `high`. Unset on the platform means the legacy behaviour (step up when approval routing exists, deny otherwise).
+- `local_mcp_risk_policy` (Object) What an unvetted local MCP tool gets at each risk rating: an object with `low`, `medium` and `high`, each one of `allow`, `ask_once`, `ask_every_call` or `deny`. All three are required. Unset on the platform means the legacy behaviour (step up when approval routing exists, deny otherwise).
 
 **Tenant default only**: the decision is read from the tenant-default row alone, so the platform refuses it on a device-group override, and this fails at plan when `device_group_id` is set.
 
 ~> Any `ask_*` tier needs approval routing (`localMcpApprovalConfig` with at least one channel), which this resource does not manage; set it up in the admin console first or the platform rejects the write.
 
-Removing this block from config leaves the stored policy in place. Clearing it is done in the admin console. (see [below for nested schema](#nestedatt--local_mcp_risk_policy))
+Removing this attribute from config leaves the stored policy in place. Clearing it is done in the admin console. (see [below for nested schema](#nestedatt--local_mcp_risk_policy))
 - `mcp_gateway_url` (String) Tenant MCP gateway base URL that approved server configs are rewritten to point at. Unset = the agent reports what it finds and rewrites nothing.
 
 Must be `https://` — an `http://` value would downgrade every governed MCP session on the fleet to cleartext, which is strictly worse than the ungoverned status quo it replaces. The platform rejects it; this fails at plan.
@@ -166,8 +166,8 @@ Must be `https://` — an `http://` value would downgrade every governed MCP ses
 <a id="nestedatt--local_mcp_risk_policy"></a>
 ### Nested Schema for `local_mcp_risk_policy`
 
-Required:
+Optional:
 
-- `high` (String) Action for a high-risk tool.
-- `low` (String) Action for a low-risk tool.
-- `medium` (String) Action for a medium-risk tool.
+- `high` (String)
+- `low` (String)
+- `medium` (String)

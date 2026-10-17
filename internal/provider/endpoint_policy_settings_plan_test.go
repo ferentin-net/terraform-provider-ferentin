@@ -42,9 +42,9 @@ func TestEndpointSettings_RiskPolicyConflictsWithDeviceGroup(t *testing.T) {
 		"medium": tftypes.NewValue(tftypes.String, "ask_once"),
 		"high":   tftypes.NewValue(tftypes.String, "deny"),
 	})
-	policyAttr, ok := s.Attributes["local_mcp_risk_policy"].(rschema.SingleNestedAttribute)
+	policyAttr, ok := s.Attributes["local_mcp_risk_policy"].(rschema.ObjectAttribute)
 	if !ok {
-		t.Fatal("local_mcp_risk_policy is not a single nested attribute")
+		t.Fatal("local_mcp_risk_policy is not an object attribute")
 	}
 
 	run := func(groupID tftypes.Value) diag.Diagnostics {
@@ -152,5 +152,43 @@ func TestOmitUnconfigured_DropsStateCarriedValuesTheConfigDoesNotSet(t *testing.
 	}
 	if body.LocalMcpRiskPolicy == nil {
 		t.Error("config sets local_mcp_risk_policy: sent nothing, want the policy")
+	}
+}
+
+// local_mcp_risk_policy is a plain object attribute (see the schema note), so
+// the "all three tiers, each a known action" rule is a validator rather than
+// Required + OneOf on nested attributes.
+func TestLocalMcpRiskPolicyTiers(t *testing.T) {
+	ctx := context.Background()
+	obj := func(low, medium, high attr.Value) types.Object {
+		return types.ObjectValueMust(localMcpRiskPolicyAttrTypes, map[string]attr.Value{
+			"low": low, "medium": medium, "high": high,
+		})
+	}
+	s := types.StringValue
+	for name, tc := range map[string]struct {
+		value   types.Object
+		wantErr string
+	}{
+		"valid":          {obj(s("allow"), s("ask_once"), s("deny")), ""},
+		"null policy":    {types.ObjectNull(localMcpRiskPolicyAttrTypes), ""},
+		"unknown policy": {types.ObjectUnknown(localMcpRiskPolicyAttrTypes), ""},
+		"unknown tier":   {obj(s("allow"), types.StringUnknown(), s("deny")), ""},
+		"missing tier":   {obj(s("allow"), s("deny"), types.StringNull()), "high is required"},
+		"bad action":     {obj(s("maybe"), s("deny"), s("deny")), "low must be one of"},
+	} {
+		resp := &validator.ObjectResponse{}
+		localMcpRiskPolicyTiers{}.ValidateObject(ctx, validator.ObjectRequest{
+			Path: path.Root("local_mcp_risk_policy"), ConfigValue: tc.value,
+		}, resp)
+		if tc.wantErr == "" {
+			if resp.Diagnostics.HasError() {
+				t.Errorf("%s: unexpected error %v", name, resp.Diagnostics)
+			}
+			continue
+		}
+		if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), tc.wantErr) {
+			t.Errorf("%s: diags = %v, want an error containing %q", name, resp.Diagnostics, tc.wantErr)
+		}
 	}
 }
