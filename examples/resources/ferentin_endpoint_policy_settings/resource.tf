@@ -37,6 +37,15 @@ resource "ferentin_endpoint_policy_settings" "default" {
     medium = "deny"
     high   = "deny"
   }
+
+  # Approval routing for step-up approvals on unvetted local MCP tools, as
+  # JSON. An ask_once / ask_every_call tier above needs this set. Clearing it
+  # is done in the admin console.
+  local_mcp_approval_config = jsonencode({
+    step_up_mode    = "approve"
+    timeout_seconds = 900
+    channels        = [{ type = "invocation_context" }]
+  })
 }
 
 # Contractors get the strict posture: quarantine unapproved MCP server configs,

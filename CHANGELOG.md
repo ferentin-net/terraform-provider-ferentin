@@ -76,6 +76,10 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   CIDRs); your spelling is kept in state, and a change made outside Terraform
   still shows as drift. Turning on the local-MCP or unnamed-flow block, or
   authoring a DoH list, needs the fleet on an agent that supports it.
+  `local_mcp_approval_config` takes the approval routing as JSON
+  (`jsonencode({...})`), so nothing in the platform's config can be dropped
+  by a partial model; a key this provider does not know fails at plan.
+  Clearing it is done in the admin console.
 - **`ferentin_endpoint_policy_settings` manages call-time MCP rule enforcement
   and the local MCP risk policy.** New `hook_rule_enforcement` (`shadow` /
   `enforce`) and, on the tenant default only, `local_mcp_risk_policy` with an

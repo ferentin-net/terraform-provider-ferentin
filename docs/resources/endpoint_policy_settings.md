@@ -84,6 +84,15 @@ resource "ferentin_endpoint_policy_settings" "default" {
     medium = "deny"
     high   = "deny"
   }
+
+  # Approval routing for step-up approvals on unvetted local MCP tools, as
+  # JSON. An ask_once / ask_every_call tier above needs this set. Clearing it
+  # is done in the admin console.
+  local_mcp_approval_config = jsonencode({
+    step_up_mode    = "approve"
+    timeout_seconds = 900
+    channels        = [{ type = "invocation_context" }]
+  })
 }
 
 # Contractors get the strict posture: quarantine unapproved MCP server configs,
@@ -146,6 +155,9 @@ This is part of the resource **identity**, not a mutable field: changing it forc
 Omit to keep the current value (the platform's default on a new row).
 
 ~> Moving a row to `enforce` is refused with 409 until every active device in its scope runs an agent build that enforces call-time rules (see `hookRuleEnforcementCoverage` on the posture fleet status in the console). A row already on `enforce` saves normally.
+- `local_mcp_approval_config` (String) Approval routing for step-up approvals raised by unvetted local MCP tools, as JSON — write it with `jsonencode({...})`. The object is the platform's approval config: `step_up_mode` (`reauth` / `approve`), `channels` (at least one; `type` is `invocation_context`, `slack`, `email`, `webhook` or `approver_dm`), and optionally `approver_role`, `timeout_seconds`, `escalation`, `context_fields`, `redacted_fields` and the risk bounds. Any `ask_*` tier in `local_mcp_risk_policy` needs this set.
+
+A key this provider version does not know fails at plan rather than being dropped (the platform ignores unknown keys). The platform stores the whole object as sent, so everything it should hold belongs in this value. Omit to keep the current config. Clearing it is done in the admin console: `{}` is refused here, as is removing it while an `ask_*` tier still needs it (the platform refuses that too).
 - `local_mcp_block_enabled` (Boolean) Block every locally spawned (stdio) MCP server in this scope. Absolute: it beats an approved registry entry and a matching `allow` rule. Remote MCP servers are unaffected. Exceptions are made by turning this off for a device group. Omit to keep the current value.
 
 ~> Turning it on requires the fleet on an agent that implements the control: an older agent refuses the posture section and keeps its last-known-good policy.

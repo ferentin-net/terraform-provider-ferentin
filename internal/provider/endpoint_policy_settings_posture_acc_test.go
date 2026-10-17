@@ -135,3 +135,64 @@ resource "ferentin_endpoint_policy_settings" "group" {
 		},
 	})
 }
+
+// TestAccEndpointPolicySettings_approvalConfig covers local_mcp_approval_config
+// on a device-group row: set, kept when removed from config, replaced, and
+// imported with nothing ignored, which holds only if the platform's config
+// reads back in the form jsonencode writes.
+func TestAccEndpointPolicySettings_approvalConfig(t *testing.T) {
+	suffix := randomSuffix(t)
+	const r = "ferentin_endpoint_policy_settings.group"
+	cfg := func(fields string) string {
+		return fmt.Sprintf(`
+resource "ferentin_device_group" "test" {
+  name   = "tf-acc-dg-approval-%[1]s"
+  source = "manual"
+}
+
+resource "ferentin_endpoint_policy_settings" "group" {
+  device_group_id       = ferentin_device_group.test.group_id
+  unapproved_mcp_action = "report_only"
+%[2]s
+}
+`, suffix, fields)
+	}
+	approval := func(timeout int) string {
+		return fmt.Sprintf(`
+  local_mcp_approval_config = jsonencode({
+    step_up_mode    = "approve"
+    timeout_seconds = %d
+    channels        = [{ type = "invocation_context" }]
+  })
+`, timeout)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(approval(900)),
+				Check: resource.TestCheckResourceAttr(r, "local_mcp_approval_config",
+					`{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve","timeout_seconds":900}`),
+			},
+			{
+				Config: cfg(`  default_destination_action = "block"`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(r, "default_destination_action", "block"),
+					resource.TestCheckResourceAttr(r, "local_mcp_approval_config",
+						`{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve","timeout_seconds":900}`),
+				),
+			},
+			{
+				Config: cfg(approval(600)),
+				Check: resource.TestCheckResourceAttr(r, "local_mcp_approval_config",
+					`{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve","timeout_seconds":600}`),
+			},
+			{
+				ResourceName:      r,
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}

@@ -116,6 +116,11 @@ type EndpointPolicySettingsResourceModel struct {
 	DohResolverHosts        types.List   `tfsdk:"doh_resolver_hosts"`
 	DohResolverIPs          types.List   `tfsdk:"doh_resolver_ips"`
 
+	// JSON (jsonencode), not a typed attribute: the platform stores the whole
+	// ApprovalConfig as sent, so a typed subset would erase whatever it did not
+	// model. Reconciled through private state like the normalized lists.
+	LocalMcpApprovalConfig types.String `tfsdk:"local_mcp_approval_config"`
+
 	SettingsID types.String `tfsdk:"settings_id"`
 	CreatedAt  types.String `tfsdk:"created_at"`
 	UpdatedAt  types.String `tfsdk:"updated_at"`
@@ -369,6 +374,24 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 					listvalidator.SizeAtMost(256),
 					listvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
 				},
+			},
+			"local_mcp_approval_config": schema.StringAttribute{
+				MarkdownDescription: "Approval routing for step-up approvals raised by unvetted local MCP " +
+					"tools, as JSON — write it with `jsonencode({...})`. The object is the platform's " +
+					"approval config: `step_up_mode` (`reauth` / `approve`), `channels` (at least one; " +
+					"`type` is `invocation_context`, `slack`, `email`, `webhook` or `approver_dm`), and " +
+					"optionally `approver_role`, `timeout_seconds`, `escalation`, `context_fields`, " +
+					"`redacted_fields` and the risk bounds. Any `ask_*` tier in `local_mcp_risk_policy` " +
+					"needs this set.\n\n" +
+					"A key this provider version does not know fails at plan rather than being dropped " +
+					"(the platform ignores unknown keys). The platform stores the whole object as sent, " +
+					"so everything it should hold belongs in this value. Omit to keep the current " +
+					"config. Clearing it is done in the admin console: `{}` is refused here, as is " +
+					"removing it while an `ask_*` tier still needs it (the platform refuses that too).",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{approvalConfigJSON{}},
 			},
 			// An ObjectAttribute, not a SingleNestedAttribute. An Optional+Computed
 			// NESTED attribute left out of config does not propose its prior value,
@@ -670,6 +693,13 @@ func (m *EndpointPolicySettingsResourceModel) toWrite() adminapi.EndpointPolicyS
 	setStringListPtr(context.Background(), m.UnnamedFlowExemptCIDRs, &body.UnnamedFlowExemptCidrs)
 	setStringListPtr(context.Background(), m.DohResolverHosts, &body.DohResolverHosts)
 	setStringListPtr(context.Background(), m.DohResolverIPs, &body.DohResolverIps)
+	if !m.LocalMcpApprovalConfig.IsNull() && !m.LocalMcpApprovalConfig.IsUnknown() {
+		// The validator already proved it decodes; a failure here sends nothing
+		// rather than a half-read config the platform would store whole.
+		if cfg, err := decodeApprovalConfig(m.LocalMcpApprovalConfig.ValueString()); err == nil {
+			body.LocalMcpApprovalConfig = cfg
+		}
+	}
 
 	// mcp_gateway_url is optional-not-computed, so a config that drops it must
 	// actively CLEAR the stored value. The platform's upsert preserves omitted
@@ -713,6 +743,7 @@ func endpointSettingsToModel(tenantID string, row *adminapi.EndpointPolicySettin
 	m.UnnamedFlowExemptCIDRs = stringSliceToList(row.UnnamedFlowExemptCidrs)
 	m.DohResolverHosts = stringSliceToList(row.DohResolverHosts)
 	m.DohResolverIPs = stringSliceToList(row.DohResolverIps)
+	m.LocalMcpApprovalConfig = approvalConfigToTF(row.LocalMcpApprovalConfig)
 	m.CreatedAt = timePtrToTF(row.CreatedAt)
 	m.UpdatedAt = timePtrToTF(row.UpdatedAt)
 
@@ -789,6 +820,9 @@ func omitUnconfigured(body *adminapi.EndpointPolicySettingsWrite, config Endpoin
 	}
 	if config.DohResolverIPs.IsNull() {
 		body.DohResolverIps = nil
+	}
+	if config.LocalMcpApprovalConfig.IsNull() {
+		body.LocalMcpApprovalConfig = nil
 	}
 }
 
@@ -968,7 +1002,126 @@ func reconcileNormalizedLists(m *EndpointPolicySettingsResourceModel, prior Endp
 			}
 		}
 	}
+	reconcileApprovalConfig(m, prior, sent, recorded, stored)
 	return stored
+}
+
+// reconcileApprovalConfig applies the same rule as the lists to
+// local_mcp_approval_config, recording the platform's normalized JSON under
+// approvalConfigKey: the configured JSON is kept when it was sent, or when the
+// platform's stored config is unchanged since last time.
+func reconcileApprovalConfig(m *EndpointPolicySettingsResourceModel, prior EndpointPolicySettingsResourceModel,
+	sent adminapi.EndpointPolicySettingsWrite, recorded, stored normalizedLists) {
+	server := m.LocalMcpApprovalConfig
+	if !server.IsNull() {
+		stored[approvalConfigKey] = []string{server.ValueString()}
+	} else {
+		stored[approvalConfigKey] = nil
+	}
+	priorKnown := !prior.LocalMcpApprovalConfig.IsNull() && !prior.LocalMcpApprovalConfig.IsUnknown()
+	switch {
+	case sent.LocalMcpApprovalConfig != nil && priorKnown:
+		m.LocalMcpApprovalConfig = prior.LocalMcpApprovalConfig
+	case sent.LocalMcpApprovalConfig == nil && priorKnown && recorded != nil:
+		if last, ok := recorded[approvalConfigKey]; ok && slices.Equal(last, stored[approvalConfigKey]) {
+			m.LocalMcpApprovalConfig = prior.LocalMcpApprovalConfig
+		}
+	}
+}
+
+// approvalConfigKey is local_mcp_approval_config's entry in normalizedLists:
+// a one-element list holding the platform's config as normalized JSON.
+const approvalConfigKey = "local_mcp_approval_config"
+
+// decodeApprovalConfig parses the attribute's JSON strictly into the SDK's
+// ApprovalConfig: an unknown key (a typo, or a field newer than this
+// provider's SDK) is an error, because the platform would silently drop it.
+func decodeApprovalConfig(raw string) (*gen.ApprovalConfig, error) {
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	var cfg gen.ApprovalConfig
+	if err := dec.Decode(&cfg); err != nil {
+		return nil, err
+	}
+	if dec.More() {
+		return nil, fmt.Errorf("unexpected data after the JSON object")
+	}
+	return &cfg, nil
+}
+
+// approvalConfigToTF renders the platform's config as normalized JSON: keys
+// sorted, compact, as jsonencode writes it, so a config written with
+// jsonencode and read back (an import) compares equal when nothing differs.
+func approvalConfigToTF(cfg *gen.ApprovalConfig) types.String {
+	if cfg == nil {
+		return types.StringNull()
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		return types.StringNull()
+	}
+	var generic any
+	if err := json.Unmarshal(raw, &generic); err != nil {
+		return types.StringNull()
+	}
+	normalized, err := json.Marshal(generic)
+	if err != nil {
+		return types.StringNull()
+	}
+	return types.StringValue(string(normalized))
+}
+
+// approvalConfigJSON validates local_mcp_approval_config at plan time: a JSON
+// object that decodes strictly into the SDK's ApprovalConfig, with a
+// step_up_mode and at least one channel (the platform's rules), and not {}
+// (the platform's clear, which the SDK cannot send; clearing is a console
+// action).
+type approvalConfigJSON struct{}
+
+func (approvalConfigJSON) Description(context.Context) string {
+	return "a JSON approval config with step_up_mode and at least one channel"
+}
+
+func (v approvalConfigJSON) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (approvalConfigJSON) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	raw := strings.TrimSpace(req.ConfigValue.ValueString())
+	var generic map[string]any
+	if err := json.Unmarshal([]byte(raw), &generic); err != nil {
+		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config is not a JSON object",
+			"Write it with jsonencode({...}). "+err.Error())
+		return
+	}
+	if len(generic) == 0 {
+		resp.Diagnostics.AddAttributeError(req.Path, "An empty approval config is refused",
+			"{} is the platform's way to clear approval routing, which this provider cannot send. "+
+				"Clear it in the admin console, or leave the attribute out to keep the current config.")
+		return
+	}
+	cfg, err := decodeApprovalConfig(raw)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config does not match the approval config",
+			err.Error()+"\n\nAn unknown key fails here rather than being dropped: the platform ignores "+
+				"keys it does not know.")
+		return
+	}
+	if cfg.StepUpMode == "" {
+		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config.step_up_mode is required",
+			"Set step_up_mode to \"approve\" or \"reauth\".")
+	} else if cfg.StepUpMode != "approve" && cfg.StepUpMode != "reauth" {
+		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config.step_up_mode is invalid",
+			fmt.Sprintf("Got %q; use \"approve\" or \"reauth\".", cfg.StepUpMode))
+	}
+	if cfg.Channels == nil || len(*cfg.Channels) == 0 {
+		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config needs at least one channel",
+			"The platform refuses an approval config without channels: it would read as set up while "+
+				"every unvetted local tool was denied.")
+	}
 }
 
 // listStrings returns a list's elements, nil for a null, unknown or empty list.

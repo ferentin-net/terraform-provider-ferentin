@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -180,5 +181,109 @@ func TestNoZeroPrefix(t *testing.T) {
 		if resp.Diagnostics.HasError() != wantErr {
 			t.Errorf("%q: error = %v, want %v", v, resp.Diagnostics.HasError(), wantErr)
 		}
+	}
+}
+
+func TestApprovalConfigJSONValidator(t *testing.T) {
+	for name, tc := range map[string]struct {
+		value   string
+		wantErr string
+	}{
+		"valid":            {`{"step_up_mode":"approve","channels":[{"type":"invocation_context"}]}`, ""},
+		"not JSON":         {`approve`, "not a JSON object"},
+		"empty object":     {`{}`, "empty approval config is refused"},
+		"unknown key":      {`{"step_up_mode":"approve","channels":[{"type":"email"}],"chanels":[]}`, "does not match"},
+		"unknown nested":   {`{"step_up_mode":"approve","channels":[{"type":"slack","chanel":"#x"}]}`, "does not match"},
+		"no step_up_mode":  {`{"channels":[{"type":"invocation_context"}]}`, "step_up_mode is required"},
+		"bad step_up_mode": {`{"step_up_mode":"maybe","channels":[{"type":"invocation_context"}]}`, "step_up_mode is invalid"},
+		"no channels":      {`{"step_up_mode":"approve"}`, "at least one channel"},
+		"empty channels":   {`{"step_up_mode":"reauth","channels":[]}`, "at least one channel"},
+	} {
+		resp := &validator.StringResponse{}
+		approvalConfigJSON{}.ValidateString(context.Background(), validator.StringRequest{
+			Path: path.Root("local_mcp_approval_config"), ConfigValue: types.StringValue(tc.value),
+		}, resp)
+		if tc.wantErr == "" {
+			if resp.Diagnostics.HasError() {
+				t.Errorf("%s: unexpected error %v", name, resp.Diagnostics)
+			}
+			continue
+		}
+		if !resp.Diagnostics.HasError() {
+			t.Errorf("%s: want an error containing %q, got none", name, tc.wantErr)
+			continue
+		}
+		found := false
+		for _, e := range resp.Diagnostics.Errors() {
+			if strings.Contains(e.Summary(), tc.wantErr) {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s: errors %v do not contain %q", name, resp.Diagnostics.Errors(), tc.wantErr)
+		}
+	}
+}
+
+// The platform's config reads back as compact JSON with sorted keys, which is
+// what jsonencode writes, so an import of an unchanged config compares equal.
+func TestApprovalConfigToTF_MatchesJsonencodeForm(t *testing.T) {
+	cfg, err := decodeApprovalConfig(`{"timeout_seconds":900,"step_up_mode":"approve",` +
+		`"channels":[{"type":"email","addresses":["sec@example.com"]}],"approver_role":"Approver"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := approvalConfigToTF(cfg).ValueString()
+	want := `{"approver_role":"Approver","channels":[{"addresses":["sec@example.com"],"type":"email"}],` +
+		`"step_up_mode":"approve","timeout_seconds":900}`
+	if got != want {
+		t.Errorf("approvalConfigToTF = %s\nwant              %s", got, want)
+	}
+	if !approvalConfigToTF(nil).IsNull() {
+		t.Error("absent config must read as null")
+	}
+}
+
+func TestEndpointSettings_ApprovalConfigWriteAndReconcile(t *testing.T) {
+	configured := types.StringValue(`{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve"}`)
+	plan := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: configured}
+	body := plan.toWrite()
+	if body.LocalMcpApprovalConfig == nil || body.LocalMcpApprovalConfig.StepUpMode != "approve" {
+		t.Fatalf("config not sent: %+v", body.LocalMcpApprovalConfig)
+	}
+	omitUnconfigured(&body, EndpointPolicySettingsResourceModel{
+		HookRuleEnforcement: types.StringNull(), LocalMcpRiskPolicy: types.ObjectNull(localMcpRiskPolicyAttrTypes),
+		UnapprovedAgentAction: types.StringNull(), LocalMcpBlockEnabled: types.BoolNull(),
+		UnnamedFlowBlockEnabled: types.BoolNull(), UnnamedFlowExemptCIDRs: types.ListNull(types.StringType),
+		DohResolverHosts: types.ListNull(types.StringType), DohResolverIPs: types.ListNull(types.StringType),
+		LocalMcpApprovalConfig: types.StringNull(),
+	})
+	if body.LocalMcpApprovalConfig != nil {
+		t.Error("config omitted from config but still sent")
+	}
+
+	nulls := func(m *EndpointPolicySettingsResourceModel) {
+		m.DohResolverHosts, m.DohResolverIPs, m.UnnamedFlowExemptCIDRs =
+			types.ListNull(types.StringType), types.ListNull(types.StringType), types.ListNull(types.StringType)
+	}
+	serverForm := `{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve","timeout_seconds":600}`
+	prior := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: configured}
+	nulls(&prior)
+
+	// Not sent, platform unchanged since last time: keep the configured JSON.
+	m := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: types.StringValue(serverForm)}
+	nulls(&m)
+	reconcileNormalizedLists(&m, prior, adminapi.EndpointPolicySettingsWrite{},
+		normalizedLists{approvalConfigKey: {serverForm}})
+	if !m.LocalMcpApprovalConfig.Equal(configured) {
+		t.Errorf("unchanged: got %v, want the configured JSON", m.LocalMcpApprovalConfig)
+	}
+	// Changed elsewhere: the platform's JSON, so the plan shows drift.
+	m = EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: types.StringValue(serverForm)}
+	nulls(&m)
+	reconcileNormalizedLists(&m, prior, adminapi.EndpointPolicySettingsWrite{},
+		normalizedLists{approvalConfigKey: {`{"step_up_mode":"reauth"}`}})
+	if m.LocalMcpApprovalConfig.ValueString() != serverForm {
+		t.Errorf("changed elsewhere: got %v, want the platform's JSON", m.LocalMcpApprovalConfig)
 	}
 }
