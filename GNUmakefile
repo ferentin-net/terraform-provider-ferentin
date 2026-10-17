@@ -101,7 +101,14 @@ testacc:
 # Requires admin-api-server running (`feri a`) and credentials for a principal
 # holding policy:rw plus devices:groups:rw or devices:rw. Export FERENTIN_TOKEN,
 # or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET, and FERENTIN_TENANT_ID first.
-# INSECURE_SKIP_VERIFY is set because local dev serves a self-signed cert.
+#
+# TLS is verified. Local dev's certificate is signed by the local CA, and a
+# machine that trusts it (as a dev machine set up for local dev does) needs no
+# skip. FERENTIN_INSECURE_SKIP_VERIFY is NOT forced on: a machine whose managed
+# (MDM) configuration forbids skipping verification refuses it, and the whole
+# run then fails before reaching the platform with "Certificate verification
+# cannot be skipped on this machine". Export it yourself only on a machine that
+# does not trust the local CA and allows skipping.
 #
 # Pass RUN= to run a subset, which is usually what you want when validating one
 # resource:
@@ -121,7 +128,6 @@ testacc-local:
 		{ echo "set FERENTIN_TOKEN, or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET"; exit 1; }
 	TF_ACC=1 \
 	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test} \
-	FERENTIN_INSECURE_SKIP_VERIFY=1 \
 	go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
 tidy:

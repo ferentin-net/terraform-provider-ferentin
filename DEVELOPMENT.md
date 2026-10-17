@@ -62,8 +62,10 @@ export TF_ACC=1
 export FERENTIN_ENDPOINT=https://api.local.ferentin.test
 export FERENTIN_TENANT_ID=...
 export FERENTIN_TOKEN=$(... mint via curl, see ferentin-cli-app/CLAUDE.md ...)
-export FERENTIN_INSECURE_SKIP_VERIFY=1
 ```
+
+Local dev's certificate is signed by the local CA; trust that CA rather than
+skipping verification (see "Running acceptance tests" below).
 
 For the moment, only smoke acceptance is wired (Phase 2 MVP); full coverage follows in subsequent batches per §5 of the design doc.
 
@@ -93,8 +95,15 @@ make testacc-local
 ```
 
 `testacc-local` defaults `FERENTIN_ENDPOINT` to `https://api.local.ferentin.test`
-and sets `FERENTIN_INSECURE_SKIP_VERIFY=1`, since local dev serves a self-signed
-certificate.
+and verifies TLS. Local dev's certificate is signed by the local CA, so a machine
+that trusts that CA needs nothing more; check with
+`curl -s -o /dev/null -w '%{http_code}' https://api.local.ferentin.test/` (no `-k`).
+
+`FERENTIN_INSECURE_SKIP_VERIFY` is not set for you. On a machine whose managed
+(MDM) configuration forbids skipping verification the provider refuses it, and
+every test fails with "Certificate verification cannot be skipped on this
+machine". Export `FERENTIN_INSECURE_SKIP_VERIFY=1` yourself only on a machine
+that does not trust the local CA and allows skipping.
 
 ### Scopes the test principal needs
 
