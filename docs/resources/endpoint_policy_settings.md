@@ -142,10 +142,10 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
 
 This is part of the resource **identity**, not a mutable field: changing it forces replacement, because a different value addresses a different row.
 - `doh_block_enabled` (Boolean) Block external DNS-over-HTTPS resolvers so name resolution stays observable. Default `false`.
-- `doh_resolver_hosts` (List of String) DoH resolver hostnames the DoH block matches; `*.` and leading-`.` suffix patterns are allowed. At most 256. Lowercased by the platform; your spelling is kept here. Omit to keep the current list; `[]` clears it, returning the agent to its built-in list.
+- `doh_resolver_hosts` (Set of String) DoH resolver hostnames the DoH block matches; `*.` and leading-`.` suffix patterns are allowed. At most 256. Lowercased by the platform; your spelling is kept here. Omit to keep the current list; `[]` clears it, returning the agent to its built-in list.
 
 ~> Authoring either DoH list requires the fleet on agent 0.9 or later: older agents refuse a posture section with unknown keys and keep their last-known-good policy.
-- `doh_resolver_ips` (List of String) DoH bootstrap IP addresses the DoH block matches, on port 443 only. At most 256. Canonicalized by the platform; your spelling is kept here. Omit to keep the current list; `[]` clears it. Same agent requirement as `doh_resolver_hosts`.
+- `doh_resolver_ips` (Set of String) DoH bootstrap IP addresses the DoH block matches, on port 443 only. At most 256. Canonicalized by the platform; your spelling is kept here. Omit to keep the current list; `[]` clears it. Same agent requirement as `doh_resolver_hosts`.
 - `ech_strip_enabled` (Boolean) Strip HTTPS/SVCB DNS records so Encrypted Client Hello is not advertised, keeping SNI inspectable. Default `false`.
 - `hook_rule_enforcement` (String) Call-time enforcement of MCP `block` rules:
 
@@ -157,7 +157,7 @@ Omit to keep the current value (the platform's default on a new row).
 ~> Moving a row to `enforce` is refused with 409 until every active device in its scope runs an agent build that enforces call-time rules (see `hookRuleEnforcementCoverage` on the posture fleet status in the console). A row already on `enforce` saves normally.
 - `local_mcp_approval_config` (String) Approval routing for step-up approvals raised by unvetted local MCP tools, as JSON — write it with `jsonencode({...})`. The object is the platform's approval config: `step_up_mode` (`reauth` / `approve`), `channels` (at least one; `type` is `invocation_context`, `slack`, `email`, `webhook` or `approver_dm`), and optionally `approver_role`, `timeout_seconds`, `escalation`, `context_fields`, `redacted_fields` and the risk bounds. Any `ask_*` tier in `local_mcp_risk_policy` needs this set.
 
-A key this provider version does not know fails at plan rather than being dropped (the platform ignores unknown keys). The platform stores the whole object as sent, so everything it should hold belongs in this value. Omit to keep the current config. Clearing it is done in the admin console: `{}` is refused here, as is removing it while an `ask_*` tier still needs it (the platform refuses that too).
+A key this provider version does not know fails at plan rather than being dropped (the platform ignores unknown keys). The platform stores the whole object as sent, so everything it should hold belongs in this value. Formatting and key order do not matter. Omit to keep the current config. Clearing it is done in the admin console: `{}` is refused here.
 - `local_mcp_block_enabled` (Boolean) Block every locally spawned (stdio) MCP server in this scope. Absolute: it beats an approved registry entry and a matching `allow` rule. Remote MCP servers are unaffected. Exceptions are made by turning this off for a device group. Omit to keep the current value.
 
 ~> Turning it on requires the fleet on an agent that implements the control: an older agent refuses the posture section and keeps its last-known-good policy.
@@ -182,7 +182,7 @@ Must be `https://` — an `http://` value would downgrade every governed MCP ses
 - `unnamed_flow_block_enabled` (Boolean) Drop port-443 flows (TCP and QUIC) to public addresses that have no hostname attribution: the raw-IP / external-DoH / ECH-degraded traffic no host rule can match. Private, CGNAT and link-local ranges are out of scope. Omit to keep the current value.
 
 ~> Turning it on requires the fleet on an agent that implements the control: an older agent refuses the posture section and keeps its last-known-good policy.
-- `unnamed_flow_exempt_cidrs` (List of String) Addresses or CIDRs exempt from the unnamed-flow block, for infrastructure reached by bare IP on 443 (VPN concentrators, monitoring). At most 64; a `/0` prefix is refused. The platform canonicalizes them (host bits masked, duplicates collapsed); your spelling is kept here. Omit to keep the current list; `[]` clears it.
+- `unnamed_flow_exempt_cidrs` (Set of String) Addresses or CIDRs exempt from the unnamed-flow block, for infrastructure reached by bare IP on 443 (VPN concentrators, monitoring). At most 64; a `/0` prefix is refused. The platform canonicalizes them (host bits masked, duplicates collapsed); your spelling is kept here. Omit to keep the current list; `[]` clears it.
 
 ### Read-Only
 

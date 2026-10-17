@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"slices"
 	"strconv"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 )
@@ -64,9 +66,24 @@ resource "ferentin_endpoint_policy_settings" "group" {
 					resource.TestCheckResourceAttr(r, "unapproved_agent_action", "block"),
 					resource.TestCheckResourceAttr(r, "local_mcp_block_enabled", "true"),
 					resource.TestCheckResourceAttr(r, "unnamed_flow_block_enabled", "true"),
-					resource.TestCheckResourceAttr(r, "unnamed_flow_exempt_cidrs.0", "10.1.2.3/8"),
-					resource.TestCheckResourceAttr(r, "doh_resolver_hosts.0", "DNS.Tf-Acc.Example.COM"),
-					resource.TestCheckResourceAttr(r, "doh_resolver_ips.0", "2001:DB8:0:0:0:0:0:1"),
+					resource.TestCheckTypeSetElemAttr(r, "unnamed_flow_exempt_cidrs.*", "10.1.2.3/8"),
+					resource.TestCheckTypeSetElemAttr(r, "doh_resolver_hosts.*", "DNS.Tf-Acc.Example.COM"),
+					resource.TestCheckTypeSetElemAttr(r, "doh_resolver_ips.*", "2001:DB8:0:0:0:0:0:1"),
+					// The platform stored them, normalized: state alone would show the
+					// configured values even if nothing had been stored.
+					checkGroupPostureOnPlatform(t, &groupID, func(row *adminapi.EndpointPolicySettings) error {
+						if row.DohResolverHosts == nil || len(*row.DohResolverHosts) != 2 ||
+							!slices.Contains(*row.DohResolverHosts, "dns.tf-acc.example.com") {
+							return fmt.Errorf("doh_resolver_hosts on the platform = %v", row.DohResolverHosts)
+						}
+						if row.UnnamedFlowExemptCidrs == nil || !slices.Contains(*row.UnnamedFlowExemptCidrs, "10.0.0.0/8") {
+							return fmt.Errorf("unnamed_flow_exempt_cidrs on the platform = %v", row.UnnamedFlowExemptCidrs)
+						}
+						if row.DohResolverIps == nil || len(*row.DohResolverIps) != 2 {
+							return fmt.Errorf("doh_resolver_ips on the platform = %v", row.DohResolverIps)
+						}
+						return nil
+					}),
 				),
 			},
 			{
@@ -76,7 +93,7 @@ resource "ferentin_endpoint_policy_settings" "group" {
 					resource.TestCheckResourceAttr(r, "unapproved_agent_action", "block"),
 					resource.TestCheckResourceAttr(r, "local_mcp_block_enabled", "true"),
 					resource.TestCheckResourceAttr(r, "unnamed_flow_exempt_cidrs.#", "2"),
-					resource.TestCheckResourceAttr(r, "doh_resolver_hosts.0", "DNS.Tf-Acc.Example.COM"),
+					resource.TestCheckTypeSetElemAttr(r, "doh_resolver_hosts.*", "DNS.Tf-Acc.Example.COM"),
 				),
 			},
 			{
@@ -122,6 +139,20 @@ resource "ferentin_endpoint_policy_settings" "group" {
 					resource.TestCheckResourceAttr(r, "unnamed_flow_exempt_cidrs.#", "0"),
 					resource.TestCheckResourceAttr(r, "doh_resolver_hosts.#", "0"),
 					resource.TestCheckResourceAttr(r, "doh_resolver_ips.#", "0"),
+					// State holds the planned [] whatever happened, so confirm the
+					// platform actually cleared them.
+					checkGroupPostureOnPlatform(t, &groupID, func(row *adminapi.EndpointPolicySettings) error {
+						for name, l := range map[string]*[]string{"doh_resolver_hosts": row.DohResolverHosts,
+							"doh_resolver_ips": row.DohResolverIps, "unnamed_flow_exempt_cidrs": row.UnnamedFlowExemptCidrs} {
+							if l != nil && len(*l) > 0 {
+								return fmt.Errorf("%s still on the platform after the clear: %v", name, *l)
+							}
+						}
+						if row.LocalMcpBlockEnabled == nil || *row.LocalMcpBlockEnabled {
+							return fmt.Errorf("local_mcp_block_enabled on the platform = %v", row.LocalMcpBlockEnabled)
+						}
+						return nil
+					}),
 				),
 			},
 			{
@@ -195,4 +226,19 @@ resource "ferentin_endpoint_policy_settings" "group" {
 			},
 		},
 	})
+}
+
+// checkGroupPostureOnPlatform reads a device group's posture row through the
+// SDK, so a test can assert what the platform stored rather than what state
+// says.
+func checkGroupPostureOnPlatform(t *testing.T, groupID *string,
+	check func(*adminapi.EndpointPolicySettings) error) resource.TestCheckFunc {
+	return func(_ *terraform.State) error {
+		row, err := testAccSDK(t).EndpointPolicies().GetGroupSettings(context.Background(),
+			os.Getenv(envTenantID), *groupID)
+		if err != nil {
+			return fmt.Errorf("read group posture from the platform: %w", err)
+		}
+		return check(row)
+	}
 }

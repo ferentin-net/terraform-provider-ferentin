@@ -316,7 +316,7 @@ func TestEndpointSettingsToWrite_ClearsGatewayURLWhenUnset(t *testing.T) {
 		DefaultDestinationAction: types.StringValue("allow"),
 		McpGatewayURL:            types.StringNull(),
 	}
-	body := m.toWrite()
+	body, _ := m.toWrite(context.Background())
 	if body.McpGatewayUrl == nil {
 		t.Fatal("McpGatewayUrl = nil; an omitted config must send an explicit empty string to clear it")
 	}
@@ -325,7 +325,7 @@ func TestEndpointSettingsToWrite_ClearsGatewayURLWhenUnset(t *testing.T) {
 	}
 
 	m.McpGatewayURL = types.StringValue("https://mcp.example.com")
-	body = m.toWrite()
+	body, _ = m.toWrite(context.Background())
 	if body.McpGatewayUrl == nil || *body.McpGatewayUrl != "https://mcp.example.com" {
 		t.Errorf("McpGatewayUrl = %v, want the configured URL", body.McpGatewayUrl)
 	}
@@ -620,7 +620,7 @@ func TestEndpointSettingsToWrite_HookRuleAndRiskPolicyOnlyWhenConfigured(t *test
 			LocalMcpRiskPolicy:  types.ObjectUnknown(localMcpRiskPolicyAttrTypes),
 		},
 	} {
-		body := m.toWrite()
+		body, _ := m.toWrite(context.Background())
 		if body.HookRuleEnforcement != nil {
 			t.Errorf("%s: HookRuleEnforcement sent as %q, want omitted", name, *body.HookRuleEnforcement)
 		}
@@ -637,7 +637,7 @@ func TestEndpointSettingsToWrite_HookRuleAndRiskPolicyOnlyWhenConfigured(t *test
 			"high":   types.StringValue("deny"),
 		}),
 	}
-	body := m.toWrite()
+	body, _ := m.toWrite(context.Background())
 	if body.HookRuleEnforcement == nil || *body.HookRuleEnforcement != "shadow" {
 		t.Errorf("HookRuleEnforcement = %v, want shadow", body.HookRuleEnforcement)
 	}

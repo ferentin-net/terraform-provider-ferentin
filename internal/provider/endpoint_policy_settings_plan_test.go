@@ -135,7 +135,7 @@ func TestOmitUnconfigured_DropsStateCarriedValuesTheConfigDoesNotSet(t *testing.
 		LocalMcpRiskPolicy:  riskPolicy,
 	}
 
-	body := plan.toWrite()
+	body, _ := plan.toWrite(context.Background())
 	omitUnconfigured(&body, EndpointPolicySettingsResourceModel{
 		HookRuleEnforcement: types.StringNull(),
 		LocalMcpRiskPolicy:  types.ObjectNull(localMcpRiskPolicyAttrTypes),
@@ -145,7 +145,7 @@ func TestOmitUnconfigured_DropsStateCarriedValuesTheConfigDoesNotSet(t *testing.
 			body.HookRuleEnforcement, body.LocalMcpRiskPolicy)
 	}
 
-	body = plan.toWrite()
+	body, _ = plan.toWrite(context.Background())
 	omitUnconfigured(&body, plan)
 	if body.HookRuleEnforcement == nil || *body.HookRuleEnforcement != "enforce" {
 		t.Errorf("config sets hook_rule_enforcement: sent %v, want enforce", body.HookRuleEnforcement)
