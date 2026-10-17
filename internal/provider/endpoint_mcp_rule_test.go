@@ -234,6 +234,23 @@ func TestEndpointMCPRuleValidateConfig(t *testing.T) {
 		{"unknown action skips action rules", map[string]tftypes.Value{
 			"match_kind": str("tool_name"), "action": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 			"match_values": listOf("match_values", "run")}, ""},
+		{"host with a scheme", map[string]tftypes.Value{
+			"match_kind": str("host"), "action": str("block"), "match_values": listOf("match_values", "https://a.example")},
+			"not a bare hostname"},
+		{"host with a port", map[string]tftypes.Value{
+			"match_kind": str("host"), "action": str("block"), "match_values": listOf("match_values", "a.example:443")},
+			"not a bare hostname"},
+		{"url_prefix may carry a scheme", map[string]tftypes.Value{
+			"match_kind": str("url_prefix"), "action": str("block"), "match_values": listOf("match_values", "https://a.example/mcp")},
+			""},
+		{"local steer without target", map[string]tftypes.Value{
+			"match_kind": str("package"), "action": str("steer"), "match_values": listOf("match_values", "npm:@acme/mcp")}, ""},
+		{"behaviour steer", map[string]tftypes.Value{
+			"match_kind": str("tool_behavior"), "action": str("steer"), "match_values": listOf("match_values", "shell")},
+			`supports action "block" only`},
+		{"remote steer with an unknown target", map[string]tftypes.Value{
+			"match_kind": str("host"), "action": str("steer"), "match_values": listOf("match_values", "a.example"),
+			"steer_to_url": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -265,5 +282,111 @@ func TestEndpointMCPRuleValidateConfig(t *testing.T) {
 				t.Errorf("errors %v do not contain %q", errs, tc.wantErr)
 			}
 		})
+	}
+}
+
+// description, app_bundle_ids and device_group_ids are Optional, not Computed,
+// so the platform's empty forms must read as null (a config that omits them
+// plans null), while an empty form the config wrote explicitly is kept.
+func TestEndpointMCPRule_EmptyFormsReadAsNullUnlessConfigured(t *testing.T) {
+	var diags diag.Diagnostics
+	m := endpointMCPRuleToModel(fixtureTenantID, &adminapi.EndpointMCPRule{
+		Description:    strPtr(""),
+		AppBundleIds:   &[]string{},
+		DeviceGroupIds: &[]adminapi.UUID{},
+	}, &diags)
+	if !m.Description.IsNull() || !m.AppBundleIDs.IsNull() || !m.DeviceGroupIDs.IsNull() {
+		t.Fatalf("empty forms = %v / %v / %v, want all null", m.Description, m.AppBundleIDs, m.DeviceGroupIDs)
+	}
+
+	unset := EndpointMCPRuleResourceModel{
+		Description:    types.StringNull(),
+		AppBundleIDs:   types.ListNull(types.StringType),
+		DeviceGroupIDs: types.ListNull(types.StringType),
+	}
+	got := m
+	got.keepEmptyForms(unset)
+	if !got.Description.IsNull() || !got.DeviceGroupIDs.IsNull() {
+		t.Errorf("config omits them: %v / %v, want null", got.Description, got.DeviceGroupIDs)
+	}
+
+	empty := EndpointMCPRuleResourceModel{
+		Description:    types.StringValue(""),
+		AppBundleIDs:   types.ListValueMust(types.StringType, []attr.Value{}),
+		DeviceGroupIDs: types.ListValueMust(types.StringType, []attr.Value{}),
+	}
+	got = m
+	got.keepEmptyForms(empty)
+	if got.Description.IsNull() || got.Description.ValueString() != "" {
+		t.Errorf(`config wrote description = "": got %v`, got.Description)
+	}
+	if got.DeviceGroupIDs.IsNull() || len(got.DeviceGroupIDs.Elements()) != 0 {
+		t.Errorf("config wrote device_group_ids = []: got %v", got.DeviceGroupIDs)
+	}
+
+	// A real value from the server is never replaced by the prior empty form.
+	groupID := mustParseUUID(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	m = endpointMCPRuleToModel(fixtureTenantID, &adminapi.EndpointMCPRule{DeviceGroupIds: &[]adminapi.UUID{groupID}}, &diags)
+	m.keepEmptyForms(empty)
+	if len(m.DeviceGroupIDs.Elements()) != 1 {
+		t.Errorf("server value lost: %v", m.DeviceGroupIDs)
+	}
+}
+
+func TestParseTenantScopedImportID(t *testing.T) {
+	const tenant, rule = "e3a86afa-70aa-4879-9ab8-ea56f3eef48b", "7f3d9b1c-2a4e-4c8f-9d0b-1e2f3a4b5c6d"
+	for name, tc := range map[string]struct {
+		id, defaultTenant    string
+		wantTenant, wantRule string
+		wantErr              string
+	}{
+		"tenant/rule":          {id: tenant + "/" + rule, wantTenant: tenant, wantRule: rule},
+		"bare rule":            {id: rule, defaultTenant: tenant, wantTenant: tenant, wantRule: rule},
+		"bare rule, no tenant": {id: rule, wantErr: "Cannot determine tenant"},
+		"trailing slash":       {id: tenant + "/", wantErr: "must be a UUID"},
+		"extra segment":        {id: tenant + "/" + rule + "/x", wantErr: "Invalid import ID"},
+		"rule is not a UUID":   {id: tenant + "/my-rule", wantErr: "must be a UUID"},
+	} {
+		gotTenant, gotRule, diags := parseTenantScopedImportID(tc.id, tc.defaultTenant, "rule")
+		if tc.wantErr != "" {
+			if !diags.HasError() || !strings.Contains(diags.Errors()[0].Summary()+diags.Errors()[0].Detail(), tc.wantErr) {
+				t.Errorf("%s: diags = %v, want an error containing %q", name, diags, tc.wantErr)
+			}
+			continue
+		}
+		if diags.HasError() || gotTenant != tc.wantTenant || gotRule != tc.wantRule {
+			t.Errorf("%s: got %q/%q diags=%v, want %q/%q", name, gotTenant, gotRule, diags, tc.wantTenant, tc.wantRule)
+		}
+	}
+}
+
+// The MCP rule shares warnOnCriteriaRemoval with the destination rule; this
+// pins that the resource actually calls it.
+func TestEndpointMCPRuleModifyPlan_WarnsWhenCriteriaAreRemoved(t *testing.T) {
+	ctx := context.Background()
+	s := endpointMCPRuleSchema(t)
+	critType := endpointRuleCriteriaType(t, s)
+	group := tftypes.NewValue(critType.(tftypes.List).ElementType, map[string]tftypes.Value{
+		"operator":    tftypes.NewValue(tftypes.String, "AND"),
+		"type":        tftypes.NewValue(tftypes.String, "claims"),
+		"description": tftypes.NewValue(tftypes.String, nil),
+		"conditions": tftypes.NewValue(
+			critType.(tftypes.List).ElementType.(tftypes.Object).AttributeTypes["conditions"], nil),
+	})
+	state := tfsdk.State{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+		"name":     tftypes.NewValue(tftypes.String, "block-legal"),
+		"criteria": tftypes.NewValue(critType, []tftypes.Value{group}),
+	})}
+	plan := tfsdk.Plan{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+		"name":     tftypes.NewValue(tftypes.String, "block-legal"),
+		"criteria": tftypes.NewValue(critType, nil),
+	})}
+	resp := &resource.ModifyPlanResponse{Plan: plan}
+	(&EndpointMCPRuleResource{}).ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan}, resp)
+	if resp.Diagnostics.WarningsCount() == 0 {
+		t.Fatal("no warning when an apply removes criteria")
+	}
+	if got := resp.Diagnostics.Warnings()[0].Detail(); !strings.Contains(got, "block-legal") {
+		t.Errorf("warning detail = %q, want it to name the rule", got)
 	}
 }

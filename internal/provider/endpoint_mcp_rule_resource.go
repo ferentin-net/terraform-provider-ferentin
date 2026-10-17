@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -153,7 +154,11 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 			"## Import\n\n" +
 			"```\n" +
 			"terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>\n" +
-			"```",
+			"```\n\n" +
+			"An import has no configured spelling of `match_values`, so it takes the platform's " +
+			"canonical form. On an `allow` or `steer` rule the first plan after import may then show " +
+			"`match_values` changing to the spelling in your config; applying it changes nothing on " +
+			"the platform.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -172,8 +177,13 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 				Required:            true,
 				Validators:          []validator.String{stringvalidator.LengthBetween(1, 255)},
 			},
+			// description, app_bundle_ids and device_group_ids are Optional, NOT
+			// Computed. The PUT replaces them, so removing one from config must plan
+			// a change; Optional+Computed would plan the old state value instead,
+			// and the rule would stay as it was until an unrelated edit cleared it.
+			// endpointMCPRuleToModel reads the platform's empty forms as null.
 			"description": schema.StringAttribute{
-				Optional: true, Computed: true,
+				Optional:   true,
 				Validators: []validator.String{stringvalidator.LengthAtMost(2000)},
 			},
 			"priority": schema.Int64Attribute{
@@ -246,7 +256,7 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 				MarkdownDescription: "Which MCP **client** the rule governs (Claude Desktop, Cursor, …) by " +
 					"macOS bundle identifier, e.g. `com.anthropic.claudefordesktop`. Never which server. " +
 					"Empty or unset = any client. At most 64.",
-				Optional: true, Computed: true, ElementType: types.StringType,
+				Optional: true, ElementType: types.StringType,
 				Validators: []validator.List{listvalidator.SizeAtMost(mcpRuleMaxAppBundleIDs)},
 			},
 			"device_group_ids": schema.ListAttribute{
@@ -257,7 +267,7 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 					"carry an authenticated identity when a local server is admitted, so the narrowing " +
 					"would be ignored and the allow would apply tenant-wide. Narrowing a `block` fails " +
 					"safe and is accepted.",
-				Optional: true, Computed: true, ElementType: types.StringType,
+				Optional: true, ElementType: types.StringType,
 			},
 			"criteria_combinator": schema.StringAttribute{
 				MarkdownDescription: "How `criteria` groups combine: `AND` or `OR`. Default `AND`.",
@@ -353,11 +363,11 @@ func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resour
 	act := action.ValueString()
 	actionKnown := !action.IsUnknown() && !action.IsNull()
 
-	if actionKnown && act != "block" && (contains(mcpRuleCallTimeKinds, kind) || contains(mcpRuleBehaviorKinds, kind)) {
+	if actionKnown && act != "block" && (slices.Contains(mcpRuleCallTimeKinds, kind) || slices.Contains(mcpRuleBehaviorKinds, kind)) {
 		resp.Diagnostics.AddAttributeError(path.Root("action"),
 			fmt.Sprintf("A %q rule supports action \"block\" only", kind),
-			"Call-time and behaviour rules can only block: `allow` on a call-time kind is pending "+
-				"review on the platform, and `steer` has no call-time meaning.")
+			"Only `block` is supported for call-time (`tool_name`, `command_binary`) and "+
+				"`tool_behavior` rules.")
 	}
 
 	if kind == "tool_behavior" && !matchValues.IsUnknown() && !matchValues.IsNull() {
@@ -366,7 +376,7 @@ func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resour
 			if !ok || s.IsUnknown() || s.IsNull() {
 				continue
 			}
-			if !contains(mcpRuleToolBehaviors, s.ValueString()) {
+			if !slices.Contains(mcpRuleToolBehaviors, s.ValueString()) {
 				resp.Diagnostics.AddAttributeError(path.Root("match_values"),
 					fmt.Sprintf("%q is not a known tool behaviour", s.ValueString()),
 					"A tool_behavior rule matches one of: "+strings.Join(mcpRuleToolBehaviors, ", ")+".")
@@ -374,8 +384,26 @@ func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resour
 		}
 	}
 
+	// A host value is a bare hostname. The platform refuses a scheme, port, path,
+	// query or userinfo with 400 (EndpointMcpRuleAdminService.canonicalizeValue);
+	// by apply time other resources in the run may already exist.
+	if kind == "host" && !matchValues.IsUnknown() && !matchValues.IsNull() {
+		for _, v := range matchValues.Elements() {
+			s, ok := v.(types.String)
+			if !ok || s.IsUnknown() || s.IsNull() {
+				continue
+			}
+			if strings.ContainsAny(s.ValueString(), "/?#@:") {
+				resp.Diagnostics.AddAttributeError(path.Root("match_values"),
+					fmt.Sprintf("%q is not a bare hostname", s.ValueString()),
+					"A host value has no scheme, port, path, query or userinfo. Use match_kind "+
+						"\"url_prefix\" to match a URL.")
+			}
+		}
+	}
+
 	hasSteerTarget := !steerToURL.IsUnknown() && !isUnsetString(steerToURL)
-	remote := contains(mcpRuleRemoteKinds, kind)
+	remote := slices.Contains(mcpRuleRemoteKinds, kind)
 	if hasSteerTarget && !remote {
 		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
 			fmt.Sprintf("steer_to_url is remote-only; omit it on a %q rule", kind),
@@ -393,7 +421,7 @@ func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resour
 			"Point it at this tenant's MCP gateway URL ending in the route of an enabled MCP server.")
 	}
 
-	if actionKnown && act == "allow" && contains(mcpRuleLocalKinds, kind) {
+	if actionKnown && act == "allow" && slices.Contains(mcpRuleLocalKinds, kind) {
 		if !deviceGroupIDs.IsUnknown() && len(deviceGroupIDs.Elements()) > 0 {
 			resp.Diagnostics.AddAttributeError(path.Root("device_group_ids"),
 				"A local \"allow\" rule cannot be narrowed by device_group_ids yet",
@@ -436,6 +464,7 @@ func (r *EndpointMCPRuleResource) Create(ctx context.Context, req resource.Creat
 	// match_values is Required, so state must hold the configured spelling; the
 	// platform's canonical form lives in stored_match_values.
 	state.MatchValues = plan.MatchValues
+	state.keepEmptyForms(plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -457,6 +486,7 @@ func (r *EndpointMCPRuleResource) Read(ctx context.Context, req resource.ReadReq
 	}
 	refreshed := endpointMCPRuleToModel(tenantID, rule, &resp.Diagnostics)
 	refreshed.MatchValues = reconcileMatchValues(state, refreshed)
+	refreshed.keepEmptyForms(state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -485,6 +515,7 @@ func (r *EndpointMCPRuleResource) Update(ctx context.Context, req resource.Updat
 	}
 	refreshed := endpointMCPRuleToModel(tenantID, rule, &resp.Diagnostics)
 	refreshed.MatchValues = plan.MatchValues
+	refreshed.keepEmptyForms(plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -503,17 +534,9 @@ func (r *EndpointMCPRuleResource) Delete(ctx context.Context, req resource.Delet
 }
 
 func (r *EndpointMCPRuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.SplitN(req.ID, "/", 2)
-	var tenantID, ruleID string
-	switch len(parts) {
-	case 1:
-		tenantID, ruleID = r.tenantID, parts[0]
-	case 2:
-		tenantID, ruleID = parts[0], parts[1]
-	}
-	if tenantID == "" {
-		resp.Diagnostics.AddError("Cannot determine tenant for import",
-			"Pass `<tenant_id>/<rule_id>` or configure `tenant_id` on the provider block.")
+	tenantID, ruleID, diags := parseTenantScopedImportID(req.ID, r.tenantID, "rule")
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), tenantID)...)
@@ -590,7 +613,7 @@ func endpointMCPRuleToModel(tenantID string, rule *adminapi.EndpointMCPRule, dia
 	}
 	m.ID = types.StringValue(tenantID + "/" + m.RuleID.ValueString())
 	m.Name = strPtrToTF(rule.Name)
-	m.Description = strPtrToTF(rule.Description)
+	m.Description = emptyStringAsNull(rule.Description)
 	m.Priority = int32PtrToTF(rule.Priority)
 	m.Enabled = boolPtrOrDefault(rule.Enabled)
 	m.MatchKind = strPtrToTF(rule.MatchKind)
@@ -598,8 +621,8 @@ func endpointMCPRuleToModel(tenantID string, rule *adminapi.EndpointMCPRule, dia
 	m.MatchValues = m.StoredMatchValues
 	m.Action = strPtrToTF(rule.Action)
 	m.SteerToURL = strPtrToTF(rule.SteerToUrl)
-	m.AppBundleIDs = stringSliceToList(rule.AppBundleIds)
-	m.DeviceGroupIDs = uuidSliceToList(rule.DeviceGroupIds)
+	m.AppBundleIDs = emptyListAsNull(stringSliceToList(rule.AppBundleIds))
+	m.DeviceGroupIDs = emptyListAsNull(uuidSliceToList(rule.DeviceGroupIds))
 	m.CriteriaCombinator = strPtrToTF(rule.CriteriaCombinator)
 	m.Criteria = endpointRuleCriteria(rule.Criteria, diags)
 	m.Enforcement = enumPtrToTF(rule.Enforcement)
@@ -615,36 +638,17 @@ func endpointMCPRuleToModel(tenantID string, rule *adminapi.EndpointMCPRule, dia
 	return m
 }
 
-// ModifyPlan warns when an apply is about to delete a rule's criteria: criteria
-// narrow a rule, so removing them widens it to every user in the targeted
-// groups. Same reasoning and same unknown handling as the destination rule.
+// ModifyPlan warns when an apply is about to delete a rule's criteria; see
+// warnOnCriteriaRemoval.
 func (r *EndpointMCPRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
-		return
-	}
-	var stateCriteria, planCriteria types.List
-	var name types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("criteria"), &stateCriteria)...)
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("criteria"), &planCriteria)...)
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &name)...)
-	if resp.Diagnostics.HasError() || planCriteria.IsUnknown() {
-		return
-	}
-	if len(stateCriteria.Elements()) > 0 && len(planCriteria.Elements()) == 0 {
-		resp.Diagnostics.AddAttributeWarning(path.Root("criteria"),
-			"This apply removes the rule's subject criteria",
-			fmt.Sprintf("Rule %q currently has %d criteria group(s) and the plan has none. Criteria "+
-				"NARROW a rule to a population, so removing them widens it to every user in the "+
-				"targeted device groups.\n\nIf you meant to keep them, add the `criteria` block back "+
-				"to the config.", name.ValueString(), len(stateCriteria.Elements())))
-	}
+	warnOnCriteriaRemoval(ctx, req, resp,
+		"\n\nIf you meant to keep them, add the `criteria` block back to the config.")
 }
 
-func contains(list []string, v string) bool {
-	for _, s := range list {
-		if s == v {
-			return true
-		}
-	}
-	return false
+// keepEmptyForms restores an empty form the config wrote explicitly for the
+// Optional, non-Computed attributes, which endpointMCPRuleToModel reads as null.
+func (m *EndpointMCPRuleResourceModel) keepEmptyForms(prior EndpointMCPRuleResourceModel) {
+	m.Description = keepEmptyString(prior.Description, m.Description)
+	m.AppBundleIDs = keepEmptyList(prior.AppBundleIDs, m.AppBundleIDs)
+	m.DeviceGroupIDs = keepEmptyList(prior.DeviceGroupIDs, m.DeviceGroupIDs)
 }

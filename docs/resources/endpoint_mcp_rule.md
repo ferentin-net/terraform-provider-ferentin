@@ -10,6 +10,8 @@ description: |-
   Import
   
   terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>
+  
+  An import has no configured spelling of match_values, so it takes the platform's canonical form. On an allow or steer rule the first plan after import may then show match_values changing to the spelling in your config; applying it changes nothing on the platform.
 ---
 
 # ferentin_endpoint_mcp_rule (Resource)
@@ -30,6 +32,8 @@ Call-time and behaviour rules support `block` only. Whether a call-time `block` 
 ```
 terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>
 ```
+
+An import has no configured spelling of `match_values`, so it takes the platform's canonical form. On an `allow` or `steer` rule the first plan after import may then show `match_values` changing to the spelling in your config; applying it changes nothing on the platform.
 
 ## Example Usage
 

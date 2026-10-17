@@ -436,17 +436,9 @@ func (r *EndpointDestinationRuleResource) Delete(ctx context.Context, req resour
 }
 
 func (r *EndpointDestinationRuleResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
-	parts := strings.SplitN(req.ID, "/", 2)
-	var tenantID, ruleID string
-	switch len(parts) {
-	case 1:
-		tenantID, ruleID = r.tenantID, parts[0]
-	case 2:
-		tenantID, ruleID = parts[0], parts[1]
-	}
-	if tenantID == "" {
-		resp.Diagnostics.AddError("Cannot determine tenant for import",
-			"Pass `<tenant_id>/<rule_id>` or configure `tenant_id` on the provider block.")
+	tenantID, ruleID, diags := parseTenantScopedImportID(req.ID, r.tenantID, "rule")
+	resp.Diagnostics.Append(diags...)
+	if resp.Diagnostics.HasError() {
 		return
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("tenant_id"), tenantID)...)
@@ -570,43 +562,12 @@ func endpointRuleCriteria(criteria *[]map[string]interface{}, diags *diag.Diagno
 	return models
 }
 
-// ModifyPlan warns when an apply is about to delete a rule's criteria.
-//
-// Criteria NARROW a rule to a population, so removing them is a widening:
-// "legal may use ChatGPT" becomes "everyone may". The plan diff already shows
-// the removal, but under an allowlist posture (`default_destination_action =
-// "block"`) that one line is the difference between a scoped exception and a
-// fleet-wide one — worth more than a `-` in the diff.
-// Criteria are read as types.List rather than through the model: they are a Go
-// slice there, and an unknown (criteria computed from something not yet
-// created) cannot be reflected into one — see the note on ValidateConfig.
+// ModifyPlan warns when an apply is about to delete a rule's criteria; see
+// warnOnCriteriaRemoval. Under an allowlist posture (`default_destination_action
+// = "block"`) that warning is the difference between a scoped exception and a
+// fleet-wide one.
 func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
-	// Create (no prior state) and destroy (no plan) are not widenings.
-	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
-		return
-	}
-	var stateCriteria, planCriteria types.List
-	var name types.String
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("criteria"), &stateCriteria)...)
-	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("criteria"), &planCriteria)...)
-	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &name)...)
-	if resp.Diagnostics.HasError() {
-		return
-	}
-	// An unknown plan value may resolve to anything, including the same criteria.
-	// Warning here would cry wolf on every plan that computes them.
-	if planCriteria.IsUnknown() {
-		return
-	}
-	if len(stateCriteria.Elements()) > 0 && len(planCriteria.Elements()) == 0 {
-		resp.Diagnostics.AddAttributeWarning(path.Root("criteria"),
-			"This apply removes the rule's subject criteria",
-			fmt.Sprintf("Rule %q currently has %d criteria group(s) and the plan has none. Criteria "+
-				"NARROW a rule to a population, so removing them widens it to every user in the "+
-				"targeted device groups — an `allow` rule scoped to one department becomes an allow "+
-				"for everyone.\n\nIf you meant to keep them, add the `criteria` block back to the "+
-				"config (criteria authored in the admin console are not preserved for you — Terraform "+
-				"owns this field now).",
-				name.ValueString(), len(stateCriteria.Elements())))
-	}
+	warnOnCriteriaRemoval(ctx, req, resp,
+		"\n\nIf you meant to keep them, add the `criteria` block back to the config (criteria "+
+			"authored in the admin console are not preserved for you — Terraform owns this field now).")
 }
