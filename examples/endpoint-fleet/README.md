@@ -1,7 +1,7 @@
 # Endpoint policy for a managed fleet
 
-Device groups + on-device destination rules + posture, staged from **observe**
-to **enforce** with a single variable. This is the endpoint half of
+Device groups + on-device destination rules + MCP rules + posture, staged from
+**observe** to **enforce** with a single variable. This is the endpoint half of
 [`../complete/`](../complete/) on its own, with the rollout mechanics spelled
 out.
 
@@ -10,11 +10,11 @@ out.
 ```
 examples/endpoint-fleet/
 ├── README.md
-├── main.tf        # groups, the priority ladder, posture
-└── variables.tf   # stage selector + the group / provider / host inputs
+├── main.tf        # groups, the two rule ladders, posture
+└── variables.tf   # stage + call-time enforcement selectors, group / provider / host inputs
 ```
 
-## The three moving parts
+## The four moving parts
 
 1. **[`ferentin_device_group`](../../docs/resources/device_group.md)** — the
    targeting dimension. Created with `for_each` over a map, so adding a
@@ -28,7 +28,7 @@ examples/endpoint-fleet/
 
    | Priority | Action | Rule | Scope |
    | --- | --- | --- | --- |
-   | 5 | `allow` | OpenAI for legal & compliance | engineering group, narrowed by criteria — **bypasses service-edge**, see below |
+   | 5 | `allow` | OpenAI for legal & compliance | engineering group, narrowed by criteria and to compliant devices (`posture_predicate`) — **bypasses service-edge**, see below |
    | 10 | `block` | ChatGPT desktop app | contractors group, by bundle id |
    | 20 | `steer` | Anthropic → service-edge | fleet-wide |
    | 30 | `steer` | OpenAI → service-edge | fleet-wide |
@@ -37,10 +37,22 @@ examples/endpoint-fleet/
    Specific-and-restrictive sits above broad-and-permissive, because the first
    match ends evaluation.
 
-3. **[`ferentin_endpoint_policy_settings`](../../docs/resources/endpoint_policy_settings.md)**
-   — what happens when **no** rule matches, plus the unapproved-MCP action and
-   the DNS/QUIC flags. One tenant-default row (no `device_group_id`) that every
-   device including ungrouped ones resolves through, plus per-group overrides.
+3. **[`ferentin_endpoint_mcp_rule`](../../docs/resources/endpoint_mcp_rule.md)**
+   — allow / block for MCP servers and for what AI tools may do, a second
+   first-match-wins ladder:
+
+   | Priority | Action | Rule | Scope |
+   | --- | --- | --- | --- |
+   | 10 | `block` | Unvetted remote MCP hosts (`host`) | fleet-wide |
+   | 20 | `allow` | Internal local MCP packages (`package`) | tenant-wide (a local `allow` cannot be narrowed yet) |
+   | 30 | `block` | Shell from AI tools (`tool_behavior`) | contractors group |
+
+4. **[`ferentin_endpoint_policy_settings`](../../docs/resources/endpoint_policy_settings.md)**
+   — what happens when **no** rule matches, plus the unapproved-MCP and
+   unapproved-agent actions, the DNS/QUIC flags, and whether call-time MCP
+   blocks deny or only count (`hook_rule_enforcement`). One tenant-default row
+   (no `device_group_id`) that every device including ungrouped ones resolves
+   through, plus per-group overrides.
 
 ## Rolling it out
 
@@ -55,11 +67,11 @@ terraform apply -var enforcement_stage=steer        # rewrite MCP configs to the
 terraform apply -var enforcement_stage=allowlist    # unmatched traffic is blocked
 ```
 
-| Stage | `unapproved_mcp_action` | `default_destination_action` | `mcp_gateway_url` | DNS/QUIC flags |
-| --- | --- | --- | --- | --- |
-| `observe` | `report_only` | `allow` | unset | off |
-| `steer` | `report_only` | `allow` | set | off |
-| `allowlist` | `quarantine` | `block` | set | on |
+| Stage | `unapproved_mcp_action` | `unapproved_agent_action` | `default_destination_action` | `mcp_gateway_url` | DNS/QUIC flags |
+| --- | --- | --- | --- | --- | --- |
+| `observe` | `report_only` | `report_only` | `allow` | unset | off |
+| `steer` | `report_only` | `report_only` | `allow` | set | off |
+| `allowlist` | `quarantine` | `block` | `block` | set | on |
 
 Groups in `strict_groups` (contractors by default) get the strict override from
 the first apply, regardless of stage — a useful way to pilot enforcement on the
@@ -68,6 +80,22 @@ population where the blast radius is smallest.
 **Before selecting `allowlist`, confirm the rules cover every sanctioned
 provider.** At that stage they become the allowlist; anything unmatched is
 blocked on the device.
+
+### Call-time enforcement
+
+`hook_rule_enforcement` is its own variable, not part of the stage, because the
+platform refuses `enforce` (409) until every active device in a scope runs an
+agent build that enforces call-time rules. At the default `shadow`, the
+`tool_behavior` block above counts the shell calls it would deny and denies
+nothing. Check `hookRuleEnforcementCoverage` on the posture fleet status in the
+console, then:
+
+```sh
+terraform apply -var hook_rule_enforcement=enforce
+```
+
+The provider reports a refused move to `enforce` as a fleet-readiness error,
+not a conflict.
 
 ## Sharp edges
 
@@ -93,6 +121,21 @@ provider warns on this, and the plan shows the removal. Read both.
 bundle but will not match a rule carrying them until the on-device user
 principal lands (platform#2014). That is fail-closed for `allow` and `steer` —
 and it means a criteria-scoped `block` does not block.
+
+**The posture condition fails the plan rather than vanishing.** If a rule
+has a `posture_predicate` (for example one set in the console) and the config
+leaves it out, `plan` fails and says how to keep it (`true`) or remove it
+(`false`). Removing it widens the rule to non-compliant devices, so the
+provider won't do it silently.
+
+**A local MCP `allow` is tenant-wide.** `device_group_ids` and `criteria` are
+refused on a `package` or `argv_contains` allow until devices carry an
+authenticated identity when a local server is admitted. Narrowing a `block` is
+fine, as the shell rule does.
+
+**`local_mcp_block_enabled` is absolute.** On the contractors override it
+beats the priority-20 allow: contractors run no local MCP servers at all. Turn
+it off for a group to let rules decide there.
 
 **Destroying the tenant-default posture does not reset it.** The platform
 refuses to delete a row every device resolves through, so Terraform drops it
@@ -124,6 +167,7 @@ the tenant-default posture row, which cannot be cleanly destroyed afterwards.
 ```sh
 terraform import 'ferentin_device_group.this["engineering"]'          <tenant_id>/<group_id>
 terraform import ferentin_endpoint_destination_rule.block_unsanctioned <tenant_id>/<rule_id>
+terraform import ferentin_endpoint_mcp_rule.block_unvetted_remote      <tenant_id>/<rule_id>
 terraform import ferentin_endpoint_policy_settings.default             <tenant_id>
 terraform import 'ferentin_endpoint_policy_settings.override["contractors"]' <tenant_id>/<device_group_id>
 ```

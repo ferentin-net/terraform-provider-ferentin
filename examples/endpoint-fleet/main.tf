@@ -1,13 +1,16 @@
 # Endpoint policy for a managed macOS fleet, staged from observe to enforce.
 #
-# Three moving parts:
+# Four moving parts:
 #
 #   1. Device groups     — the targeting dimension for everything else.
 #   2. Destination rules — allow / block / steer per AI destination, evaluated
 #                          ON-DEVICE, first match wins by ascending priority.
-#   3. Posture           — what happens to traffic and to unapproved MCP server
-#                          configs when NO rule matches. One tenant-default row
-#                          plus optional per-group overrides.
+#   3. MCP rules         — allow / block for MCP servers (remote and local) and
+#                          for what AI tools may do (tool behaviours).
+#   4. Posture           — what happens to traffic and to unapproved MCP server
+#                          configs and agents when NO rule matches, and whether
+#                          call-time MCP blocks deny or only count. One
+#                          tenant-default row plus optional per-group overrides.
 #
 # `var.enforcement_stage` moves the whole fleet along the rollout without
 # rewriting the rules: the rule set stays constant, the posture tightens.
@@ -58,18 +61,21 @@ locals {
   stage = {
     observe = {
       unapproved_mcp_action      = "report_only"
+      unapproved_agent_action    = "report_only"
       default_destination_action = "allow"
       rewrite_mcp_configs        = false
       harden_network             = false
     }
     steer = {
       unapproved_mcp_action      = "report_only"
+      unapproved_agent_action    = "report_only"
       default_destination_action = "allow"
       rewrite_mcp_configs        = true
       harden_network             = false
     }
     allowlist = {
       unapproved_mcp_action      = "quarantine"
+      unapproved_agent_action    = "block"
       default_destination_action = "block"
       rewrite_mcp_configs        = true
       harden_network             = true
@@ -111,6 +117,12 @@ locals {
 #    but will not match a rule that carries them until the on-device user
 #    principal lands (platform#2014). Today this rule is inert — fail-closed for
 #    an `allow`, so legal falls through to the rules below until then.
+#
+# The posture condition narrows it further, to compliant devices only.
+# ~> Like criteria, removing it widens the rule. A config that leaves out a
+#    condition the rule has (say one added in the console) fails the plan
+#    rather than silently clearing it: set `require_compliant = false` to
+#    remove it on purpose.
 resource "ferentin_endpoint_destination_rule" "allow_openai_legal" {
   name        = "allow-openai-legal"
   description = "Legal and compliance may use OpenAI directly"
@@ -133,6 +145,8 @@ resource "ferentin_endpoint_destination_rule" "allow_openai_legal" {
       }]
     },
   ]
+
+  posture_predicate = { require_compliant = true }
 }
 
 # 10. Contractors may not run the ChatGPT desktop app. Scoped by bundle id: a
@@ -192,7 +206,51 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
   action            = "block"
 }
 
-# --- 3. Posture ----------------------------------------------------------
+# --- 3. MCP rules --------------------------------------------------------
+#
+# A separate ladder from the destination rules, also first-match-wins:
+#
+#    10    block   unvetted remote MCP hosts        (fleet-wide)
+#    20    allow   internal local MCP packages      (tenant-wide only)
+#    30    block   shell from AI tools              (contractors)
+#
+# The platform normalizes match values (hosts are lowercased, allow values
+# canonicalized); the configured spelling stays in state, so that is not drift.
+
+resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
+  name         = "block-unvetted-remote-mcp"
+  priority     = 10
+  match_kind   = "host"
+  match_values = var.blocked_mcp_hosts
+  action       = "block"
+}
+
+# A local `allow` cannot be narrowed by device_group_ids or criteria yet:
+# devices carry no authenticated identity when a local server is admitted, so
+# the narrowing would be ignored and the allow would apply tenant-wide. The
+# provider fails the plan if you try. local_mcp_block_enabled on a group
+# override (below) beats this allow for that group.
+resource "ferentin_endpoint_mcp_rule" "allow_internal_packages" {
+  name         = "allow-internal-mcp-packages"
+  priority     = 20
+  match_kind   = "package"
+  match_values = var.allowed_local_mcp_packages
+  action       = "allow"
+}
+
+# Tool behaviours expand into call-time rules for every AI tool that can
+# express them, and support `block` only. Whether this denies the call or only
+# counts it is hook_rule_enforcement on the posture.
+resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
+  name             = "block-agent-shell-contractors"
+  priority         = 30
+  match_kind       = "tool_behavior"
+  match_values     = ["shell"]
+  action           = "block"
+  device_group_ids = [local.group_ids["contractors"]]
+}
+
+# --- 4. Posture ----------------------------------------------------------
 
 # Tenant default. No device_group_id — every device, including ungrouped ones,
 # resolves through this row.
@@ -210,7 +268,12 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
 #    `enforcement_stage = "observe"` first, then destroy.
 resource "ferentin_endpoint_policy_settings" "default" {
   unapproved_mcp_action      = local.stage.unapproved_mcp_action
+  unapproved_agent_action    = local.stage.unapproved_agent_action
   default_destination_action = local.stage.default_destination_action
+
+  # Call-time MCP blocks: `shadow` counts, `enforce` denies. Kept off the stage
+  # map because the platform refuses `enforce` until the fleet supports it.
+  hook_rule_enforcement = var.hook_rule_enforcement
 
   # From the `steer` stage on, approved MCP client configs found on the device
   # are rewritten to point at the tenant gateway. Null at `observe` leaves the
@@ -235,12 +298,20 @@ resource "ferentin_endpoint_policy_settings" "override" {
   device_group_id = local.group_ids[each.key]
 
   unapproved_mcp_action      = "quarantine"
+  unapproved_agent_action    = "block"
   mcp_gateway_url            = var.mcp_gateway_url
   default_destination_action = "block"
+  hook_rule_enforcement      = var.hook_rule_enforcement
 
   ech_strip_enabled  = true
   doh_block_enabled  = true
   quic_block_enabled = true
+
+  # No local (stdio) MCP servers at all, beating even the allow rule above,
+  # and no port-443 flows to bare public IPs. Both need the fleet on an agent
+  # that implements them; an older agent keeps its last-known-good policy.
+  local_mcp_block_enabled    = true
+  unnamed_flow_block_enabled = true
 }
 
 # --- Outputs -------------------------------------------------------------
@@ -261,6 +332,17 @@ output "rule_ladder" {
       ],
       values(ferentin_endpoint_destination_rule.steer),
     ) : format("%04d %-6s %s", r.priority, r.action, r.name)
+  ])
+}
+
+output "mcp_rule_ladder" {
+  description = "MCP rules in evaluation order. First match wins, so read top down."
+  value = sort([
+    for r in [
+      ferentin_endpoint_mcp_rule.block_unvetted_remote,
+      ferentin_endpoint_mcp_rule.allow_internal_packages,
+      ferentin_endpoint_mcp_rule.block_shell_contractors,
+    ] : format("%04d %-6s %s", r.priority, r.action, r.name)
   ])
 }
 

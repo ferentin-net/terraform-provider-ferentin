@@ -123,8 +123,8 @@ resource "ferentin_mcp_policy" "salesforce_allow" {
 }
 
 # --- Data & Content Protection (DLP) policy -----------------------------
-# Tokenize US PII and log exfiltration URLs across LLM and MCP traffic. The
-# profile name is pulled from the catalog data source for typo-safety.
+# Tokenize US PII and log exfiltration URLs across LLM, MCP and A2A traffic.
+# The profile name is pulled from the catalog data source for typo-safety.
 data "ferentin_data_protection_profile" "us_pii" {
   name = "US_PII"
 }
@@ -153,6 +153,12 @@ resource "ferentin_data_protection_policy" "baseline" {
   apply_to_llm_input  = true
   apply_to_llm_output = true
   apply_to_mcp_output = true
+
+  # Messages to and replies from A2A agents. A file that can't be scanned is
+  # refused.
+  apply_to_a2a_input          = true
+  apply_to_a2a_output         = true
+  a2a_unscannable_file_action = "block"
 }
 
 # --- OTEL sink + policy --------------------------------------------------
@@ -260,6 +266,27 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
   action            = "block"
 }
 
+# --- Endpoint: MCP rules -------------------------------------------------
+# A second on-device ladder, for MCP servers and what AI tools may do. Here:
+# block an unvetted remote MCP server everywhere, and block shell execution by
+# AI tools for contractors (a tool_behavior rule; block only).
+resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
+  name         = "block-unvetted-remote-mcp"
+  priority     = 10
+  match_kind   = "host"
+  match_values = ["mcp.unvetted.example"]
+  action       = "block"
+}
+
+resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
+  name             = "block-agent-shell-contractors"
+  priority         = 20
+  match_kind       = "tool_behavior"
+  match_values     = ["shell"]
+  action           = "block"
+  device_group_ids = [ferentin_device_group.contractors.group_id]
+}
+
 # --- Endpoint: posture ---------------------------------------------------
 # Tenant default (no device_group_id): observe and report, enforce nothing.
 # This is the visibility-first posture — tightening is a deliberate act.
@@ -270,7 +297,12 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
 # down.
 resource "ferentin_endpoint_policy_settings" "default" {
   unapproved_mcp_action      = "report_only"
+  unapproved_agent_action    = "report_only"
   default_destination_action = "allow"
+
+  # Call-time MCP blocks (the shell rule above) count but deny nothing. The
+  # platform refuses "enforce" until the fleet runs agents that support it.
+  hook_rule_enforcement = "shadow"
 
   # Approved MCP client configs on the device are rewritten to point here.
   mcp_gateway_url = var.mcp_gateway_url
@@ -281,8 +313,9 @@ resource "ferentin_endpoint_policy_settings" "default" {
 resource "ferentin_endpoint_policy_settings" "contractors" {
   device_group_id = ferentin_device_group.contractors.group_id
 
-  unapproved_mcp_action = "quarantine"
-  mcp_gateway_url       = var.mcp_gateway_url
+  unapproved_mcp_action   = "quarantine"
+  unapproved_agent_action = "block"
+  mcp_gateway_url         = var.mcp_gateway_url
 
   # With "block", the rules above become an allowlist for this group — verify
   # they cover every sanctioned provider before flipping this.
@@ -291,6 +324,10 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
   ech_strip_enabled  = true
   doh_block_enabled  = true
   quic_block_enabled = true
+
+  # No local (stdio) MCP servers for contractors. Needs the fleet on an agent
+  # that implements it; an older agent keeps its last-known-good policy.
+  local_mcp_block_enabled = true
 }
 
 # --- Outputs (handy for downstream Terraform / CI) ----------------------
