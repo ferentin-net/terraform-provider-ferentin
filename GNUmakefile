@@ -91,6 +91,12 @@ test:
 testacc:
 	TF_ACC=1 go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
+# The local dev admin-api, used when FERENTIN_ENDPOINT is unset. The preflight
+# prefers /usr/bin/curl, which (like Go on macOS) checks the system keychain; it
+# warns only when the provider would verify (FERENTIN_INSECURE_SKIP_VERIFY is
+# not 1 or true, the provider's own rule).
+LOCAL_ENDPOINT ?= https://api.local.ferentin.test
+
 # Acceptance run against LOCAL DEV (the `nginx` profile on this machine).
 #
 # This is the acceptance gate today: the platform has only local dev and
@@ -118,12 +124,6 @@ testacc:
 # fix, misreported as `invalid_client`, which looks exactly like bad
 # credentials). The SDK now backs off on 429, but a subset is still faster and
 # does not spend a shared budget. FERENTIN_TOKEN avoids minting entirely.
-# The local dev admin-api, used when FERENTIN_ENDPOINT is unset. The preflight
-# prefers /usr/bin/curl, which (like Go on macOS) checks the system keychain; it
-# warns only when the provider would verify (FERENTIN_INSECURE_SKIP_VERIFY is
-# not 1 or true, the provider's own rule).
-LOCAL_ENDPOINT ?= https://api.local.ferentin.test
-
 testacc-local:
 	@test -n "$$FERENTIN_TENANT_ID" || { echo "FERENTIN_TENANT_ID must be set"; exit 1; }
 	@test -n "$$FERENTIN_TOKEN" -o -n "$$FERENTIN_CLIENT_ID" || \
