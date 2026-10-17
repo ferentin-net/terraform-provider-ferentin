@@ -108,7 +108,7 @@ read-only data sources.
 | `ferentin_edge_site` | `edge:rw` | `EdgeSiteController` |
 | `ferentin_llm_provider` | `provider:rw` | `ProviderInstanceController` |
 | `ferentin_mcp_provider`, `ferentin_mcp_server`, `ferentin_mcp_server_from_card` | `mcp:servers:rw` | `McpTenantProviderController`, `McpProviderInstanceAdminController` |
-| `ferentin_llm_policy`, `ferentin_mcp_policy`, `ferentin_endpoint_destination_rule`, `ferentin_endpoint_policy_settings` | `policy:rw` | `LlmPolicyController`, `McpPolicyController`, `EndpointPolicyController` |
+| `ferentin_llm_policy`, `ferentin_mcp_policy`, `ferentin_endpoint_destination_rule`, `ferentin_endpoint_mcp_rule`, `ferentin_endpoint_policy_settings` | `policy:rw` | `LlmPolicyController`, `McpPolicyController`, `EndpointPolicyController`, `EndpointMcpRuleController` |
 | `ferentin_data_protection_policy` | `policy:rw` (+ `policy:t` to test) | `DataProtectionPolicyController` |
 | `ferentin_otel_sink`, `ferentin_otel_policy` | `otel:rw` | `OtelSinkController`, `OtelPolicyController` |
 | `ferentin_ai_agent` | `clients:agent:rw` | `AdminOidcClientController` |

@@ -63,6 +63,7 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_workload_identity_provider` | Inbound trust config for cloud-issued workload JWTs (AWS / GCP / Azure / GitHub …). |
 | `ferentin_device_group` | Device group — the policy-scoping unit endpoint policy targets. |
 | `ferentin_endpoint_destination_rule` | Allow / block / steer rule for AI traffic on managed devices (macOS endpoint agent). |
+| `ferentin_endpoint_mcp_rule` | Allow / block / steer rule for MCP servers and tool calls on managed devices: remote and local servers, tool calls, and tool behaviours. |
 | `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved-MCP action, gateway target, DNS/QUIC flags. Tenant default or per-device-group override. |
 
 | Data source | Purpose |

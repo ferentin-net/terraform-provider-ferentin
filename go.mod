@@ -5,7 +5,7 @@ go 1.27.0
 toolchain go1.27.2
 
 require (
-	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261017144140-813f608f2219
+	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261017151358-39f26e47767e
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/terraform-plugin-docs v0.25.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
