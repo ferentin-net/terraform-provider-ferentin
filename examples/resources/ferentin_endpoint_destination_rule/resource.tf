@@ -104,3 +104,26 @@ resource "ferentin_endpoint_destination_rule" "allow_chatgpt_for_legal" {
     },
   ]
 }
+
+# 5. Allow Claude Desktop only on devices that report compliant (SIP enabled,
+#    full boot security, content filter attached). A device whose posture is
+#    unknown counts as not compliant, so it falls through to later rules.
+#
+#    NOTE: a posture condition raises the endpoint policy section of every
+#    device that receives this rule to 1.4.0. Agents older than that refuse the
+#    section and keep their last-known-good policy until upgraded.
+resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices" {
+  name     = "allow-claude-compliant"
+  priority = 15
+
+  destination_kind = "ai_provider"
+  catalog_slug     = "anthropic"
+  action           = "allow"
+
+  app_bundle_ids   = ["com.anthropic.claudefordesktop"]
+  device_group_ids = [ferentin_device_group.engineering.group_id]
+
+  posture_predicate = {
+    require_compliant = true
+  }
+}

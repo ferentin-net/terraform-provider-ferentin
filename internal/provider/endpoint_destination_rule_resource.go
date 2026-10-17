@@ -23,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
 
 // EndpointDestinationRuleResource is the `ferentin_endpoint_destination_rule`
@@ -61,6 +62,8 @@ type EndpointDestinationRuleResourceModel struct {
 	CriteriaCombinator types.String          `tfsdk:"criteria_combinator"`
 	Criteria           []PolicyCriteriaModel `tfsdk:"criteria"`
 
+	PosturePredicate *EndpointPosturePredicateModel `tfsdk:"posture_predicate"`
+
 	RuleID    types.String `tfsdk:"rule_id"`
 	CreatedAt types.String `tfsdk:"created_at"`
 	UpdatedAt types.String `tfsdk:"updated_at"`
@@ -71,6 +74,12 @@ type EndpointDestinationRuleResourceModel struct {
 	ManagedByClientID types.String `tfsdk:"managed_by_client_id"`
 	ManagedByModule   types.String `tfsdk:"managed_by_module"`
 	LastModifiedBy    types.String `tfsdk:"last_modified_by"`
+}
+
+// EndpointPosturePredicateModel is the rule's device security-posture
+// condition (#447 WS1). A pointer on the model: nil is "no condition".
+type EndpointPosturePredicateModel struct {
+	RequireCompliant types.Bool `tfsdk:"require_compliant"`
 }
 
 func NewEndpointDestinationRuleResource() resource.Resource {
@@ -310,6 +319,34 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 				ValueExample:     "`jsonencode(\"legal\")`",
 			}),
 
+			// Optional, NOT Computed, for the same reason as device_group_ids: the
+			// PUT replaces the predicate, so a config without one must plan the
+			// clear rather than hide it. A predicate set in the console reads into
+			// state, and the plan then shows (and warns about) its removal.
+			"posture_predicate": schema.SingleNestedAttribute{
+				MarkdownDescription: "Device security-posture condition that **narrows** the rule to " +
+					"devices meeting it. Unset = the rule matches regardless of the device's posture.\n\n" +
+					"Evaluated on the device. A device whose posture is unknown counts as not compliant " +
+					"for an `allow` rule, and does not escape a `block` rule.\n\n" +
+					"~> **Removing the condition widens the rule.** An `allow` or `steer` rule then " +
+					"applies to non-compliant devices too. A condition set in the admin console shows up " +
+					"in the plan as a removal unless the config declares it; the provider warns about it " +
+					"at plan time.\n\n" +
+					"~> **Agent version.** An enabled rule with a posture condition raises the endpoint " +
+					"policy section of every device that receives it to version `1.4.0`. Agents older than that " +
+					"refuse the section and keep enforcing their last-known-good policy, so they stop " +
+					"picking up endpoint policy changes until upgraded.",
+				Optional: true,
+				Attributes: map[string]schema.Attribute{
+					"require_compliant": schema.BoolAttribute{
+						MarkdownDescription: "Match only devices currently reporting compliant (SIP " +
+							"enabled, full boot security, content filter attached). `false` is the same " +
+							"as no condition: the platform stores it as none.",
+						Required: true,
+					},
+				},
+			},
+
 			"rule_id": schema.StringAttribute{
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
@@ -376,6 +413,7 @@ func (r *EndpointDestinationRuleResource) Create(ctx context.Context, req resour
 	state := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
 	state.keepEmptyForms(plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
+	checkPosturePredicateStored(plan, state, &resp.Diagnostics)
 }
 
 func (r *EndpointDestinationRuleResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
@@ -428,6 +466,7 @@ func (r *EndpointDestinationRuleResource) Update(ctx context.Context, req resour
 	refreshed := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
 	refreshed.keepEmptyForms(plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
+	checkPosturePredicateStored(plan, refreshed, &resp.Diagnostics)
 }
 
 func (r *EndpointDestinationRuleResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
@@ -499,6 +538,15 @@ func (m *EndpointDestinationRuleResourceModel) toWrite(ctx context.Context) (adm
 	if len(crits) > 0 {
 		body.Criteria = &crits
 	}
+
+	// Sent on every PUT, for the same full-replace reason: the platform stores
+	// an absent predicate as NULL, so leaving this out would erase a condition
+	// the config declares.
+	if p := m.PosturePredicate; p != nil && !p.RequireCompliant.IsNull() && !p.RequireCompliant.IsUnknown() {
+		body.PosturePredicate = &gen.EndpointPosturePredicateDto{
+			RequireCompliant: p.RequireCompliant.ValueBoolPointer(),
+		}
+	}
 	return body, invalidGroups, diags
 }
 
@@ -537,6 +585,7 @@ func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule
 	m.DeviceGroupIDs = emptyListAsNull(uuidSliceToList(rule.DeviceGroupIds))
 	m.CriteriaCombinator = strPtrToTF(rule.CriteriaCombinator)
 	m.Criteria = endpointRuleCriteria(rule.Criteria, diags)
+	m.PosturePredicate = posturePredicateToModel(rule.PosturePredicate)
 	m.CreatedAt = timePtrToTF(rule.CreatedAt)
 	m.UpdatedAt = timePtrToTF(rule.UpdatedAt)
 
@@ -546,6 +595,35 @@ func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule
 	m.ManagedByModule = strPtrToTF(rule.ManagedByModule)
 	m.LastModifiedBy = enumPtrToTF(rule.LastModifiedBy)
 	return m
+}
+
+// checkPosturePredicateStored fails the apply when the config requires a
+// compliant device and the platform's response has no condition. A platform
+// build without #447 WS1 ignores the field, so the rule it saved matches every
+// device; the framework's generic "inconsistent result" error would not say so.
+// State is already set, so Terraform keeps tracking (and can fix) the rule.
+func checkPosturePredicateStored(plan, got EndpointDestinationRuleResourceModel, diags *diag.Diagnostics) {
+	want := plan.PosturePredicate != nil && plan.PosturePredicate.RequireCompliant.ValueBool()
+	if !want || got.PosturePredicate != nil {
+		return
+	}
+	diags.AddAttributeError(path.Root("posture_predicate"),
+		"The platform did not store the rule's device posture condition",
+		fmt.Sprintf("Rule %q was saved, but the platform's response has no posture condition, so the "+
+			"rule now matches devices whatever their posture. The platform is probably too old to "+
+			"support `posture_predicate`. Disable or remove the rule until the platform is upgraded.",
+			plan.Name.ValueString()))
+}
+
+// posturePredicateToModel reads a predicate that constrains nothing (absent, or
+// requireCompliant false or missing) as nil. The platform stores those forms as
+// NULL anyway; keepEmptyForms restores `require_compliant = false` when the
+// config wrote it.
+func posturePredicateToModel(p *gen.EndpointPosturePredicateDto) *EndpointPosturePredicateModel {
+	if p == nil || p.RequireCompliant == nil || !*p.RequireCompliant {
+		return nil
+	}
+	return &EndpointPosturePredicateModel{RequireCompliant: types.BoolValue(true)}
 }
 
 // endpointRuleCriteria maps the stored (opaque) criteria into the shared model,
@@ -572,9 +650,10 @@ func endpointRuleCriteria(criteria *[]map[string]interface{}, diags *diag.Diagno
 }
 
 // ModifyPlan warns when an apply is about to delete a rule's criteria, device
-// groups or app filters; see warnOnCriteriaRemoval and warnOnTargetRemoval.
-// Under an allowlist posture (`default_destination_action = "block"`) that
-// warning is the difference between a scoped exception and a fleet-wide one.
+// groups, app filters or posture condition; see warnOnCriteriaRemoval,
+// warnOnTargetRemoval and warnOnPosturePredicateChange. Under an allowlist
+// posture (`default_destination_action = "block"`) that warning is the
+// difference between a scoped exception and a fleet-wide one.
 func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	warnOnCriteriaRemoval(ctx, req, resp,
 		"\n\nIf you meant to keep them, add the `criteria` block back to the config (criteria "+
@@ -588,6 +667,85 @@ func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req re
 	for _, attr := range []string{"app_bundle_ids", "app_signing_ids", "app_team_ids"} {
 		warnOnTargetRemoval(ctx, req, resp, attr, "any app, unless another app filter still narrows it", upgrade)
 	}
+	warnOnPosturePredicateChange(ctx, req, resp)
+}
+
+// warnOnPosturePredicateChange warns when an apply removes the rule's posture
+// condition (a widening, like removing criteria), and when it puts a posture
+// condition into force: added to an enabled rule, or a rule that has one being
+// enabled. cp-server projects only enabled rules, so that is the moment the
+// devices receiving the rule move to bundle section 1.4.0, which older agents
+// refuse. Unknown plan values may resolve either way, so they never warn.
+func warnOnPosturePredicateChange(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	if req.Plan.Raw.IsNull() {
+		return
+	}
+	var planPredicate types.Object
+	var planEnabled, stateEnabled types.Bool
+	var name types.String
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("posture_predicate"), &planPredicate)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("enabled"), &planEnabled)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root("name"), &name)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	planRequires, known := requiresCompliant(planPredicate)
+	if !known {
+		return
+	}
+	stateRequires := false
+	if !req.State.Raw.IsNull() {
+		var statePredicate types.Object
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("posture_predicate"), &statePredicate)...)
+		resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("enabled"), &stateEnabled)...)
+		if resp.Diagnostics.HasError() {
+			return
+		}
+		stateRequires, _ = requiresCompliant(statePredicate)
+	}
+	// enabled defaults to true, so null here is an old state, not a disabled rule.
+	isOn := func(b types.Bool) bool { return b.IsNull() || (!b.IsUnknown() && b.ValueBool()) }
+	inForce := !req.State.Raw.IsNull() && stateRequires && isOn(stateEnabled)
+
+	switch {
+	case stateRequires && !planRequires:
+		// Warned on a disabled rule too: the condition is gone either way, and
+		// enabling the rule later raises no warning of its own.
+		resp.Diagnostics.AddAttributeWarning(path.Root("posture_predicate"),
+			"This apply removes the rule's device posture condition",
+			fmt.Sprintf("Rule %q currently matches only devices that report compliant, and the plan "+
+				"removes that condition, so it will match devices whatever their posture. An `allow` "+
+				"or `steer` rule then applies to non-compliant devices too.\n\n"+
+				"If the condition was set in the admin console and you meant to keep it, add "+
+				"`posture_predicate = { require_compliant = true }` to the config. Earlier provider "+
+				"versions did not model this attribute and erased the condition on every apply that "+
+				"touched the rule, without showing it in the plan.", name.ValueString()))
+	case planRequires && !planEnabled.IsUnknown() && isOn(planEnabled) && !inForce:
+		resp.Diagnostics.AddAttributeWarning(path.Root("posture_predicate"),
+			"This apply puts a device posture condition into force",
+			fmt.Sprintf("Rule %q will be enabled with a posture condition, so it matches only devices "+
+				"that report compliant. An enabled rule with a posture condition raises the endpoint "+
+				"policy section of every device that receives it to version 1.4.0. Agents older than "+
+				"1.4.0 refuse that section and keep enforcing their last-known-good policy, so they "+
+				"stop picking up endpoint policy changes until they are upgraded. Check the agent "+
+				"versions in the targeted device groups before applying.", name.ValueString()))
+	}
+}
+
+// requiresCompliant reports whether a posture_predicate value requires a
+// compliant device, and whether that is known yet. Null means no condition.
+func requiresCompliant(p types.Object) (requires, known bool) {
+	if p.IsUnknown() {
+		return false, false
+	}
+	if p.IsNull() {
+		return false, true
+	}
+	v, ok := p.Attributes()["require_compliant"].(types.Bool)
+	if !ok || v.IsUnknown() {
+		return false, false
+	}
+	return v.ValueBool(), true
 }
 
 // keepEmptyForms restores an empty form the config wrote explicitly for the
@@ -599,4 +757,10 @@ func (m *EndpointDestinationRuleResourceModel) keepEmptyForms(prior EndpointDest
 	m.AppSigningIDs = keepEmptyList(prior.AppSigningIDs, m.AppSigningIDs)
 	m.AppTeamIDs = keepEmptyList(prior.AppTeamIDs, m.AppTeamIDs)
 	m.DeviceGroupIDs = keepEmptyList(prior.DeviceGroupIDs, m.DeviceGroupIDs)
+	// `posture_predicate = { require_compliant = false }` is the predicate's
+	// empty form: the platform stores it as no condition.
+	if p := prior.PosturePredicate; m.PosturePredicate == nil && p != nil &&
+		!p.RequireCompliant.IsNull() && !p.RequireCompliant.IsUnknown() && !p.RequireCompliant.ValueBool() {
+		m.PosturePredicate = p
+	}
 }

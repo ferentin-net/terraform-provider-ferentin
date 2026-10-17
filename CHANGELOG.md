@@ -97,6 +97,25 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **`ferentin_endpoint_destination_rule` no longer erases a device posture
+  condition set in the admin console.** The platform's update is a full
+  replace, and the provider never sent `posturePredicate`, so every apply that
+  touched a rule stored it as NULL. A rule meant for compliant devices then
+  applied to every device it targets, and the plan showed nothing. The new
+  `posture_predicate = { require_compliant = true }` attribute is sent on
+  every create and update. A condition set outside Terraform now reads into
+  state, so a config without it plans its removal instead of hiding it.
+  `terraform plan` warns when an apply removes the condition (a widening), and
+  when it puts one into force (added to an enabled rule, or a rule that has
+  one being enabled): that raises the endpoint policy section of the devices
+  that receive the rule to `1.4.0`, and older agents refuse that section and
+  keep their last-known-good policy. If the platform does not store a
+  configured condition (a build older than the field), the apply fails and
+  says so. **After upgrading, run a plan with refresh before any apply**
+  (`-refresh=false` would send the update without the condition the refresh
+  would have found), check it for these removals, and add `posture_predicate`
+  to the config for any rule that should keep its condition.
+  (ferentin-net/terraform-provider-ferentin#20)
 - **`ferentin_endpoint_destination_rule`: removing `description`,
   `destination_hosts`, `app_bundle_ids`, `app_signing_ids`, `app_team_ids` or
   `device_group_ids` from config now clears it.** These attributes were
