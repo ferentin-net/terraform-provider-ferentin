@@ -66,7 +66,9 @@ func TestAccDeviceGroup_basic(t *testing.T) {
 //
 // Step 4 removes ONLY device_group_ids. It is Optional, not Computed, so that
 // alone must plan a change; the check fails if the rule stayed narrowed to the
-// group instead of widening to every device.
+// group instead of widening to every device. Step 3 disables the rule first:
+// widened, it would steer ChatGPT on every enrolled device in the test tenant
+// to example.com until teardown.
 func TestAccEndpointDestinationRule_basic(t *testing.T) {
 	suffix := randomSuffix(t)
 	resource.Test(t, resource.TestCase{
@@ -103,15 +105,20 @@ func TestAccEndpointDestinationRule_basic(t *testing.T) {
 			{
 				// SECOND update — the regression guard. With a hardcoded If-Match
 				// this step 412s while the first one passed.
-				Config: configEndpointRule(suffix, 30, "steer", "https://edge2.example.com/v1"),
-				Check: resource.TestCheckResourceAttr(
-					"ferentin_endpoint_destination_rule.test", "priority", "30"),
+				Config: configEndpointRuleExtra(suffix, 30, "steer", "https://edge2.example.com/v1",
+					endpointRuleGroups+"  enabled = false\n"),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "priority", "30"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "enabled", "false"),
+				),
 			},
 			{
-				Config: configEndpointRuleTargets(suffix, 30, "steer", "https://edge2.example.com/v1", ""),
+				Config: configEndpointRuleExtra(suffix, 30, "steer", "https://edge2.example.com/v1",
+					"  enabled = false\n"),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckNoResourceAttr("ferentin_endpoint_destination_rule.test", "device_group_ids.#"),
 					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "app_bundle_ids.#", "1"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "enabled", "false"),
 				),
 			},
 			{
@@ -383,14 +390,16 @@ resource "ferentin_device_group" "test" {
 `, name, description, source)
 }
 
+const endpointRuleGroups = "  device_group_ids = [ferentin_device_group.test.group_id]\n"
+
 func configEndpointRule(suffix string, priority int, action, steerURL string) string {
-	return configEndpointRuleTargets(suffix, priority, action, steerURL,
-		"  device_group_ids = [ferentin_device_group.test.group_id]\n")
+	return configEndpointRuleExtra(suffix, priority, action, steerURL, endpointRuleGroups)
 }
 
-// configEndpointRuleTargets is configEndpointRule with the device_group_ids
-// line passed in, so a step can drop it while the group itself stays.
-func configEndpointRuleTargets(suffix string, priority int, action, steerURL, groups string) string {
+// configEndpointRuleExtra is configEndpointRule with the trailing lines
+// (device_group_ids, enabled) passed in, so a step can drop device_group_ids
+// while the group itself stays.
+func configEndpointRuleExtra(suffix string, priority int, action, steerURL, extra string) string {
 	steer := ""
 	if steerURL != "" {
 		steer = fmt.Sprintf("  steer_to_url = %q\n", steerURL)
@@ -410,7 +419,7 @@ resource "ferentin_endpoint_destination_rule" "test" {
 %[4]s
   app_bundle_ids   = ["com.openai.chat"]
 %[5]s}
-`, suffix, priority, action, steer, groups)
+`, suffix, priority, action, steer, extra)
 }
 
 // configEndpointRuleWithCriteria is configEndpointRule's criteria-authoring

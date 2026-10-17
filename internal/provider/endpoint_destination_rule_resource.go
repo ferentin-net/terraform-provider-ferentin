@@ -571,14 +571,19 @@ func endpointRuleCriteria(criteria *[]map[string]interface{}, diags *diag.Diagno
 	return models
 }
 
-// ModifyPlan warns when an apply is about to delete a rule's criteria; see
-// warnOnCriteriaRemoval. Under an allowlist posture (`default_destination_action
-// = "block"`) that warning is the difference between a scoped exception and a
-// fleet-wide one.
+// ModifyPlan warns when an apply is about to delete a rule's criteria, device
+// groups or app filters; see warnOnCriteriaRemoval and warnOnTargetRemoval.
+// Under an allowlist posture (`default_destination_action = "block"`) that
+// warning is the difference between a scoped exception and a fleet-wide one.
 func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	warnOnCriteriaRemoval(ctx, req, resp,
 		"\n\nIf you meant to keep them, add the `criteria` block back to the config (criteria "+
 			"authored in the admin console are not preserved for you — Terraform owns this field now).")
+	warnOnTargetRemoval(ctx, req, resp, "device_group_ids",
+		"every device in the tenant, including ungrouped ones")
+	for _, attr := range []string{"app_bundle_ids", "app_signing_ids", "app_team_ids"} {
+		warnOnTargetRemoval(ctx, req, resp, attr, "apps it no longer filters by this attribute")
+	}
 }
 
 // keepEmptyForms restores an empty form the config wrote explicitly for the
