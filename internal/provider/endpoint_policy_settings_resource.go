@@ -387,9 +387,10 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 					"needs this set.\n\n" +
 					"A key this provider version does not know fails at plan rather than being dropped " +
 					"(the platform ignores unknown keys). The platform stores the whole object as sent, " +
-					"so everything it should hold belongs in this value. Formatting and key order do not " +
-					"matter. Omit to keep the current config. Clearing it is done in the admin console: " +
-					"`{}` is refused here.",
+					"so everything it should hold belongs in this value. A formatting difference from the " +
+					"platform's stored form is not drift (changing the formatting in config itself, say " +
+					"from a heredoc to jsonencode, still plans one no-op update). Omit to keep the current " +
+					"config. Clearing it is done in the admin console: `{}` is refused here.",
 				Optional:      true,
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
@@ -1030,11 +1031,14 @@ func reconcilePlatformForms(m *EndpointPolicySettingsResourceModel, prior Endpoi
 		priorKnown := !f.prior.IsNull() && !f.prior.IsUnknown()
 		switch {
 		case f.sent != nil:
+			// The input comes from a set and is already distinct; counted
+			// through distinct anyway so the bound holds for any caller.
 			sentCount := len(distinct(*f.sent))
 			if sentCount > 0 && len(server) == 0 {
 				diags.AddAttributeError(path.Root(f.name), fmt.Sprintf("The platform did not store %s", f.name),
 					"The request sent it and the platform's response has none. A platform build that "+
-						"predates this field ignores it; check the admin-api version.")
+						"predates this field ignores it; check the admin-api version.\n\n"+
+						notStoredRecovery)
 				continue
 			}
 			if len(server) > sentCount {
@@ -1064,7 +1068,7 @@ func reconcilePlatformForms(m *EndpointPolicySettingsResourceModel, prior Endpoi
 			diags.AddAttributeError(path.Root("local_mcp_approval_config"),
 				"The platform did not store local_mcp_approval_config",
 				"The request sent it and the platform's response has none. A platform build that "+
-					"predates this field ignores it; check the admin-api version.")
+					"predates this field ignores it; check the admin-api version.\n\n"+notStoredRecovery)
 		} else if priorKnown {
 			m.LocalMcpApprovalConfig = prior.LocalMcpApprovalConfig
 		}
@@ -1075,6 +1079,15 @@ func reconcilePlatformForms(m *EndpointPolicySettingsResourceModel, prior Endpoi
 	}
 	return forms, diags
 }
+
+// notStoredRecovery is appended to a "did not store" error. On Create the error
+// leaves the resource tainted, and replacing a device-group row deletes the
+// override (the group falls back to the tenant default) before recreating it,
+// so re-applying unchanged would loop.
+const notStoredRecovery = "The rest of the row was written. Before re-applying, remove the attribute " +
+	"from the config or upgrade the platform: on a new device-group row Terraform now marks the " +
+	"resource tainted, and replacing it deletes the override, so the group briefly falls back to " +
+	"the tenant default."
 
 func equalStringPtr(a, b *string) bool {
 	if a == nil || b == nil {
