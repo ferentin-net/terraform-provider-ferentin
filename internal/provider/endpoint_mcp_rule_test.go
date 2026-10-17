@@ -234,6 +234,8 @@ func TestEndpointMCPRuleValidateConfig(t *testing.T) {
 		{"unknown action skips action rules", map[string]tftypes.Value{
 			"match_kind": str("tool_name"), "action": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 			"match_values": listOf("match_values", "run")}, ""},
+		{"behaviour in another case", map[string]tftypes.Value{
+			"match_kind": str("tool_behavior"), "action": str("block"), "match_values": listOf("match_values", " Shell ")}, ""},
 		{"host with a scheme", map[string]tftypes.Value{
 			"match_kind": str("host"), "action": str("block"), "match_values": listOf("match_values", "https://a.example")},
 			"not a bare hostname"},

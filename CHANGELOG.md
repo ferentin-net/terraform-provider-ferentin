@@ -33,9 +33,10 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   platform's cross-field rules fail at plan: call-time and behaviour rules
   are `block` only, `steer_to_url` belongs on a remote steer, and a local
   `allow` cannot be narrowed by device groups or criteria yet. The platform
-  canonicalizes `allow` / `steer` match values; `match_values` keeps your
-  spelling and the computed `stored_match_values` the platform's, so that
-  does not show as drift. Read-only `enforcement` reports whether the fleet
+  normalizes match values (`host` lowercased on every rule, `allow` / `steer`
+  values fully canonicalized); `match_values` keeps your spelling and the
+  computed `stored_match_values` the platform's, so that does not show as
+  drift. Read-only `enforcement` reports whether the fleet
   enforces the rule. (ferentin-net/ferentin-cli-app#313)
 - **`ferentin_data_protection_policy` can target enrolled endpoints.** New
   `apply_to_tool_input`, `apply_to_prompt_input` and `apply_to_tool_output`

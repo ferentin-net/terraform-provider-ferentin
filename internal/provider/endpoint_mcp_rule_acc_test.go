@@ -102,7 +102,7 @@ func TestAccEndpointMCPRule_outOfBandEditShowsAsDrift(t *testing.T) {
 				PreConfig: func() {
 					ctx := context.Background()
 					sdk := testAccSDK(t)
-					tenantID := os.Getenv("FERENTIN_TENANT_ID")
+					tenantID := os.Getenv(envTenantID)
 					rule, err := sdk.EndpointMCPRules().Get(ctx, tenantID, ruleID)
 					if err != nil {
 						t.Fatalf("get rule %s: %v", ruleID, err)

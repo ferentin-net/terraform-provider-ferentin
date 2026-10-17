@@ -64,8 +64,11 @@ const (
 //     device_group_ids and criteria, but KEEPS priority, enabled and
 //     criteria_combinator when omitted. All three carry a schema Default, so
 //     they are always sent and removing one from config converges.
-//   - match_values on an allow or steer rule are canonicalized on write (block
-//     values are stored verbatim). State keeps the configured spelling in
+//   - match_values are normalized on write: host values are lowercased on every
+//     rule, tool_behavior values trimmed and lowercased, url_prefix values
+//     canonicalized where possible (a block keeps the spelling only when
+//     canonicalizing fails), and allow / steer values fully canonicalized.
+//     State keeps the configured spelling in
 //     match_values and the server's in stored_match_values; see
 //     reconcileMatchValues.
 type EndpointMCPRuleResource struct {
@@ -156,9 +159,8 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 			"terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>\n" +
 			"```\n\n" +
 			"An import has no configured spelling of `match_values`, so it takes the platform's " +
-			"canonical form. On an `allow` or `steer` rule the first plan after import may then show " +
-			"`match_values` changing to the spelling in your config; applying it changes nothing on " +
-			"the platform.",
+			"normalized form. Where that differs from your config's spelling, the first plan after " +
+			"import shows `match_values` changing to it; applying it changes nothing on the platform.",
 
 		Attributes: map[string]schema.Attribute{
 			"id": schema.StringAttribute{
@@ -216,9 +218,10 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 					"* `host` — bare hostnames (no scheme, port or path)\n" +
 					"* `package` — one registry-qualified id per entry\n" +
 					"* `tool_behavior` — `shell`, `file_read` or `file_write`\n\n" +
-					"On an `allow` or `steer` rule the platform canonicalizes each value; `block` values " +
-					"are stored as written. Terraform keeps your spelling here and the platform's in " +
-					"`stored_match_values`, so canonicalization does not show as drift.",
+					"The platform normalizes some values: `host` is lowercased on every rule, " +
+					"`tool_behavior` trimmed and lowercased, `url_prefix` canonicalized where possible, and " +
+					"`allow` / `steer` values fully canonicalized. Terraform keeps your spelling here and " +
+					"the platform's in `stored_match_values`, so normalization does not show as drift.",
 				Required:    true,
 				ElementType: types.StringType,
 				Validators: []validator.List{
@@ -227,8 +230,8 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 				},
 			},
 			"stored_match_values": schema.ListAttribute{
-				MarkdownDescription: "Read-only. `match_values` as the platform stores them (canonicalized " +
-					"on an `allow` or `steer` rule). A console edit shows up as a change here and in " +
+				MarkdownDescription: "Read-only. `match_values` as the platform stores them, after " +
+					"normalization (see `match_values`). A console edit shows up as a change here and in " +
 					"`match_values` on the next plan.",
 				Computed:    true,
 				ElementType: types.StringType,
@@ -376,7 +379,10 @@ func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resour
 			if !ok || s.IsUnknown() || s.IsNull() {
 				continue
 			}
-			if !slices.Contains(mcpRuleToolBehaviors, s.ValueString()) {
+			// The platform trims and lowercases before checking
+			// (EndpointToolBehavior.canonicalize), so "Shell" is accepted there and
+			// must be here; reconcileMatchValues keeps the configured spelling.
+			if !slices.Contains(mcpRuleToolBehaviors, strings.ToLower(strings.TrimSpace(s.ValueString()))) {
 				resp.Diagnostics.AddAttributeError(path.Root("match_values"),
 					fmt.Sprintf("%q is not a known tool behaviour", s.ValueString()),
 					"A tool_behavior rule matches one of: "+strings.Join(mcpRuleToolBehaviors, ", ")+".")
@@ -586,8 +592,10 @@ func (m *EndpointMCPRuleResourceModel) toWrite(ctx context.Context) (adminapi.En
 
 // reconcileMatchValues decides what match_values holds after a refresh.
 //
-// The platform canonicalizes allow and steer values, so the stored list can
-// differ from the configured one with nothing having changed. When the server's
+// The platform normalizes values on write (host lowercased on every rule,
+// allow / steer fully canonicalized, and more; see the match_values docs), so
+// the stored list can differ from the configured one with nothing having
+// changed. This does not depend on the action. When the server's
 // list still equals stored_match_values from the last apply, nothing changed
 // out of band and the configured spelling is kept. When it differs, someone
 // edited the rule elsewhere: match_values takes the server's list so the plan

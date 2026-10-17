@@ -11,7 +11,7 @@ description: |-
   
   terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>
   
-  An import has no configured spelling of match_values, so it takes the platform's canonical form. On an allow or steer rule the first plan after import may then show match_values changing to the spelling in your config; applying it changes nothing on the platform.
+  An import has no configured spelling of match_values, so it takes the platform's normalized form. Where that differs from your config's spelling, the first plan after import shows match_values changing to it; applying it changes nothing on the platform.
 ---
 
 # ferentin_endpoint_mcp_rule (Resource)
@@ -33,7 +33,7 @@ Call-time and behaviour rules support `block` only. Whether a call-time `block` 
 terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>
 ```
 
-An import has no configured spelling of `match_values`, so it takes the platform's canonical form. On an `allow` or `steer` rule the first plan after import may then show `match_values` changing to the spelling in your config; applying it changes nothing on the platform.
+An import has no configured spelling of `match_values`, so it takes the platform's normalized form. Where that differs from your config's spelling, the first plan after import shows `match_values` changing to it; applying it changes nothing on the platform.
 
 ## Example Usage
 
@@ -99,7 +99,7 @@ resource "ferentin_endpoint_mcp_rule" "block_shell" {
 * `package` — one registry-qualified id per entry
 * `tool_behavior` — `shell`, `file_read` or `file_write`
 
-On an `allow` or `steer` rule the platform canonicalizes each value; `block` values are stored as written. Terraform keeps your spelling here and the platform's in `stored_match_values`, so canonicalization does not show as drift.
+The platform normalizes some values: `host` is lowercased on every rule, `tool_behavior` trimmed and lowercased, `url_prefix` canonicalized where possible, and `allow` / `steer` values fully canonicalized. Terraform keeps your spelling here and the platform's in `stored_match_values`, so normalization does not show as drift.
 - `name` (String) Rule name, unique within the tenant. 1-255 characters.
 
 ### Optional
@@ -131,7 +131,7 @@ On an `allow` or `steer` rule the platform canonicalizes each value; `block` val
 - `managed_by_client_id` (String) OAuth2 `client_id` of the creator, from the authenticated principal.
 - `managed_by_module` (String) Module label this provider sent via `X-Ferentin-Managed-By-Module`.
 - `rule_id` (String)
-- `stored_match_values` (List of String) Read-only. `match_values` as the platform stores them (canonicalized on an `allow` or `steer` rule). A console edit shows up as a change here and in `match_values` on the next plan.
+- `stored_match_values` (List of String) Read-only. `match_values` as the platform stores them, after normalization (see `match_values`). A console edit shows up as a change here and in `match_values` on the next plan.
 - `updated_at` (String)
 - `version` (Number) Optimistic-concurrency version, sent as `If-Match` on update and delete so a concurrent console edit is rejected with 412 rather than overwritten.
 
