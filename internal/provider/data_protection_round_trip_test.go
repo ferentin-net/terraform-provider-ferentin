@@ -46,7 +46,13 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 		ApplyToPromptInput:        boolPtr(false),
 		ApplyToToolOutput:         boolPtr(true),
 		ToolOutputUnscannedAction: strPtr("withhold"),
+		ToolInputUnscannedAction:  strPtr("block"),
 		DeviceGroupIds:            &[]string{"44444444-4444-4444-8444-444444444444"},
+		// A2A scopes. Non-default on every field, so a mapper that reads the default
+		// instead of the wire value fails.
+		ApplyToA2aInput:          boolPtr(true),
+		ApplyToA2aOutput:         boolPtr(false),
+		A2aUnscannableFileAction: strPtr("pass_and_count"),
 		EndpointEffectMapping: &map[string]map[string]string{
 			"tool_input":  {"tokenize": "redact"},
 			"tool_output": {"tokenize": "redact"},
@@ -122,6 +128,15 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 	if m.ToolOutputUnscannedAction.ValueString() != "withhold" {
 		t.Errorf("ToolOutputUnscannedAction = %q", m.ToolOutputUnscannedAction.ValueString())
 	}
+	if m.ToolInputUnscannedAction.ValueString() != "block" {
+		t.Errorf("ToolInputUnscannedAction = %q; want block", m.ToolInputUnscannedAction.ValueString())
+	}
+	if !m.ApplyToA2aInput.ValueBool() || m.ApplyToA2aOutput.ValueBool() {
+		t.Errorf("A2A scopes = %v/%v; want true/false", m.ApplyToA2aInput, m.ApplyToA2aOutput)
+	}
+	if m.A2aUnscannableFileAction.ValueString() != "pass_and_count" {
+		t.Errorf("A2aUnscannableFileAction = %q; want pass_and_count", m.A2aUnscannableFileAction.ValueString())
+	}
 	var groups []string
 	_ = m.DeviceGroupIDs.ElementsAs(ctx, &groups, false)
 	if len(groups) != 1 || groups[0] != "44444444-4444-4444-8444-444444444444" {
@@ -190,9 +205,10 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 	}
 }
 
-// An admin-api that predates the endpoint scopes omits them. The model must read them as the
-// schema defaults (false / "pass" / [] / {}): a null against a defaulted plan value is a
-// "provider produced inconsistent result" error on every apply.
+// An admin-api that predates the endpoint and A2A scopes omits them. The model must read
+// them as the defaults (false / "pass" / "allow" / "block" / [] / {}): for the endpoint
+// scopes a null against a defaulted plan value is a "provider produced inconsistent
+// result" error on every apply, and the A2A fields read as what such a server holds.
 func TestDataProtectionPolicyToModel_EndpointFieldsAbsent(t *testing.T) {
 	polID := mustParseUUID(t, "33333333-3333-4333-8333-333333333334")
 	var diags diag.Diagnostics
@@ -207,6 +223,15 @@ func TestDataProtectionPolicyToModel_EndpointFieldsAbsent(t *testing.T) {
 	}
 	if m.ToolOutputUnscannedAction.ValueString() != "pass" {
 		t.Errorf("ToolOutputUnscannedAction = %q; want pass", m.ToolOutputUnscannedAction.ValueString())
+	}
+	if m.ToolInputUnscannedAction.ValueString() != "allow" {
+		t.Errorf("ToolInputUnscannedAction = %q; want allow", m.ToolInputUnscannedAction.ValueString())
+	}
+	if m.ApplyToA2aInput.IsNull() || m.ApplyToA2aInput.ValueBool() || m.ApplyToA2aOutput.ValueBool() {
+		t.Errorf("absent A2A scopes must read as false, got %v/%v", m.ApplyToA2aInput, m.ApplyToA2aOutput)
+	}
+	if m.A2aUnscannableFileAction.ValueString() != "block" {
+		t.Errorf("A2aUnscannableFileAction = %q; want block", m.A2aUnscannableFileAction.ValueString())
 	}
 	if m.DeviceGroupIDs.IsNull() || len(m.DeviceGroupIDs.Elements()) != 0 {
 		t.Errorf("device_group_ids = %v; want an empty list", m.DeviceGroupIDs)
@@ -243,5 +268,48 @@ func TestAddInvalidDeviceGroups(t *testing.T) {
 	addInvalidDeviceGroups(&diags, []string{"not-a-uuid"})
 	if !diags.HasError() || len(diags.Errors()) != 1 {
 		t.Fatalf("want one error, got %v", diags)
+	}
+}
+
+// On Update, UseStateForUnknown puts the state value into the plan for a
+// keep-the-stored-value field the config leaves out. omitUnconfiguredDataProtection
+// must drop it so the PATCH leaves the field alone, and keep any the config sets,
+// including an explicit false that turns a scope off.
+func TestOmitUnconfiguredDataProtection(t *testing.T) {
+	full := func() adminapi.DataProtectionPolicyUpdate {
+		ti := gen.DataProtectionPolicyUpdateRequestToolInputUnscannedAction("block")
+		fa := gen.DataProtectionPolicyUpdateRequestA2aUnscannableFileAction("pass_and_count")
+		return adminapi.DataProtectionPolicyUpdate{
+			ToolInputUnscannedAction: &ti,
+			ApplyToA2aInput:          boolPtr(true),
+			ApplyToA2aOutput:         boolPtr(true),
+			A2aUnscannableFileAction: &fa,
+		}
+	}
+
+	body := full()
+	omitUnconfiguredDataProtection(&body, DataProtectionPolicyResourceModel{
+		ToolInputUnscannedAction: types.StringNull(),
+		ApplyToA2aInput:          types.BoolNull(),
+		ApplyToA2aOutput:         types.BoolNull(),
+		A2aUnscannableFileAction: types.StringNull(),
+	})
+	if body.ToolInputUnscannedAction != nil || body.ApplyToA2aInput != nil ||
+		body.ApplyToA2aOutput != nil || body.A2aUnscannableFileAction != nil {
+		t.Errorf("config omits all four: body = %+v, want all omitted", body)
+	}
+
+	body = full()
+	omitUnconfiguredDataProtection(&body, DataProtectionPolicyResourceModel{
+		ToolInputUnscannedAction: types.StringValue("block"),
+		ApplyToA2aInput:          types.BoolValue(false),
+		ApplyToA2aOutput:         types.BoolNull(),
+		A2aUnscannableFileAction: types.StringValue("pass_and_count"),
+	})
+	if body.ToolInputUnscannedAction == nil || body.ApplyToA2aInput == nil || body.A2aUnscannableFileAction == nil {
+		t.Errorf("configured fields were dropped: body = %+v", body)
+	}
+	if body.ApplyToA2aOutput != nil {
+		t.Errorf("apply_to_a2a_output not in config but sent as %v", *body.ApplyToA2aOutput)
 	}
 }

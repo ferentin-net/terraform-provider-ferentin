@@ -54,6 +54,68 @@ func TestAccDataProtectionPolicy_basic(t *testing.T) {
 	})
 }
 
+// TestAccDataProtectionPolicy_a2aAndToolInput covers the A2A scopes and
+// tool_input_unscanned_action, which keep the stored value when omitted: set on
+// create, kept when removed from config (the provider does not send them and the
+// platform treats an omitted field as unchanged), then turned off explicitly.
+func TestAccDataProtectionPolicy_a2aAndToolInput(t *testing.T) {
+	name := "tf-acc-dp-a2a-" + randomSuffix(t)
+	cfg := func(fields string) string {
+		return providerBlock() + fmt.Sprintf(`
+resource "ferentin_data_protection_policy" "a2a" {
+  name             = %q
+  enabled_profiles = ["SECRETS"]
+  default_effect   = "redact"
+%s
+}
+`, name, fields)
+	}
+	check := func(input, output, fileAction, toolInput string) resource.TestCheckFunc {
+		const r = "ferentin_data_protection_policy.a2a"
+		return resource.ComposeAggregateTestCheckFunc(
+			resource.TestCheckResourceAttr(r, "apply_to_a2a_input", input),
+			resource.TestCheckResourceAttr(r, "apply_to_a2a_output", output),
+			resource.TestCheckResourceAttr(r, "a2a_unscannable_file_action", fileAction),
+			resource.TestCheckResourceAttr(r, "tool_input_unscanned_action", toolInput),
+		)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: cfg(`
+  apply_to_a2a_input          = true
+  apply_to_a2a_output         = true
+  a2a_unscannable_file_action = "pass_and_count"
+  apply_to_tool_input         = true
+  tool_input_unscanned_action = "block"
+`),
+				Check: check("true", "true", "pass_and_count", "block"),
+			},
+			{
+				// Removed from config, with another field changed so the apply really writes.
+				Config: cfg(`  description = "a2a fields omitted"`),
+				Check:  check("true", "true", "pass_and_count", "block"),
+			},
+			{
+				Config: cfg(`
+  apply_to_a2a_input          = false
+  apply_to_a2a_output         = false
+  a2a_unscannable_file_action = "block"
+  tool_input_unscanned_action = "allow"
+`),
+				Check: check("false", "false", "block", "allow"),
+			},
+			{
+				ResourceName:      "ferentin_data_protection_policy.a2a",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 // TestAccDataProtectionCatalog_basic reads the built-in profile/detector
 // catalog data sources and asserts a few stable facts.
 func TestAccDataProtectionCatalog_basic(t *testing.T) {

@@ -92,9 +92,30 @@ resource "ferentin_data_protection_policy" "endpoint_secrets" {
   # Withhold tool output the device could not scan (best effort).
   tool_output_unscanned_action = "withhold"
 
+  # Deny an MCP tool call whose arguments were too large to scan whole
+  # (Claude Code and Cursor only).
+  tool_input_unscanned_action = "block"
+
   # Empty or unset = every enrolled device. Reference
   # ferentin_device_group.<name>.group_id to narrow it.
   device_group_ids = []
+}
+
+# A2A data protection: scans what is sent to A2A agents and what they return.
+# An A2A skill served as an MCP tool is scanned once, under these scopes.
+resource "ferentin_data_protection_policy" "a2a_pii" {
+  name             = "a2a-pii"
+  enabled_profiles = ["US_PII", "SECRETS"]
+  default_effect   = "redact"
+
+  apply_to_llm_input  = false
+  apply_to_llm_output = false
+
+  apply_to_a2a_input  = true # messages, data, files and metadata sent to agents
+  apply_to_a2a_output = true # agent replies, task status messages and artifacts
+
+  # A file that cannot be scanned (binary, too large, or a file link) is refused.
+  a2a_unscannable_file_action = "block"
 }
 ```
 
@@ -107,6 +128,9 @@ resource "ferentin_data_protection_policy" "endpoint_secrets" {
 
 ### Optional
 
+- `a2a_unscannable_file_action` (String) With an A2A scope: what happens to a file that cannot be scanned (an inline file that is not text or is too large, and every file link). `block` refuses it; `pass_and_count` lets it through and records it. Omit to keep the current value (`block` on a new policy).
+- `apply_to_a2a_input` (Boolean) Scan everything sent to A2A agents: message text, data, files, and the metadata on parts, messages and artifacts. An A2A skill served as an MCP tool is scanned once, under the A2A scopes; the MCP scopes do not apply to it. Omit to keep the current value (`false` on a new policy); removing it from config does not turn it off.
+- `apply_to_a2a_output` (Boolean) Scan A2A agent replies, task status messages and artifacts. Omit to keep the current value (`false` on a new policy); removing it from config does not turn it off.
 - `apply_to_llm_input` (Boolean) Scan LLM user input/prompts. Default `true`.
 - `apply_to_llm_output` (Boolean) Scan LLM responses. Default `true`.
 - `apply_to_mcp_input` (Boolean) Scan MCP tool-call arguments. Default `false`.
@@ -131,6 +155,9 @@ resource "ferentin_data_protection_policy" "endpoint_secrets" {
 - `fpe_key_id` (String) Key identifier for format-preserving encryption. Required by the platform when any effect is `tokenize`.
 - `priority` (Number) Evaluation priority (1 = highest). Defaults to 100.
 - `tenant_id` (String)
+- `tool_input_unscanned_action` (String) With `apply_to_tool_input`: what a device does with an MCP tool call whose arguments it could not scan whole (cut to fit its hook frame, or past the agent's 1 MiB payload limit from agent 1.2.74). `allow` runs the call and records it as too large; `block` denies it with its own message, never reported as a detection. Omit to keep the current value (`allow` on a new policy).
+
+~> Acts only on Claude Code and Cursor; Codex, Copilot and Antigravity accept it and do nothing. It covers MCP call arguments only (not shell commands, file writes or fetches), and only while the policy has a tool-input detector that blocks or redacts.
 - `tool_output_unscanned_action` (String) With `apply_to_tool_output`: what a device does with tool output it knows it could not scan (over its size cap, or out of scan time). `pass` lets it through and counts it; `withhold` replaces it with a notice. Best effort: output the agent itself lets through (its own hook timeout) reaches the model regardless. Default `pass`.
 - `tweak_scope` (String) FPE tweak scope: `conversation` / `request` / `tenant`. Defaults to `conversation`.
 
