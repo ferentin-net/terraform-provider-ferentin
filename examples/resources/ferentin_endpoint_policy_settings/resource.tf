@@ -58,6 +58,17 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
   doh_block_enabled  = true
   quic_block_enabled = true
 
+  # Block unapproved AI agents and every local (stdio) MCP server for this
+  # group. Both need the fleet on an agent that implements the control; an
+  # older agent keeps its last-known-good policy.
+  unapproved_agent_action = "block"
+  local_mcp_block_enabled = true
+
+  # Drop port-443 flows to bare public IPs (no hostname to match a rule),
+  # except the VPN concentrators reached that way.
+  unnamed_flow_block_enabled = true
+  unnamed_flow_exempt_cidrs  = ["203.0.113.0/24"]
+
   # Deny tool calls that match an MCP `block` rule. The platform refuses this
   # (409) until every active device in the group runs an agent that enforces
   # call-time rules; check hookRuleEnforcementCoverage in the console first.

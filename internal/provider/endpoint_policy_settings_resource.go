@@ -2,12 +2,14 @@ package provider
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/listvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -16,6 +18,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/listplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -100,6 +104,17 @@ type EndpointPolicySettingsResourceModel struct {
 	// tenant has. The upsert keeps any field the request leaves out.
 	HookRuleEnforcement types.String `tfsdk:"hook_rule_enforcement"`
 	LocalMcpRiskPolicy  types.Object `tfsdk:"local_mcp_risk_policy"`
+
+	// More server-defaulted, console-editable posture fields, same shape as the
+	// two above: Optional + Computed + UseStateForUnknown, no Default, sent only
+	// when configured. The three lists are normalized by the platform; see
+	// reconcileNormalizedList.
+	UnapprovedAgentAction   types.String `tfsdk:"unapproved_agent_action"`
+	LocalMcpBlockEnabled    types.Bool   `tfsdk:"local_mcp_block_enabled"`
+	UnnamedFlowBlockEnabled types.Bool   `tfsdk:"unnamed_flow_block_enabled"`
+	UnnamedFlowExemptCIDRs  types.List   `tfsdk:"unnamed_flow_exempt_cidrs"`
+	DohResolverHosts        types.List   `tfsdk:"doh_resolver_hosts"`
+	DohResolverIPs          types.List   `tfsdk:"doh_resolver_ips"`
 
 	SettingsID types.String `tfsdk:"settings_id"`
 	CreatedAt  types.String `tfsdk:"created_at"`
@@ -281,6 +296,80 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 				Validators:    []validator.String{stringvalidator.OneOf("shadow", "enforce")},
 			},
+			"unapproved_agent_action": schema.StringAttribute{
+				MarkdownDescription: "What the agent does about a catalogued AI agent found on a device that is " +
+					"not approved: `report_only` (report it) or `block`. Omit to keep the current value " +
+					"(`report_only` on a new row).",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{stringvalidator.OneOf("report_only", "block")},
+			},
+			"local_mcp_block_enabled": schema.BoolAttribute{
+				MarkdownDescription: "Block every locally spawned (stdio) MCP server in this scope. Absolute: " +
+					"it beats an approved registry entry and a matching `allow` rule. Remote MCP servers " +
+					"are unaffected. Exceptions are made by turning this off for a device group. Omit to " +
+					"keep the current value.\n\n" +
+					"~> Turning it on requires the fleet on an agent that implements the control: an older " +
+					"agent refuses the posture section and keeps its last-known-good policy.",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"unnamed_flow_block_enabled": schema.BoolAttribute{
+				MarkdownDescription: "Drop port-443 flows (TCP and QUIC) to public addresses that have no " +
+					"hostname attribution: the raw-IP / external-DoH / ECH-degraded traffic no host rule " +
+					"can match. Private, CGNAT and link-local ranges are out of scope. Omit to keep the " +
+					"current value.\n\n" +
+					"~> Turning it on requires the fleet on an agent that implements the control: an older " +
+					"agent refuses the posture section and keeps its last-known-good policy.",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
+			},
+			"unnamed_flow_exempt_cidrs": schema.ListAttribute{
+				MarkdownDescription: "Addresses or CIDRs exempt from the unnamed-flow block, for infrastructure " +
+					"reached by bare IP on 443 (VPN concentrators, monitoring). At most 64; a `/0` prefix is " +
+					"refused. The platform canonicalizes them (host bits masked, duplicates collapsed); your " +
+					"spelling is kept here. Omit to keep the current list; `[]` clears it.",
+				Optional:      true,
+				Computed:      true,
+				ElementType:   types.StringType,
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()},
+				Validators: []validator.List{
+					listvalidator.SizeAtMost(64),
+					listvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1), noZeroPrefix{}),
+				},
+			},
+			"doh_resolver_hosts": schema.ListAttribute{
+				MarkdownDescription: "DoH resolver hostnames the DoH block matches; `*.` and leading-`.` suffix " +
+					"patterns are allowed. At most 256. Lowercased by the platform; your spelling is kept " +
+					"here. Omit to keep the current list; `[]` clears it, returning the agent to its built-in " +
+					"list.\n\n" +
+					"~> Authoring either DoH list requires the fleet on agent 0.9 or later: older agents " +
+					"refuse a posture section with unknown keys and keep their last-known-good policy.",
+				Optional:      true,
+				Computed:      true,
+				ElementType:   types.StringType,
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()},
+				Validators: []validator.List{
+					listvalidator.SizeAtMost(256),
+					listvalidator.ValueStringsAre(stringvalidator.LengthBetween(1, 253)),
+				},
+			},
+			"doh_resolver_ips": schema.ListAttribute{
+				MarkdownDescription: "DoH bootstrap IP addresses the DoH block matches, on port 443 only. At most " +
+					"256. Canonicalized by the platform; your spelling is kept here. Omit to keep the " +
+					"current list; `[]` clears it. Same agent requirement as `doh_resolver_hosts`.",
+				Optional:      true,
+				Computed:      true,
+				ElementType:   types.StringType,
+				PlanModifiers: []planmodifier.List{listplanmodifier.UseStateForUnknown()},
+				Validators: []validator.List{
+					listvalidator.SizeAtMost(256),
+					listvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
+				},
+			},
 			// An ObjectAttribute, not a SingleNestedAttribute. An Optional+Computed
 			// NESTED attribute left out of config does not propose its prior value,
 			// so the framework sees a change and marks every computed attribute
@@ -379,6 +468,8 @@ func (r *EndpointPolicySettingsResource) Create(ctx context.Context, req resourc
 		return
 	}
 	state := endpointSettingsToModel(tenantID, row)
+	stored := reconcileNormalizedLists(&state, plan, body, nil)
+	resp.Diagnostics.Append(storeNormalizedLists(ctx, resp.Private, stored)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -403,6 +494,10 @@ func (r *EndpointPolicySettingsResource) Read(ctx context.Context, req resource.
 		return
 	}
 	refreshed := endpointSettingsToModel(tenantID, row)
+	prior, d := loadNormalizedLists(ctx, req.Private)
+	resp.Diagnostics.Append(d...)
+	stored := reconcileNormalizedLists(&refreshed, state, adminapi.EndpointPolicySettingsWrite{}, prior)
+	resp.Diagnostics.Append(storeNormalizedLists(ctx, resp.Private, stored)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -426,6 +521,13 @@ func (r *EndpointPolicySettingsResource) Update(ctx context.Context, req resourc
 		return
 	}
 	refreshed := endpointSettingsToModel(tenantID, row)
+	prior, d := loadNormalizedLists(ctx, req.Private)
+	resp.Diagnostics.Append(d...)
+	// A list the request sent takes the planned (configured) value; one it did
+	// not send reconciles against state like a refresh. plan carries state for
+	// an omitted attribute (UseStateForUnknown), so it serves as the prior too.
+	stored := reconcileNormalizedLists(&refreshed, plan, body, prior)
+	resp.Diagnostics.Append(storeNormalizedLists(ctx, resp.Private, stored)...)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -486,7 +588,8 @@ func (r *EndpointPolicySettingsResource) Delete(ctx context.Context, req resourc
 			"this path just as `terraform destroy` does.\n\n"+
 			"To actually stand enforcement down, do it explicitly and then destroy:\n"+
 			"  1. Set unapproved_mcp_action = \"report_only\", default_destination_action = \"allow\", "+
-			"hook_rule_enforcement = \"shadow\", clear mcp_gateway_url, and turn the network flags off.\n"+
+			"hook_rule_enforcement = \"shadow\", clear mcp_gateway_url, and turn the network flags, "+
+			"local_mcp_block_enabled and unnamed_flow_block_enabled off.\n"+
 			"  2. terraform apply\n"+
 			"  3. terraform destroy (or remove the resource block)",
 			state.UnapprovedMcpAction.ValueString(), state.DefaultDestinationAction.ValueString()))
@@ -560,6 +663,13 @@ func (m *EndpointPolicySettingsResourceModel) toWrite() adminapi.EndpointPolicyS
 		body.HookRuleEnforcement = &h
 	}
 	body.LocalMcpRiskPolicy = localMcpRiskPolicyToSDK(m.LocalMcpRiskPolicy)
+	setStringPtr(m.UnapprovedAgentAction, &body.UnapprovedAgentAction)
+	setBoolPtr(m.LocalMcpBlockEnabled, &body.LocalMcpBlockEnabled)
+	setBoolPtr(m.UnnamedFlowBlockEnabled, &body.UnnamedFlowBlockEnabled)
+	// setStringListPtr sends a known empty list as [] (the platform's clear).
+	setStringListPtr(context.Background(), m.UnnamedFlowExemptCIDRs, &body.UnnamedFlowExemptCidrs)
+	setStringListPtr(context.Background(), m.DohResolverHosts, &body.DohResolverHosts)
+	setStringListPtr(context.Background(), m.DohResolverIPs, &body.DohResolverIps)
 
 	// mcp_gateway_url is optional-not-computed, so a config that drops it must
 	// actively CLEAR the stored value. The platform's upsert preserves omitted
@@ -597,6 +707,12 @@ func endpointSettingsToModel(tenantID string, row *adminapi.EndpointPolicySettin
 	m.QuicBlockEnabled = boolPtrOrDefault(row.QuicBlockEnabled)
 	m.HookRuleEnforcement = enumPtrToTF(row.HookRuleEnforcement)
 	m.LocalMcpRiskPolicy = localMcpRiskPolicyToTF(row.LocalMcpRiskPolicy)
+	m.UnapprovedAgentAction = strPtrToTF(row.UnapprovedAgentAction)
+	m.LocalMcpBlockEnabled = boolPtrOrDefault(row.LocalMcpBlockEnabled)
+	m.UnnamedFlowBlockEnabled = boolPtrOrDefault(row.UnnamedFlowBlockEnabled)
+	m.UnnamedFlowExemptCIDRs = stringSliceToList(row.UnnamedFlowExemptCidrs)
+	m.DohResolverHosts = stringSliceToList(row.DohResolverHosts)
+	m.DohResolverIPs = stringSliceToList(row.DohResolverIps)
 	m.CreatedAt = timePtrToTF(row.CreatedAt)
 	m.UpdatedAt = timePtrToTF(row.UpdatedAt)
 
@@ -655,6 +771,24 @@ func omitUnconfigured(body *adminapi.EndpointPolicySettingsWrite, config Endpoin
 	}
 	if config.LocalMcpRiskPolicy.IsNull() {
 		body.LocalMcpRiskPolicy = nil
+	}
+	if config.UnapprovedAgentAction.IsNull() {
+		body.UnapprovedAgentAction = nil
+	}
+	if config.LocalMcpBlockEnabled.IsNull() {
+		body.LocalMcpBlockEnabled = nil
+	}
+	if config.UnnamedFlowBlockEnabled.IsNull() {
+		body.UnnamedFlowBlockEnabled = nil
+	}
+	if config.UnnamedFlowExemptCIDRs.IsNull() {
+		body.UnnamedFlowExemptCidrs = nil
+	}
+	if config.DohResolverHosts.IsNull() {
+		body.DohResolverHosts = nil
+	}
+	if config.DohResolverIPs.IsNull() {
+		body.DohResolverIps = nil
 	}
 }
 
@@ -720,4 +854,133 @@ func (localMcpRiskPolicyTiers) ValidateObject(_ context.Context, req validator.O
 				fmt.Sprintf("Got %q.", v.ValueString()))
 		}
 	}
+}
+
+// noZeroPrefix refuses a /0 CIDR in unnamed_flow_exempt_cidrs. The platform
+// refuses it (it would exempt the whole address space, leaving the block
+// reporting enabled while blocking nothing); this moves that to plan time.
+type noZeroPrefix struct{}
+
+func (noZeroPrefix) Description(context.Context) string {
+	return "must not be a /0 prefix"
+}
+
+func (v noZeroPrefix) MarkdownDescription(ctx context.Context) string { return v.Description(ctx) }
+
+func (noZeroPrefix) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	if strings.HasSuffix(strings.TrimSpace(req.ConfigValue.ValueString()), "/0") {
+		resp.Diagnostics.AddAttributeError(req.Path, "A /0 prefix is refused",
+			fmt.Sprintf("%q would exempt the whole address space, leaving the unnamed-flow block "+
+				"reporting enabled while blocking nothing. Turn unnamed_flow_block_enabled off instead.",
+				req.ConfigValue.ValueString()))
+	}
+}
+
+// The platform normalizes three posture lists on write: DoH hosts are
+// trimmed, lowercased and de-duplicated; DoH IPs and unnamed-flow CIDRs are
+// canonicalized (CIDR host bits masked). State keeps the configured spelling,
+// so normalization is not drift, and the platform's normalized form from the
+// last write or refresh lives in private state under normalizedListsKey.
+//
+// The normalization itself is not reimplemented: it rests on Java and Netty
+// address formatting that Go's netip does not match in every case (an
+// IPv4-mapped IPv6 address, for one). Comparing the platform's list with the
+// one it returned last time is exact.
+const normalizedListsKey = "normalized_posture_lists"
+
+// normalizedLists maps attribute name to the platform's normalized list. A nil
+// entry is an absent (empty) list.
+type normalizedLists map[string][]string
+
+type privateStateGetter interface {
+	GetKey(ctx context.Context, key string) ([]byte, diag.Diagnostics)
+}
+
+type privateStateSetter interface {
+	SetKey(ctx context.Context, key string, value []byte) diag.Diagnostics
+}
+
+func loadNormalizedLists(ctx context.Context, p privateStateGetter) (normalizedLists, diag.Diagnostics) {
+	if p == nil {
+		return nil, nil
+	}
+	raw, diags := p.GetKey(ctx, normalizedListsKey)
+	if diags.HasError() || len(raw) == 0 {
+		return nil, diags
+	}
+	var out normalizedLists
+	if err := json.Unmarshal(raw, &out); err != nil {
+		// Unreadable private state is not fatal: treat it as absent, which
+		// takes the platform's lists as-is, as an import does.
+		return nil, diags
+	}
+	return out, diags
+}
+
+func storeNormalizedLists(ctx context.Context, p privateStateSetter, stored normalizedLists) diag.Diagnostics {
+	if p == nil {
+		return nil
+	}
+	raw, err := json.Marshal(stored)
+	if err != nil {
+		var d diag.Diagnostics
+		d.AddError("Failed to record normalized posture lists", err.Error())
+		return d
+	}
+	return p.SetKey(ctx, normalizedListsKey, raw)
+}
+
+// reconcileNormalizedLists decides each normalized list in m, which holds the
+// platform's response, and returns the normalized forms to store.
+//
+//   - Sent in this write: the platform accepted it, so state takes the planned
+//     (configured) value.
+//   - Not sent, and the platform's list equals the one recorded last time:
+//     nothing changed out of band, so the prior (configured) value is kept.
+//   - Otherwise (changed elsewhere, or nothing recorded, as after an import):
+//     the platform's list, so a console edit shows as drift.
+func reconcileNormalizedLists(m *EndpointPolicySettingsResourceModel, prior EndpointPolicySettingsResourceModel,
+	sent adminapi.EndpointPolicySettingsWrite, recorded normalizedLists) normalizedLists {
+	stored := normalizedLists{}
+	fields := []struct {
+		name  string
+		got   *types.List
+		prior types.List
+		sent  bool
+	}{
+		{"unnamed_flow_exempt_cidrs", &m.UnnamedFlowExemptCIDRs, prior.UnnamedFlowExemptCIDRs, sent.UnnamedFlowExemptCidrs != nil},
+		{"doh_resolver_hosts", &m.DohResolverHosts, prior.DohResolverHosts, sent.DohResolverHosts != nil},
+		{"doh_resolver_ips", &m.DohResolverIPs, prior.DohResolverIPs, sent.DohResolverIps != nil},
+	}
+	for _, f := range fields {
+		server := listStrings(*f.got)
+		stored[f.name] = server
+		priorKnown := !f.prior.IsNull() && !f.prior.IsUnknown()
+		switch {
+		case f.sent && priorKnown:
+			*f.got = f.prior
+		case !f.sent && priorKnown && recorded != nil:
+			if last, ok := recorded[f.name]; ok && slices.Equal(last, server) {
+				*f.got = f.prior
+			}
+		}
+	}
+	return stored
+}
+
+// listStrings returns a list's elements, nil for a null, unknown or empty list.
+func listStrings(l types.List) []string {
+	if l.IsNull() || l.IsUnknown() || len(l.Elements()) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(l.Elements()))
+	for _, e := range l.Elements() {
+		if s, ok := e.(types.String); ok {
+			out = append(out, s.ValueString())
+		}
+	}
+	return out
 }

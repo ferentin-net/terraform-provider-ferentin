@@ -66,6 +66,16 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   omitted, so values set in the admin console survive upgrading the provider;
   a new policy gets the platform's defaults (`false`, `false`, `block`,
   `allow`). Removing one from config does not reset it; set it explicitly.
+- **`ferentin_endpoint_policy_settings` manages more of the posture.** New
+  `unapproved_agent_action` (`report_only` / `block`),
+  `local_mcp_block_enabled`, `unnamed_flow_block_enabled`,
+  `unnamed_flow_exempt_cidrs`, `doh_resolver_hosts` and `doh_resolver_ips`.
+  Like `hook_rule_enforcement`, each keeps the stored value when omitted, so
+  values set in the admin console survive an apply; `[]` clears a list. The
+  platform normalizes the three lists (lowercased hosts, canonical IPs and
+  CIDRs); your spelling is kept in state, and a change made outside Terraform
+  still shows as drift. Turning on the local-MCP or unnamed-flow block, or
+  authoring a DoH list, needs the fleet on an agent that supports it.
 - **`ferentin_endpoint_policy_settings` manages call-time MCP rule enforcement
   and the local MCP risk policy.** New `hook_rule_enforcement` (`shadow` /
   `enforce`) and, on the tenant default only, `local_mcp_risk_policy` with an
