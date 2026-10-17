@@ -63,6 +63,10 @@ func TestAccDeviceGroup_basic(t *testing.T) {
 // hardcoded UUID) and the If-Match round trip — a second Update is included
 // deliberately, because that is exactly where ferentin_mcp_policy's hardcoded
 // `W/"0"` used to start returning 412.
+//
+// Step 4 removes ONLY device_group_ids. It is Optional, not Computed, so that
+// alone must plan a change; the check fails if the rule stayed narrowed to the
+// group instead of widening to every device.
 func TestAccEndpointDestinationRule_basic(t *testing.T) {
 	suffix := randomSuffix(t)
 	resource.Test(t, resource.TestCase{
@@ -102,6 +106,13 @@ func TestAccEndpointDestinationRule_basic(t *testing.T) {
 				Config: configEndpointRule(suffix, 30, "steer", "https://edge2.example.com/v1"),
 				Check: resource.TestCheckResourceAttr(
 					"ferentin_endpoint_destination_rule.test", "priority", "30"),
+			},
+			{
+				Config: configEndpointRuleTargets(suffix, 30, "steer", "https://edge2.example.com/v1", ""),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckNoResourceAttr("ferentin_endpoint_destination_rule.test", "device_group_ids.#"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "app_bundle_ids.#", "1"),
+				),
 			},
 			{
 				ResourceName:      "ferentin_endpoint_destination_rule.test",
@@ -373,6 +384,13 @@ resource "ferentin_device_group" "test" {
 }
 
 func configEndpointRule(suffix string, priority int, action, steerURL string) string {
+	return configEndpointRuleTargets(suffix, priority, action, steerURL,
+		"  device_group_ids = [ferentin_device_group.test.group_id]\n")
+}
+
+// configEndpointRuleTargets is configEndpointRule with the device_group_ids
+// line passed in, so a step can drop it while the group itself stays.
+func configEndpointRuleTargets(suffix string, priority int, action, steerURL, groups string) string {
 	steer := ""
 	if steerURL != "" {
 		steer = fmt.Sprintf("  steer_to_url = %q\n", steerURL)
@@ -391,9 +409,8 @@ resource "ferentin_endpoint_destination_rule" "test" {
   action           = %[3]q
 %[4]s
   app_bundle_ids   = ["com.openai.chat"]
-  device_group_ids = [ferentin_device_group.test.group_id]
-}
-`, suffix, priority, action, steer)
+%[5]s}
+`, suffix, priority, action, steer, groups)
 }
 
 // configEndpointRuleWithCriteria is configEndpointRule's criteria-authoring

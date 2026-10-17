@@ -87,6 +87,20 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **`ferentin_endpoint_destination_rule`: removing `description`,
+  `destination_hosts`, `app_bundle_ids`, `app_signing_ids`, `app_team_ids` or
+  `device_group_ids` from config now clears it.** These attributes were
+  Optional + Computed, so removing one planned no change: a rule that dropped
+  `device_group_ids` stayed narrowed to the old groups, and the platform
+  cleared the field later, on an unrelated apply that did not show it. They
+  are now Optional only, as on `ferentin_endpoint_mcp_rule`. **This changes
+  how an existing config behaves:** after upgrading, a config that removed one
+  of these attributes plans the clear it skipped before. Read the plan before
+  applying, especially for `device_group_ids`, where the clear widens the rule
+  to every device in the tenant. A rule whose state holds an empty list or
+  `""` for an attribute the config omits may also plan a one-time update from
+  `[]` / `""` to null; that update changes nothing on the platform.
+  (ferentin-net/terraform-provider-ferentin#18)
 - **Every example now passes `terraform validate`, and CI checks it.**
   `TestExamplesValidate` validates each directory under `examples/` against
   the provider's schema, on Terraform 1.11 and latest. It found eight that did
