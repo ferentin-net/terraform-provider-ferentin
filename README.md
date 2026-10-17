@@ -1,8 +1,8 @@
 # terraform-provider-ferentin
 
-Terraform provider for the [Ferentin](https://ferentin.net) AI authorization platform. Declaratively manage tenant resources: edge sites, LLM / MCP / OTEL policies, MCP servers, AI-agent OIDC clients, and the related catalogs.
+Terraform provider for the [Ferentin](https://ferentin.net) AI authorization platform. Declaratively manage tenant resources: edge sites, LLM / MCP / OTEL policies, MCP servers, data protection policies, AI-agent OIDC clients, workload identity, endpoint policy for managed devices (device groups, destination and MCP rules, posture), and the related catalogs.
 
-**Status:** `v0.1.0` candidate. Covers 11 resources + 7 data sources across the v1 entity surface. See [CHANGELOG.md](CHANGELOG.md).
+**Status:** `v0.1.0` candidate. Covers 17 resources + 11 data sources. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
@@ -30,7 +30,7 @@ resource "ferentin_edge_site" "us_east" {
 }
 ```
 
-A multi-resource end-to-end composition lives in [`examples/complete/`](examples/complete/). The [`examples/mcp-server-from-card/`](examples/mcp-server-from-card/) example drives an MCP provider + server pair from a discovered [`server-card.json`](https://modelcontextprotocol.io) so the Terraform config stays in sync with the upstream MCP server as it evolves. [`examples/endpoint-fleet/`](examples/endpoint-fleet/) covers the managed-device surface on its own — device groups, the on-device destination-rule priority ladder, and posture staged from observe to enforce.
+A multi-resource end-to-end composition lives in [`examples/complete/`](examples/complete/). The [`examples/mcp-server-from-card/`](examples/mcp-server-from-card/) example drives an MCP provider + server pair from a discovered [`server-card.json`](https://modelcontextprotocol.io) so the Terraform config stays in sync with the upstream MCP server as it evolves. [`examples/endpoint-fleet/`](examples/endpoint-fleet/) covers the managed-device surface on its own — device groups, the on-device destination-rule and MCP-rule ladders, posture staged from observe to enforce, and call-time MCP enforcement moved from shadow to enforce.
 
 ## Authentication
 
@@ -55,16 +55,16 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_mcp_server` | Tenant binding of an MCP provider to a specific endpoint / credential set. |
 | `ferentin_mcp_server_from_card` | Tenant MCP server installed from a community server-card (`data "ferentin_mcp_server_card"`). |
 | `ferentin_mcp_policy` | Allow/deny ABAC governance for MCP traffic with optional rate limits. |
-| `ferentin_data_protection_policy` | DLP governance — detector/profile selection, redact / tokenize / block effects. |
+| `ferentin_data_protection_policy` | DLP governance — detector/profile selection, redact / tokenize / block effects — on LLM, MCP and A2A traffic, and on enrolled endpoints (tool input, prompts, tool output). |
 | `ferentin_otel_sink` | Telemetry destination (Datadog, Honeycomb, OTLP). |
 | `ferentin_otel_policy` | Signals → sinks routing. |
 | `ferentin_ai_agent` | AI-agent OIDC client (constrained to the macro-scope allowlist). |
 | `ferentin_workload_oauth_client` | Outbound OAuth credentials for `cc_federated` MCP upstreams. WriteOnly secrets. |
 | `ferentin_workload_identity_provider` | Inbound trust config for cloud-issued workload JWTs (AWS / GCP / Azure / GitHub …). |
 | `ferentin_device_group` | Device group — the policy-scoping unit endpoint policy targets. |
-| `ferentin_endpoint_destination_rule` | Allow / block / steer rule for AI traffic on managed devices (macOS endpoint agent). |
+| `ferentin_endpoint_destination_rule` | Allow / block / steer rule for AI traffic on managed devices (macOS endpoint agent), optionally narrowed to compliant devices (`posture_predicate`). |
 | `ferentin_endpoint_mcp_rule` | Allow / block / steer rule for MCP servers and tool calls on managed devices: remote and local servers, tool calls, and tool behaviours. |
-| `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved-MCP action, gateway target, DNS/QUIC flags. Tenant default or per-device-group override. |
+| `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved MCP and agent actions, gateway target, DNS/QUIC and unnamed-flow blocks, local MCP block, call-time MCP enforcement, local MCP risk policy and approval routing. Tenant default or per-device-group override; values set in the console survive an apply that doesn't mention them. |
 
 | Data source | Purpose |
 | --- | --- |
@@ -95,7 +95,7 @@ Every provider-block attribute has a matching env-var fallback. Attribute wins w
 
 ## Development
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for local dev setup. The provider depends on the SDK in [`ferentin-cli-app/pkg/adminapi`](https://github.com/ferentin-net/ferentin-cli-app/tree/main/pkg/adminapi); local builds use a `replace` directive pointing at `../ferentin-cli-app`.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for local dev setup, including running the acceptance tests against local dev (`make testacc-local`). The provider depends on the SDK in [`ferentin-cli-app/pkg/adminapi`](https://github.com/ferentin-net/ferentin-cli-app/tree/main/pkg/adminapi), pinned in `go.mod`. A local `go.work` can point at a `../ferentin-cli-app` checkout; CI builds with `GOWORK=off` and rejects `replace` directives.
 
 Releases are tag-driven via [goreleaser](.goreleaser.yml). See [RELEASE.md](RELEASE.md) for the runbook.
 

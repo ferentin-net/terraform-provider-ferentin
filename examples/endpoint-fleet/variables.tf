@@ -115,3 +115,37 @@ variable "blocked_hosts" {
   description = "Explicit host / suffix deny list for shadow-AI endpoints with no catalog entry."
   default     = ["api.unsanctioned-ai.example", "*.shadow-llm.example"]
 }
+
+variable "hook_rule_enforcement" {
+  type        = string
+  description = <<-EOT
+    Call-time enforcement of MCP `block` rules (tool calls and tool
+    behaviours), kept separate from enforcement_stage on purpose:
+
+      shadow  — count what a `block` rule would deny, deny nothing.
+      enforce — deny the tool call.
+
+    The platform refuses `enforce` (409) until every active device in a scope
+    runs an agent build that enforces call-time rules. Check
+    hookRuleEnforcementCoverage on the posture fleet status in the console
+    before switching.
+  EOT
+  default     = "shadow"
+
+  validation {
+    condition     = contains(["shadow", "enforce"], var.hook_rule_enforcement)
+    error_message = "hook_rule_enforcement must be shadow or enforce."
+  }
+}
+
+variable "blocked_mcp_hosts" {
+  type        = list(string)
+  description = "Remote MCP server hostnames to block on every device. Bare hostnames: no scheme, port or path."
+  default     = ["mcp.unvetted.example"]
+}
+
+variable "allowed_local_mcp_packages" {
+  type        = list(string)
+  description = "Local (stdio) MCP server packages allowed tenant-wide, as registry-qualified ids such as npm:@acme/server."
+  default     = ["npm:@acme/internal-mcp"]
+}
