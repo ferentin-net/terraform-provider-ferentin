@@ -13,6 +13,8 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/providerserver"
 	"github.com/hashicorp/terraform-plugin-go/tfprotov6"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 )
 
 // Acceptance tests for the Ferentin Terraform provider.
@@ -282,6 +284,41 @@ resource "ferentin_otel_sink" "test" {
   compression = "gzip"
 }
 `
+}
+
+// testAccSDK builds an admin-api client from the same FERENTIN_* variables the
+// provider reads, for steps that change a resource outside Terraform (drift).
+// Static token, or client_credentials against FERENTIN_AUTH_URL or the derived
+// tenant-scoped auth URL, as the provider's Configure does.
+func testAccSDK(t *testing.T) *adminapi.SDKClient {
+	t.Helper()
+	opts := adminapi.SDKOptions{
+		Endpoint:  os.Getenv(envEndpoint),
+		SkipTLS:   os.Getenv(envInsecure) == "true" || os.Getenv(envInsecure) == "1",
+		UserAgent: "terraform-provider-ferentin-acctest",
+	}
+	var (
+		sdk *adminapi.SDKClient
+		err error
+	)
+	if token := os.Getenv(envToken); token != "" {
+		opts.Token = token
+		sdk, err = adminapi.NewWithToken(opts)
+	} else {
+		authURL := os.Getenv(envAuthURL)
+		if authURL == "" {
+			authURL = deriveAuthURL(opts.Endpoint, os.Getenv(envTenantID))
+		}
+		sdk, err = adminapi.NewWithClientCredentials(opts, adminapi.ClientCredentialsOptions{
+			AuthURL:      authURL,
+			ClientID:     os.Getenv(envClientID),
+			ClientSecret: os.Getenv(envClientSecret),
+		})
+	}
+	if err != nil {
+		t.Fatalf("acceptance SDK client: %v", err)
+	}
+	return sdk
 }
 
 // providerBlock yields the HCL provider stanza, deferring fully to env-var

@@ -25,6 +25,19 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   tests and fixture validation on 1.11 and on the latest release.
 
 ### Added
+- **New resource `ferentin_endpoint_mcp_rule`**: allow / block / steer for
+  MCP servers and tool calls on managed devices, matched by `host` /
+  `url_prefix` (remote servers), `package` / `argv_contains` (local servers),
+  `tool_name` / `command_binary` (tool calls) or `tool_behavior` (`shell`,
+  `file_read`, `file_write`). Evaluated first-match-wins by `priority`. The
+  platform's cross-field rules fail at plan: call-time and behaviour rules
+  are `block` only, `steer_to_url` belongs on a remote steer, and a local
+  `allow` cannot be narrowed by device groups or criteria yet. The platform
+  normalizes match values (`host` lowercased on every rule, `allow` / `steer`
+  values fully canonicalized); `match_values` keeps your spelling and the
+  computed `stored_match_values` the platform's, so that does not show as
+  drift. Read-only `enforcement` reports whether the fleet
+  enforces the rule. (ferentin-net/ferentin-cli-app#313)
 - **`ferentin_data_protection_policy` can target enrolled endpoints.** New
   `apply_to_tool_input`, `apply_to_prompt_input` and `apply_to_tool_output`
   (each default `false`), `tool_output_unscanned_action` (`pass` / `withhold`,
