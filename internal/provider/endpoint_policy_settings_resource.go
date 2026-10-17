@@ -374,9 +374,14 @@ func (r *EndpointPolicySettingsResource) Create(ctx context.Context, req resourc
 
 	// No If-Match on the first write: the row may not exist, and on this upsert
 	// the platform answers an If-Match against a missing row with 412.
-	row, err := r.upsert(ctx, tenantID, plan.DeviceGroupID, "", plan.toWrite())
+	// On Create an attribute the config leaves out is unknown in the plan, so
+	// toWrite already omits it. The row may exist (adoption), so its prior
+	// hook_rule_enforcement is unknown here; treat any `enforce` as a move.
+	body := plan.toWrite()
+	row, err := r.upsert(ctx, tenantID, plan.DeviceGroupID, "", body)
 	if err != nil {
-		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to write endpoint policy settings", err, plan)
+		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to write endpoint policy settings", err,
+			body, types.StringNull())
 		return
 	}
 	state := endpointSettingsToModel(tenantID, row)
@@ -408,18 +413,22 @@ func (r *EndpointPolicySettingsResource) Read(ctx context.Context, req resource.
 }
 
 func (r *EndpointPolicySettingsResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state EndpointPolicySettingsResourceModel
+	var plan, state, config EndpointPolicySettingsResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
 	tenantID := r.resolveTenant(state.TenantID)
 
+	body := plan.toWrite()
+	omitUnconfigured(&body, config)
 	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
-	row, err := r.upsert(ctx, tenantID, state.DeviceGroupID, version, plan.toWrite())
+	row, err := r.upsert(ctx, tenantID, state.DeviceGroupID, version, body)
 	if err != nil {
-		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to update endpoint policy settings", err, plan)
+		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to update endpoint policy settings", err,
+			body, state.HookRuleEnforcement)
 		return
 	}
 	refreshed := endpointSettingsToModel(tenantID, row)
@@ -625,7 +634,9 @@ func localMcpRiskPolicyToSDK(o types.Object) *gen.LocalMcpRiskPolicy {
 }
 
 // localMcpRiskPolicyToTF reads an absent policy, or one with no tier set, as null:
-// that is what the platform stores for "no policy" (it maps {} to null).
+// that is what the platform stores for "no policy" (it maps {} to null). A stored
+// policy always has all three tiers, because the platform refuses a write that
+// sends fewer, so a partially set object does not arise.
 func localMcpRiskPolicyToTF(p *gen.LocalMcpRiskPolicy) types.Object {
 	if p == nil || (p.Low == nil && p.Medium == nil && p.High == nil) {
 		return types.ObjectNull(localMcpRiskPolicyAttrTypes)
@@ -637,13 +648,35 @@ func localMcpRiskPolicyToTF(p *gen.LocalMcpRiskPolicy) types.Object {
 	})
 }
 
+// omitUnconfigured drops the server-defaulted fields the config does not set.
+//
+// UseStateForUnknown puts the STATE value into the plan for an attribute the
+// config leaves out, so on Update toWrite would send it back. The upsert keeps
+// an omitted field, so dropping it here is what makes "sent only when set in
+// config" true on Update as well as Create, and keeps an apply from rewriting a
+// value it does not manage.
+func omitUnconfigured(body *adminapi.EndpointPolicySettingsWrite, config EndpointPolicySettingsResourceModel) {
+	if config.HookRuleEnforcement.IsNull() {
+		body.HookRuleEnforcement = nil
+	}
+	if config.LocalMcpRiskPolicy.IsNull() {
+		body.LocalMcpRiskPolicy = nil
+	}
+}
+
 // addEndpointSettingsWriteError gives the one 409 this upsert can produce its own
 // message. addSDKError's conflict text is about a name or slug already in use,
-// which is wrong here: the platform refuses a move to `enforce` with 409 until the
-// scope's fleet can enforce call-time rules.
+// which is wrong here: the platform refuses a MOVE to `enforce` with 409 until
+// the scope's fleet can enforce call-time rules.
+//
+// Only a move qualifies: the request must send `enforce` and the prior value must
+// not already be `enforce` (a row already enforcing saves normally, so a 409 on it
+// is something else). prior is null on Create, where the row may or may not exist.
 func addEndpointSettingsWriteError(diags *diag.Diagnostics, op string, err error,
-	plan EndpointPolicySettingsResourceModel) {
-	if errors.Is(err, adminapi.ErrConflict) && plan.HookRuleEnforcement.ValueString() == "enforce" {
+	sent adminapi.EndpointPolicySettingsWrite, prior types.String) {
+	movesToEnforce := sent.HookRuleEnforcement != nil &&
+		string(*sent.HookRuleEnforcement) == "enforce" && prior.ValueString() != "enforce"
+	if errors.Is(err, adminapi.ErrConflict) && movesToEnforce {
 		diags.AddError(
 			fmt.Sprintf("%s — fleet not ready for hook_rule_enforcement = \"enforce\"", op),
 			"The platform refuses to move this scope to `enforce` until every active device in it runs "+

@@ -34,13 +34,15 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   config clears the targeting rather than keeping the old list.
   (ferentin-net/ferentin-platform#2872)
 - **`ferentin_data_protection_policy` can protect A2A traffic.** New
-  `apply_to_a2a_input` and `apply_to_a2a_output` (each default `false`) scan
-  what is sent to A2A agents and what they return, and
-  `a2a_unscannable_file_action` (`block` / `pass_and_count`, default `block`)
-  decides what happens to a file that cannot be scanned. Also new:
-  `tool_input_unscanned_action` (`allow` / `block`, default `allow`), for an
-  MCP tool call whose arguments were too large to scan whole (Claude Code and
-  Cursor only).
+  `apply_to_a2a_input` and `apply_to_a2a_output` scan what is sent to A2A
+  agents and what they return, and `a2a_unscannable_file_action` (`block` /
+  `pass_and_count`) decides what happens to a file that cannot be scanned.
+  Also new: `tool_input_unscanned_action` (`allow` / `block`), for an MCP tool
+  call whose arguments were too large to scan whole (Claude Code and Cursor
+  only). Unlike the endpoint scopes, these four keep the stored value when
+  omitted, so values set in the admin console survive upgrading the provider;
+  a new policy gets the platform's defaults (`false`, `false`, `block`,
+  `allow`). Removing one from config does not reset it; set it explicitly.
 - **`ferentin_endpoint_policy_settings` manages call-time MCP rule enforcement
   and the local MCP risk policy.** New `hook_rule_enforcement` (`shadow` /
   `enforce`) and, on the tenant default only, `local_mcp_risk_policy` with an

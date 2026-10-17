@@ -188,8 +188,8 @@ func dataProtectionPolicyToModel(tenantID string, pol *adminapi.DataProtectionPo
 	m.DeviceGroupIDs = stringSliceToSetOrEmpty(pol.DeviceGroupIds)
 	m.EndpointEffectMapping = effectMappingToTF(pol.EndpointEffectMapping)
 
-	// A2A scopes. Same fallback as the endpoint scopes: an admin-api that predates them reads
-	// as the schema defaults.
+	// A2A scopes. An admin-api that predates them reads as the platform's defaults, which is
+	// what a policy created there would hold.
 	m.ApplyToA2aInput = boolPtrOrFalse(pol.ApplyToA2aInput)
 	m.ApplyToA2aOutput = boolPtrOrFalse(pol.ApplyToA2aOutput)
 	m.A2aUnscannableFileAction = strPtrOrDefault(pol.A2aUnscannableFileAction, "block")
@@ -209,8 +209,8 @@ func boolPtrOrFalse(p *bool) types.Bool {
 	return types.BoolValue(p != nil && *p)
 }
 
-// strPtrOrDefault reads an absent or empty string as def, the schema default of a field an
-// older admin-api does not send.
+// strPtrOrDefault reads an absent or empty string as def, the default of a field an older
+// admin-api does not send.
 func strPtrOrDefault(p *string, def string) types.String {
 	if p == nil || *p == "" {
 		return types.StringValue(def)

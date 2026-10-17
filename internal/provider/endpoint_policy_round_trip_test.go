@@ -525,8 +525,9 @@ func TestEndpointSettingsToModel_HookRuleAndRiskPolicy(t *testing.T) {
 	}
 }
 
-// Neither field is sent unless configured. The upsert keeps an omitted field, so
-// this is what stops an apply from overwriting a value set in the console.
+// A null or unknown value is never sent: on Create that is an attribute the
+// config leaves out. The Update case, where the plan carries the state value, is
+// TestOmitUnconfigured_DropsStateCarriedValuesTheConfigDoesNotSet.
 func TestEndpointSettingsToWrite_HookRuleAndRiskPolicyOnlyWhenConfigured(t *testing.T) {
 	for name, m := range map[string]EndpointPolicySettingsResourceModel{
 		"null": {

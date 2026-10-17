@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -16,6 +17,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
 
 func endpointSettingsSchema(t *testing.T) rschema.Schema {
@@ -81,29 +83,74 @@ func TestEndpointSettings_RiskPolicyConflictsWithDeviceGroup(t *testing.T) {
 	}
 }
 
-// The 409 a move to `enforce` gets is about fleet readiness, not a name clash,
-// so it must not be reported with addSDKError's "already in use" text. Any other
-// 409 still is.
+// The 409 a MOVE to `enforce` gets is about fleet readiness, not a name clash,
+// so it must not be reported with addSDKError's "already in use" text. A row
+// already on `enforce` saves normally, so a 409 on it, like any request that
+// does not send `enforce`, keeps the generic message.
 func TestAddEndpointSettingsWriteError_EnforceConflict(t *testing.T) {
 	conflict := fmt.Errorf("upsert: %w", adminapi.ErrConflict)
-
-	var d diag.Diagnostics
-	addEndpointSettingsWriteError(&d, "Failed to update endpoint policy settings", conflict,
-		EndpointPolicySettingsResourceModel{HookRuleEnforcement: types.StringValue("enforce")})
-	if len(d.Errors()) != 1 {
-		t.Fatalf("errors = %v, want exactly one", d.Errors())
-	}
-	if got := d.Errors()[0].Summary(); !strings.Contains(got, "fleet not ready") {
-		t.Errorf("summary = %q, want the fleet-readiness message", got)
-	}
-	if got := d.Errors()[0].Detail(); !strings.Contains(got, "hookRuleEnforcementCoverage") {
-		t.Errorf("detail does not point at hookRuleEnforcementCoverage: %q", got)
+	sending := func(v string) adminapi.EndpointPolicySettingsWrite {
+		h := gen.EndpointPolicySettingsRequestHookRuleEnforcement(v)
+		return adminapi.EndpointPolicySettingsWrite{HookRuleEnforcement: &h}
 	}
 
-	d = nil
-	addEndpointSettingsWriteError(&d, "Failed to update endpoint policy settings", conflict,
-		EndpointPolicySettingsResourceModel{HookRuleEnforcement: types.StringValue("shadow")})
-	if got := d.Errors()[0].Summary(); !strings.Contains(got, "conflict with existing resource") {
-		t.Errorf("summary = %q, want addSDKError's generic conflict message", got)
+	for name, tc := range map[string]struct {
+		sent      adminapi.EndpointPolicySettingsWrite
+		prior     types.String
+		wantFleet bool
+	}{
+		"create sending enforce":     {sending("enforce"), types.StringNull(), true},
+		"shadow to enforce":          {sending("enforce"), types.StringValue("shadow"), true},
+		"already enforcing":          {sending("enforce"), types.StringValue("enforce"), false},
+		"sending shadow":             {sending("shadow"), types.StringValue("enforce"), false},
+		"not sent (config omits it)": {adminapi.EndpointPolicySettingsWrite{}, types.StringValue("enforce"), false},
+	} {
+		var d diag.Diagnostics
+		addEndpointSettingsWriteError(&d, "Failed to update endpoint policy settings", conflict, tc.sent, tc.prior)
+		if len(d.Errors()) != 1 {
+			t.Fatalf("%s: errors = %v, want exactly one", name, d.Errors())
+		}
+		summary := d.Errors()[0].Summary()
+		if got := strings.Contains(summary, "fleet not ready"); got != tc.wantFleet {
+			t.Errorf("%s: summary = %q, want fleet-readiness message = %v", name, summary, tc.wantFleet)
+		}
+		if tc.wantFleet && !strings.Contains(d.Errors()[0].Detail(), "hookRuleEnforcementCoverage") {
+			t.Errorf("%s: detail does not point at hookRuleEnforcementCoverage", name)
+		}
+		if !tc.wantFleet && !strings.Contains(summary, "conflict with existing resource") {
+			t.Errorf("%s: summary = %q, want addSDKError's generic conflict message", name, summary)
+		}
+	}
+}
+
+// On Update, UseStateForUnknown puts the state value into the plan for an
+// attribute the config leaves out, so the plan is known there. omitUnconfigured
+// must still drop it, or every apply rewrites a value it does not manage.
+func TestOmitUnconfigured_DropsStateCarriedValuesTheConfigDoesNotSet(t *testing.T) {
+	riskPolicy := types.ObjectValueMust(localMcpRiskPolicyAttrTypes, map[string]attr.Value{
+		"low": types.StringValue("allow"), "medium": types.StringValue("ask_once"), "high": types.StringValue("deny"),
+	})
+	plan := EndpointPolicySettingsResourceModel{
+		HookRuleEnforcement: types.StringValue("enforce"),
+		LocalMcpRiskPolicy:  riskPolicy,
+	}
+
+	body := plan.toWrite()
+	omitUnconfigured(&body, EndpointPolicySettingsResourceModel{
+		HookRuleEnforcement: types.StringNull(),
+		LocalMcpRiskPolicy:  types.ObjectNull(localMcpRiskPolicyAttrTypes),
+	})
+	if body.HookRuleEnforcement != nil || body.LocalMcpRiskPolicy != nil {
+		t.Errorf("config omits both: sent hook=%v policy=%v, want both omitted",
+			body.HookRuleEnforcement, body.LocalMcpRiskPolicy)
+	}
+
+	body = plan.toWrite()
+	omitUnconfigured(&body, plan)
+	if body.HookRuleEnforcement == nil || *body.HookRuleEnforcement != "enforce" {
+		t.Errorf("config sets hook_rule_enforcement: sent %v, want enforce", body.HookRuleEnforcement)
+	}
+	if body.LocalMcpRiskPolicy == nil {
+		t.Error("config sets local_mcp_risk_policy: sent nothing, want the policy")
 	}
 }

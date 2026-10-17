@@ -15,6 +15,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -258,12 +259,15 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 				MarkdownDescription: "With `apply_to_tool_input`: what a device does with an MCP tool call whose " +
 					"arguments it could not scan whole (cut to fit its hook frame, or past the agent's 1 MiB " +
 					"payload limit from agent 1.2.74). `allow` runs the call and records it as too large; " +
-					"`block` denies it with its own message, never reported as a detection. Default `allow`.\n\n" +
+					"`block` denies it with its own message, never reported as a detection. Omit to keep the " +
+					"current value (`allow` on a new policy).\n\n" +
 					"~> Acts only on Claude Code and Cursor; Codex, Copilot and Antigravity accept it and do " +
 					"nothing. It covers MCP call arguments only (not shell commands, file writes or fetches), " +
 					"and only while the policy has a tool-input detector that blocks or redacts.",
-				Optional: true, Computed: true, Default: stringdefault.StaticString("allow"),
-				Validators: []validator.String{stringvalidator.OneOf("allow", "block")},
+				// No Default — see the A2A scopes below.
+				Optional: true, Computed: true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{stringvalidator.OneOf("allow", "block")},
 			},
 			"device_group_ids": schema.SetAttribute{
 				MarkdownDescription: "Device groups this policy targets on its endpoint scopes — reference " +
@@ -288,24 +292,35 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 				ElementType: types.MapType{ElemType: types.StringType},
 			},
 
-			// A2A scopes. Defaults mirror the platform's and, as with the endpoint scopes, removing
-			// one from config turns it back to the default rather than leaving it as it was.
+			// A2A scopes and tool_input_unscanned_action: Optional + Computed + UseStateForUnknown,
+			// NO Default, unlike the endpoint scopes above. These are new, so a tenant may well have
+			// set them in the console before adopting this provider version; a Default would plan
+			// them back (A2A scanning on -> off) on the first apply, a silent data migration of the
+			// kind endpoint_policy_settings_resource.go describes. Omitted, they keep the stored
+			// value, and a new policy gets the platform's default. Turning one off is an explicit
+			// `false`.
 			"apply_to_a2a_input": schema.BoolAttribute{
 				MarkdownDescription: "Scan everything sent to A2A agents: message text, data, files, and the " +
 					"metadata on parts, messages and artifacts. An A2A skill served as an MCP tool is scanned " +
-					"once, under the A2A scopes; the MCP scopes do not apply to it. Default `false`.",
-				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
+					"once, under the A2A scopes; the MCP scopes do not apply to it. Omit to keep the current " +
+					"value (`false` on a new policy); removing it from config does not turn it off.",
+				Optional: true, Computed: true,
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"apply_to_a2a_output": schema.BoolAttribute{
-				MarkdownDescription: "Scan A2A agent replies, task status messages and artifacts. Default `false`.",
-				Optional:            true, Computed: true, Default: booldefault.StaticBool(false),
+				MarkdownDescription: "Scan A2A agent replies, task status messages and artifacts. Omit to keep " +
+					"the current value (`false` on a new policy); removing it from config does not turn it off.",
+				Optional: true, Computed: true,
+				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"a2a_unscannable_file_action": schema.StringAttribute{
 				MarkdownDescription: "With an A2A scope: what happens to a file that cannot be scanned (an inline " +
 					"file that is not text or is too large, and every file link). `block` refuses it; " +
-					"`pass_and_count` lets it through and records it. Default `block`.",
-				Optional: true, Computed: true, Default: stringdefault.StaticString("block"),
-				Validators: []validator.String{stringvalidator.OneOf("block", "pass_and_count")},
+					"`pass_and_count` lets it through and records it. Omit to keep the current value " +
+					"(`block` on a new policy).",
+				Optional: true, Computed: true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{stringvalidator.OneOf("block", "pass_and_count")},
 			},
 
 			"criteria": criteriaSchemaAttribute(criteriaSchemaOptions{
@@ -426,9 +441,10 @@ func (r *DataProtectionPolicyResource) Read(ctx context.Context, req resource.Re
 }
 
 func (r *DataProtectionPolicyResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
-	var plan, state DataProtectionPolicyResourceModel
+	var plan, state, config DataProtectionPolicyResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -476,6 +492,7 @@ func (r *DataProtectionPolicyResource) Update(ctx context.Context, req resource.
 		a := gen.DataProtectionPolicyUpdateRequestA2aUnscannableFileAction(plan.A2aUnscannableFileAction.ValueString())
 		body.A2aUnscannableFileAction = &a
 	}
+	omitUnconfiguredDataProtection(&body, config)
 	// Always sent when known: an empty list is how an update clears the targeting (the API
 	// treats an omitted field as "unchanged").
 	addInvalidDeviceGroups(&resp.Diagnostics, uuidSetToSDK(ctx, plan.DeviceGroupIDs, &body.DeviceGroupIds))
@@ -548,4 +565,23 @@ func (r *DataProtectionPolicyResource) resolveTenant(perResource types.String) s
 		return perResource.ValueString()
 	}
 	return r.tenantID
+}
+
+// omitUnconfiguredDataProtection drops the keep-the-stored-value fields the config
+// does not set. UseStateForUnknown carries the state value into the plan, so
+// without this an Update would send it back; the platform treats an omitted field
+// as unchanged, so leaving it out is what "omit to keep the current value" means.
+func omitUnconfiguredDataProtection(body *adminapi.DataProtectionPolicyUpdate, config DataProtectionPolicyResourceModel) {
+	if config.ToolInputUnscannedAction.IsNull() {
+		body.ToolInputUnscannedAction = nil
+	}
+	if config.ApplyToA2aInput.IsNull() {
+		body.ApplyToA2aInput = nil
+	}
+	if config.ApplyToA2aOutput.IsNull() {
+		body.ApplyToA2aOutput = nil
+	}
+	if config.A2aUnscannableFileAction.IsNull() {
+		body.A2aUnscannableFileAction = nil
+	}
 }
