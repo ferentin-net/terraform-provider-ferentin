@@ -33,6 +33,21 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   device (`tokenize` never reaches one). Removing `device_group_ids` from
   config clears the targeting rather than keeping the old list.
   (ferentin-net/ferentin-platform#2872)
+- **`ferentin_data_protection_policy` can protect A2A traffic.** New
+  `apply_to_a2a_input` and `apply_to_a2a_output` (each default `false`) scan
+  what is sent to A2A agents and what they return, and
+  `a2a_unscannable_file_action` (`block` / `pass_and_count`, default `block`)
+  decides what happens to a file that cannot be scanned. Also new:
+  `tool_input_unscanned_action` (`allow` / `block`, default `allow`), for an
+  MCP tool call whose arguments were too large to scan whole (Claude Code and
+  Cursor only).
+- **`ferentin_endpoint_policy_settings` manages call-time MCP rule enforcement
+  and the local MCP risk policy.** New `hook_rule_enforcement` (`shadow` /
+  `enforce`) and, on the tenant default only, `local_mcp_risk_policy` with an
+  action per risk tier. Both keep the stored value when omitted, so values
+  set in the admin console survive an apply. Moving a scope to `enforce`
+  fails with a fleet-readiness error until its devices can enforce
+  call-time rules.
 - `SECURITY.md`: how to report a vulnerability, how to verify a release's
   signature, and what the provider does with secrets and TLS.
 - **`ferentin_mcp_server` can configure enterprise-managed authorization.**

@@ -73,8 +73,14 @@ type DataProtectionPolicyResourceModel struct {
 	ApplyToPromptInput        types.Bool   `tfsdk:"apply_to_prompt_input"`
 	ApplyToToolOutput         types.Bool   `tfsdk:"apply_to_tool_output"`
 	ToolOutputUnscannedAction types.String `tfsdk:"tool_output_unscanned_action"`
+	ToolInputUnscannedAction  types.String `tfsdk:"tool_input_unscanned_action"`
 	DeviceGroupIDs            types.Set    `tfsdk:"device_group_ids"`        // []uuid-string
 	EndpointEffectMapping     types.Map    `tfsdk:"endpoint_effect_mapping"` // scope -> authored -> applied
+
+	// A2A scopes (ferentin-platform 1581): messages to and replies from A2A agents.
+	ApplyToA2aInput          types.Bool   `tfsdk:"apply_to_a2a_input"`
+	ApplyToA2aOutput         types.Bool   `tfsdk:"apply_to_a2a_output"`
+	A2aUnscannableFileAction types.String `tfsdk:"a2a_unscannable_file_action"`
 
 	Criteria []PolicyCriteriaModel `tfsdk:"criteria"`
 
@@ -248,6 +254,17 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 				Optional: true, Computed: true, Default: stringdefault.StaticString("pass"),
 				Validators: []validator.String{stringvalidator.OneOf("pass", "withhold")},
 			},
+			"tool_input_unscanned_action": schema.StringAttribute{
+				MarkdownDescription: "With `apply_to_tool_input`: what a device does with an MCP tool call whose " +
+					"arguments it could not scan whole (cut to fit its hook frame, or past the agent's 1 MiB " +
+					"payload limit from agent 1.2.74). `allow` runs the call and records it as too large; " +
+					"`block` denies it with its own message, never reported as a detection. Default `allow`.\n\n" +
+					"~> Acts only on Claude Code and Cursor; Codex, Copilot and Antigravity accept it and do " +
+					"nothing. It covers MCP call arguments only (not shell commands, file writes or fetches), " +
+					"and only while the policy has a tool-input detector that blocks or redacts.",
+				Optional: true, Computed: true, Default: stringdefault.StaticString("allow"),
+				Validators: []validator.String{stringvalidator.OneOf("allow", "block")},
+			},
 			"device_group_ids": schema.SetAttribute{
 				MarkdownDescription: "Device groups this policy targets on its endpoint scopes — reference " +
 					"`ferentin_device_group.<name>.group_id`. Empty or unset = **every device in the tenant**. " +
@@ -269,6 +286,26 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 					"device, so `tokenize` is always mapped. Empty when no endpoint scope is set.",
 				Computed:    true,
 				ElementType: types.MapType{ElemType: types.StringType},
+			},
+
+			// A2A scopes. Defaults mirror the platform's and, as with the endpoint scopes, removing
+			// one from config turns it back to the default rather than leaving it as it was.
+			"apply_to_a2a_input": schema.BoolAttribute{
+				MarkdownDescription: "Scan everything sent to A2A agents: message text, data, files, and the " +
+					"metadata on parts, messages and artifacts. An A2A skill served as an MCP tool is scanned " +
+					"once, under the A2A scopes; the MCP scopes do not apply to it. Default `false`.",
+				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
+			},
+			"apply_to_a2a_output": schema.BoolAttribute{
+				MarkdownDescription: "Scan A2A agent replies, task status messages and artifacts. Default `false`.",
+				Optional:            true, Computed: true, Default: booldefault.StaticBool(false),
+			},
+			"a2a_unscannable_file_action": schema.StringAttribute{
+				MarkdownDescription: "With an A2A scope: what happens to a file that cannot be scanned (an inline " +
+					"file that is not text or is too large, and every file link). `block` refuses it; " +
+					"`pass_and_count` lets it through and records it. Default `block`.",
+				Optional: true, Computed: true, Default: stringdefault.StaticString("block"),
+				Validators: []validator.String{stringvalidator.OneOf("block", "pass_and_count")},
 			},
 
 			"criteria": criteriaSchemaAttribute(criteriaSchemaOptions{
@@ -338,6 +375,16 @@ func (r *DataProtectionPolicyResource) Create(ctx context.Context, req resource.
 	if !plan.ToolOutputUnscannedAction.IsNull() && !plan.ToolOutputUnscannedAction.IsUnknown() {
 		a := gen.DataProtectionPolicyCreateRequestToolOutputUnscannedAction(plan.ToolOutputUnscannedAction.ValueString())
 		body.ToolOutputUnscannedAction = &a
+	}
+	if !plan.ToolInputUnscannedAction.IsNull() && !plan.ToolInputUnscannedAction.IsUnknown() {
+		a := gen.DataProtectionPolicyCreateRequestToolInputUnscannedAction(plan.ToolInputUnscannedAction.ValueString())
+		body.ToolInputUnscannedAction = &a
+	}
+	setBoolPtr(plan.ApplyToA2aInput, &body.ApplyToA2aInput)
+	setBoolPtr(plan.ApplyToA2aOutput, &body.ApplyToA2aOutput)
+	if !plan.A2aUnscannableFileAction.IsNull() && !plan.A2aUnscannableFileAction.IsUnknown() {
+		a := gen.DataProtectionPolicyCreateRequestA2aUnscannableFileAction(plan.A2aUnscannableFileAction.ValueString())
+		body.A2aUnscannableFileAction = &a
 	}
 	addInvalidDeviceGroups(&resp.Diagnostics, uuidSetToSDK(ctx, plan.DeviceGroupIDs, &body.DeviceGroupIds))
 	crits, critDiags := criteriaListToSDK(plan.Criteria)
@@ -418,6 +465,16 @@ func (r *DataProtectionPolicyResource) Update(ctx context.Context, req resource.
 	if !plan.ToolOutputUnscannedAction.IsNull() && !plan.ToolOutputUnscannedAction.IsUnknown() {
 		a := gen.DataProtectionPolicyUpdateRequestToolOutputUnscannedAction(plan.ToolOutputUnscannedAction.ValueString())
 		body.ToolOutputUnscannedAction = &a
+	}
+	if !plan.ToolInputUnscannedAction.IsNull() && !plan.ToolInputUnscannedAction.IsUnknown() {
+		a := gen.DataProtectionPolicyUpdateRequestToolInputUnscannedAction(plan.ToolInputUnscannedAction.ValueString())
+		body.ToolInputUnscannedAction = &a
+	}
+	setBoolPtr(plan.ApplyToA2aInput, &body.ApplyToA2aInput)
+	setBoolPtr(plan.ApplyToA2aOutput, &body.ApplyToA2aOutput)
+	if !plan.A2aUnscannableFileAction.IsNull() && !plan.A2aUnscannableFileAction.IsUnknown() {
+		a := gen.DataProtectionPolicyUpdateRequestA2aUnscannableFileAction(plan.A2aUnscannableFileAction.ValueString())
+		body.A2aUnscannableFileAction = &a
 	}
 	// Always sent when known: an empty list is how an update clears the targeting (the API
 	// treats an omitted field as "unchanged").

@@ -46,7 +46,13 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 		ApplyToPromptInput:        boolPtr(false),
 		ApplyToToolOutput:         boolPtr(true),
 		ToolOutputUnscannedAction: strPtr("withhold"),
+		ToolInputUnscannedAction:  strPtr("block"),
 		DeviceGroupIds:            &[]string{"44444444-4444-4444-8444-444444444444"},
+		// A2A scopes. Non-default on every field, so a mapper that reads the default
+		// instead of the wire value fails.
+		ApplyToA2aInput:          boolPtr(true),
+		ApplyToA2aOutput:         boolPtr(false),
+		A2aUnscannableFileAction: strPtr("pass_and_count"),
 		EndpointEffectMapping: &map[string]map[string]string{
 			"tool_input":  {"tokenize": "redact"},
 			"tool_output": {"tokenize": "redact"},
@@ -122,6 +128,15 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 	if m.ToolOutputUnscannedAction.ValueString() != "withhold" {
 		t.Errorf("ToolOutputUnscannedAction = %q", m.ToolOutputUnscannedAction.ValueString())
 	}
+	if m.ToolInputUnscannedAction.ValueString() != "block" {
+		t.Errorf("ToolInputUnscannedAction = %q; want block", m.ToolInputUnscannedAction.ValueString())
+	}
+	if !m.ApplyToA2aInput.ValueBool() || m.ApplyToA2aOutput.ValueBool() {
+		t.Errorf("A2A scopes = %v/%v; want true/false", m.ApplyToA2aInput, m.ApplyToA2aOutput)
+	}
+	if m.A2aUnscannableFileAction.ValueString() != "pass_and_count" {
+		t.Errorf("A2aUnscannableFileAction = %q; want pass_and_count", m.A2aUnscannableFileAction.ValueString())
+	}
 	var groups []string
 	_ = m.DeviceGroupIDs.ElementsAs(ctx, &groups, false)
 	if len(groups) != 1 || groups[0] != "44444444-4444-4444-8444-444444444444" {
@@ -190,8 +205,8 @@ func TestDataProtectionPolicyToModel_RoundTrip(t *testing.T) {
 	}
 }
 
-// An admin-api that predates the endpoint scopes omits them. The model must read them as the
-// schema defaults (false / "pass" / [] / {}): a null against a defaulted plan value is a
+// An admin-api that predates the endpoint and A2A scopes omits them. The model must read them
+// as the schema defaults (false / "pass" / "allow" / "block" / [] / {}): a null against a defaulted plan value is a
 // "provider produced inconsistent result" error on every apply.
 func TestDataProtectionPolicyToModel_EndpointFieldsAbsent(t *testing.T) {
 	polID := mustParseUUID(t, "33333333-3333-4333-8333-333333333334")
@@ -207,6 +222,15 @@ func TestDataProtectionPolicyToModel_EndpointFieldsAbsent(t *testing.T) {
 	}
 	if m.ToolOutputUnscannedAction.ValueString() != "pass" {
 		t.Errorf("ToolOutputUnscannedAction = %q; want pass", m.ToolOutputUnscannedAction.ValueString())
+	}
+	if m.ToolInputUnscannedAction.ValueString() != "allow" {
+		t.Errorf("ToolInputUnscannedAction = %q; want allow", m.ToolInputUnscannedAction.ValueString())
+	}
+	if m.ApplyToA2aInput.IsNull() || m.ApplyToA2aInput.ValueBool() || m.ApplyToA2aOutput.ValueBool() {
+		t.Errorf("absent A2A scopes must read as false, got %v/%v", m.ApplyToA2aInput, m.ApplyToA2aOutput)
+	}
+	if m.A2aUnscannableFileAction.ValueString() != "block" {
+		t.Errorf("A2aUnscannableFileAction = %q; want block", m.A2aUnscannableFileAction.ValueString())
 	}
 	if m.DeviceGroupIDs.IsNull() || len(m.DeviceGroupIDs.Elements()) != 0 {
 		t.Errorf("device_group_ids = %v; want an empty list", m.DeviceGroupIDs)

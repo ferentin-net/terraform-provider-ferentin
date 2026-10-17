@@ -3,7 +3,7 @@
 page_title: "ferentin_endpoint_policy_settings Resource - Ferentin"
 subcategory: ""
 description: |-
-  Endpoint posture for managed devices — the unapproved-MCP action, the MCP gateway target, the DNS/QUIC network flags, and the default action for AI destinations with no matching ferentin_endpoint_destination_rule.
+  Endpoint posture for managed devices — the unapproved-MCP action, the MCP gateway target, the DNS/QUIC network flags, the default action for AI destinations with no matching ferentin_endpoint_destination_rule, call-time MCP rule enforcement, and the tenant's policy for unvetted local MCP tools.
   Omit device_group_id for the tenant default row (which every device, including ungrouped ones, resolves through). Set it for a per-group override.
   ~> This resource is an upsert, not a create. The platform API has no POST and no GET-by-id; identity is (tenant_id, device_group_id). Consequences:
   If posture already exists (e.g. configured in the console), terraform apply adopts the existing row rather than failing. managed_by still reports the original creator, so the adoption is visible as drift.terraform destroy on the tenant default row does not delete it and does not change it — the platform refuses to delete a row every device resolves through. Terraform drops it from state and the fleet keeps enforcing the last applied posture, with a warning saying so. This is fail-closed on purpose: resetting to the permissive defaults would silently de-enforce the whole fleet, and removing the resource block or dropping a module reaches the same code path as an explicit destroy. To stand enforcement down, apply the permissive posture first, then destroy. A group override is genuinely deleted, and the group falls back to the tenant default.
@@ -19,7 +19,7 @@ description: |-
 
 # ferentin_endpoint_policy_settings (Resource)
 
-Endpoint posture for managed devices — the unapproved-MCP action, the MCP gateway target, the DNS/QUIC network flags, and the default action for AI destinations with no matching `ferentin_endpoint_destination_rule`.
+Endpoint posture for managed devices — the unapproved-MCP action, the MCP gateway target, the DNS/QUIC network flags, the default action for AI destinations with no matching `ferentin_endpoint_destination_rule`, call-time MCP rule enforcement, and the tenant's policy for unvetted local MCP tools.
 
 Omit `device_group_id` for the **tenant default** row (which every device, including ungrouped ones, resolves through). Set it for a **per-group override**.
 
@@ -72,6 +72,18 @@ resource "ferentin_device_group" "contractors" {
 resource "ferentin_endpoint_policy_settings" "default" {
   unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
+
+  # Count what MCP `block` rules would deny without denying anything.
+  hook_rule_enforcement = "shadow"
+
+  # Unvetted local MCP tools, by risk rating. Tenant default only: the platform
+  # refuses this on a device-group override. Any ask_once / ask_every_call tier
+  # needs approval routing configured in the admin console first.
+  local_mcp_risk_policy = {
+    low    = "allow"
+    medium = "deny"
+    high   = "deny"
+  }
 }
 
 # Contractors get the strict posture: quarantine unapproved MCP server configs,
@@ -92,6 +104,11 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
   ech_strip_enabled  = true
   doh_block_enabled  = true
   quic_block_enabled = true
+
+  # Deny tool calls that match an MCP `block` rule. The platform refuses this
+  # (409) until every active device in the group runs an agent that enforces
+  # call-time rules; check hookRuleEnforcementCoverage in the console first.
+  hook_rule_enforcement = "enforce"
 }
 ```
 
@@ -106,6 +123,21 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
 This is part of the resource **identity**, not a mutable field: changing it forces replacement, because a different value addresses a different row.
 - `doh_block_enabled` (Boolean) Block external DNS-over-HTTPS resolvers so name resolution stays observable. Default `false`.
 - `ech_strip_enabled` (Boolean) Strip HTTPS/SVCB DNS records so Encrypted Client Hello is not advertised, keeping SNI inspectable. Default `false`.
+- `hook_rule_enforcement` (String) Call-time enforcement of MCP `block` rules:
+
+* `shadow` — count what a `block` rule would deny, deny nothing
+* `enforce` — deny the tool call (Claude Code `PreToolUse`, Cursor `beforeShellExecution` / `beforeMCPExecution`)
+
+Omit to keep the current value (the platform's default on a new row).
+
+~> Moving a row to `enforce` is refused with 409 until every active device in its scope runs an agent build that enforces call-time rules (see `hookRuleEnforcementCoverage` on the posture fleet status in the console). A row already on `enforce` saves normally.
+- `local_mcp_risk_policy` (Attributes) What an unvetted local MCP tool gets at each risk rating: `allow`, `ask_once`, `ask_every_call` or `deny` for each of `low`, `medium` and `high`. Unset on the platform means the legacy behaviour (step up when approval routing exists, deny otherwise).
+
+**Tenant default only**: the decision is read from the tenant-default row alone, so the platform refuses it on a device-group override, and this fails at plan when `device_group_id` is set.
+
+~> Any `ask_*` tier needs approval routing (`localMcpApprovalConfig` with at least one channel), which this resource does not manage; set it up in the admin console first or the platform rejects the write.
+
+Removing this block from config leaves the stored policy in place. Clearing it is done in the admin console. (see [below for nested schema](#nestedatt--local_mcp_risk_policy))
 - `mcp_gateway_url` (String) Tenant MCP gateway base URL that approved server configs are rewritten to point at. Unset = the agent reports what it finds and rewrites nothing.
 
 Must be `https://` — an `http://` value would downgrade every governed MCP session on the fleet to cleartext, which is strictly worse than the ungoverned status quo it replaces. The platform rejects it; this fails at plan.
@@ -130,3 +162,12 @@ Must be `https://` — an `http://` value would downgrade every governed MCP ses
 - `version` (Number) Optimistic-concurrency version, threaded as `If-Match` on update, and on delete of a group override (the tenant-default row is never deleted, so nothing is sent for it).
 
 ~> On this upsert resource the platform treats an `If-Match` against a row that does **not** exist as a failed precondition (412), not a create — it refuses to resurrect a deleted row at version 0 with fresh provenance. The provider therefore sends no `If-Match` on the first write.
+
+<a id="nestedatt--local_mcp_risk_policy"></a>
+### Nested Schema for `local_mcp_risk_policy`
+
+Required:
+
+- `high` (String) Action for a high-risk tool.
+- `low` (String) Action for a low-risk tool.
+- `medium` (String) Action for a medium-risk tool.

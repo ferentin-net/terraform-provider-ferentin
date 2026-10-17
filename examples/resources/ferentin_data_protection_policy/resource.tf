@@ -68,7 +68,28 @@ resource "ferentin_data_protection_policy" "endpoint_secrets" {
   # Withhold tool output the device could not scan (best effort).
   tool_output_unscanned_action = "withhold"
 
+  # Deny an MCP tool call whose arguments were too large to scan whole
+  # (Claude Code and Cursor only).
+  tool_input_unscanned_action = "block"
+
   # Empty or unset = every enrolled device. Reference
   # ferentin_device_group.<name>.group_id to narrow it.
   device_group_ids = []
+}
+
+# A2A data protection: scans what is sent to A2A agents and what they return.
+# An A2A skill served as an MCP tool is scanned once, under these scopes.
+resource "ferentin_data_protection_policy" "a2a_pii" {
+  name             = "a2a-pii"
+  enabled_profiles = ["US_PII", "SECRETS"]
+  default_effect   = "redact"
+
+  apply_to_llm_input  = false
+  apply_to_llm_output = false
+
+  apply_to_a2a_input  = true # messages, data, files and metadata sent to agents
+  apply_to_a2a_output = true # agent replies, task status messages and artifacts
+
+  # A file that cannot be scanned (binary, too large, or a file link) is refused.
+  a2a_unscannable_file_action = "block"
 }

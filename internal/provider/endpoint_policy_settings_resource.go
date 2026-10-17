@@ -7,11 +7,15 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
+	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringplanmodifier"
@@ -19,6 +23,7 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
+	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
 
 // A platform column default, mirrored here as a schema default so a config that
@@ -39,6 +44,15 @@ import (
 const (
 	postureDefaultDestinationAction = "allow"
 )
+
+// localMcpRiskActions is what an unvetted local MCP tool at one risk rating gets.
+var localMcpRiskActions = []string{"allow", "ask_once", "ask_every_call", "deny"}
+
+var localMcpRiskPolicyAttrTypes = map[string]attr.Type{
+	"low":    types.StringType,
+	"medium": types.StringType,
+	"high":   types.StringType,
+}
 
 // EndpointPolicySettingsResource is the `ferentin_endpoint_policy_settings`
 // Terraform resource — endpoint posture for a tenant, or for one device group
@@ -79,6 +93,12 @@ type EndpointPolicySettingsResourceModel struct {
 	EchStripEnabled          types.Bool   `tfsdk:"ech_strip_enabled"`
 	DohBlockEnabled          types.Bool   `tfsdk:"doh_block_enabled"`
 	QuicBlockEnabled         types.Bool   `tfsdk:"quic_block_enabled"`
+
+	// Server-defaulted and console-editable (platform#3011, GH #2986): Optional +
+	// Computed + UseStateForUnknown, no Default, so omitting either keeps what the
+	// tenant has. The upsert keeps any field the request leaves out.
+	HookRuleEnforcement types.String `tfsdk:"hook_rule_enforcement"`
+	LocalMcpRiskPolicy  types.Object `tfsdk:"local_mcp_risk_policy"`
 
 	SettingsID types.String `tfsdk:"settings_id"`
 	CreatedAt  types.String `tfsdk:"created_at"`
@@ -123,8 +143,9 @@ func (r *EndpointPolicySettingsResource) Configure(_ context.Context, req resour
 func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Endpoint posture for managed devices — the unapproved-MCP action, the MCP " +
-			"gateway target, the DNS/QUIC network flags, and the default action for AI destinations with " +
-			"no matching `ferentin_endpoint_destination_rule`.\n\n" +
+			"gateway target, the DNS/QUIC network flags, the default action for AI destinations with " +
+			"no matching `ferentin_endpoint_destination_rule`, call-time MCP rule enforcement, and the " +
+			"tenant's policy for unvetted local MCP tools.\n\n" +
 			"Omit `device_group_id` for the **tenant default** row (which every device, including " +
 			"ungrouped ones, resolves through). Set it for a **per-group override**.\n\n" +
 			"~> **This resource is an upsert, not a create.** The platform API has no POST and no " +
@@ -243,6 +264,59 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 				Optional: true, Computed: true,
 				Default: booldefault.StaticBool(false),
 			},
+			"hook_rule_enforcement": schema.StringAttribute{
+				MarkdownDescription: "Call-time enforcement of MCP `block` rules:\n\n" +
+					"* `shadow` — count what a `block` rule would deny, deny nothing\n" +
+					"* `enforce` — deny the tool call (Claude Code `PreToolUse`, Cursor " +
+					"`beforeShellExecution` / `beforeMCPExecution`)\n\n" +
+					"Omit to keep the current value (the platform's default on a new row).\n\n" +
+					"~> Moving a row to `enforce` is refused with 409 until every active device in its " +
+					"scope runs an agent build that enforces call-time rules (see " +
+					"`hookRuleEnforcementCoverage` on the posture fleet status in the console). A row " +
+					"already on `enforce` saves normally.",
+				// Computed + UseStateForUnknown, no Default — see unapproved_mcp_action.
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+				Validators:    []validator.String{stringvalidator.OneOf("shadow", "enforce")},
+			},
+			"local_mcp_risk_policy": schema.SingleNestedAttribute{
+				MarkdownDescription: "What an unvetted local MCP tool gets at each risk rating: `allow`, " +
+					"`ask_once`, `ask_every_call` or `deny` for each of `low`, `medium` and `high`. Unset on " +
+					"the platform means the legacy behaviour (step up when approval routing exists, deny " +
+					"otherwise).\n\n" +
+					"**Tenant default only**: the decision is read from the tenant-default row alone, so the " +
+					"platform refuses it on a device-group override, and this fails at plan when " +
+					"`device_group_id` is set.\n\n" +
+					"~> Any `ask_*` tier needs approval routing (`localMcpApprovalConfig` with at least one " +
+					"channel), which this resource does not manage; set it up in the admin console first or " +
+					"the platform rejects the write.\n\n" +
+					"Removing this block from config leaves the stored policy in place. Clearing it is done " +
+					"in the admin console.",
+				Optional:      true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
+				Validators: []validator.Object{
+					objectvalidator.ConflictsWith(path.MatchRoot("device_group_id")),
+				},
+				Attributes: map[string]schema.Attribute{
+					"low": schema.StringAttribute{
+						MarkdownDescription: "Action for a low-risk tool.",
+						Required:            true,
+						Validators:          []validator.String{stringvalidator.OneOf(localMcpRiskActions...)},
+					},
+					"medium": schema.StringAttribute{
+						MarkdownDescription: "Action for a medium-risk tool.",
+						Required:            true,
+						Validators:          []validator.String{stringvalidator.OneOf(localMcpRiskActions...)},
+					},
+					"high": schema.StringAttribute{
+						MarkdownDescription: "Action for a high-risk tool.",
+						Required:            true,
+						Validators:          []validator.String{stringvalidator.OneOf(localMcpRiskActions...)},
+					},
+				},
+			},
 
 			"settings_id": schema.StringAttribute{
 				MarkdownDescription: "Platform row UUID. Informational — the resource is addressed by " +
@@ -302,7 +376,7 @@ func (r *EndpointPolicySettingsResource) Create(ctx context.Context, req resourc
 	// the platform answers an If-Match against a missing row with 412.
 	row, err := r.upsert(ctx, tenantID, plan.DeviceGroupID, "", plan.toWrite())
 	if err != nil {
-		addSDKError(&resp.Diagnostics, "Failed to write endpoint policy settings", err)
+		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to write endpoint policy settings", err, plan)
 		return
 	}
 	state := endpointSettingsToModel(tenantID, row)
@@ -345,7 +419,7 @@ func (r *EndpointPolicySettingsResource) Update(ctx context.Context, req resourc
 	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
 	row, err := r.upsert(ctx, tenantID, state.DeviceGroupID, version, plan.toWrite())
 	if err != nil {
-		addSDKError(&resp.Diagnostics, "Failed to update endpoint policy settings", err)
+		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to update endpoint policy settings", err, plan)
 		return
 	}
 	refreshed := endpointSettingsToModel(tenantID, row)
@@ -409,7 +483,7 @@ func (r *EndpointPolicySettingsResource) Delete(ctx context.Context, req resourc
 			"this path just as `terraform destroy` does.\n\n"+
 			"To actually stand enforcement down, do it explicitly and then destroy:\n"+
 			"  1. Set unapproved_mcp_action = \"report_only\", default_destination_action = \"allow\", "+
-			"clear mcp_gateway_url, and turn the network flags off.\n"+
+			"hook_rule_enforcement = \"shadow\", clear mcp_gateway_url, and turn the network flags off.\n"+
 			"  2. terraform apply\n"+
 			"  3. terraform destroy (or remove the resource block)",
 			state.UnapprovedMcpAction.ValueString(), state.DefaultDestinationAction.ValueString()))
@@ -476,6 +550,13 @@ func (m *EndpointPolicySettingsResourceModel) toWrite() adminapi.EndpointPolicyS
 	setBoolPtr(m.EchStripEnabled, &body.EchStripEnabled)
 	setBoolPtr(m.DohBlockEnabled, &body.DohBlockEnabled)
 	setBoolPtr(m.QuicBlockEnabled, &body.QuicBlockEnabled)
+	// Sent only when configured: omitted, the upsert keeps the stored value, which
+	// is how a console-set value survives a config that does not mention it.
+	if !m.HookRuleEnforcement.IsNull() && !m.HookRuleEnforcement.IsUnknown() {
+		h := gen.EndpointPolicySettingsRequestHookRuleEnforcement(m.HookRuleEnforcement.ValueString())
+		body.HookRuleEnforcement = &h
+	}
+	body.LocalMcpRiskPolicy = localMcpRiskPolicyToSDK(m.LocalMcpRiskPolicy)
 
 	// mcp_gateway_url is optional-not-computed, so a config that drops it must
 	// actively CLEAR the stored value. The platform's upsert preserves omitted
@@ -511,6 +592,8 @@ func endpointSettingsToModel(tenantID string, row *adminapi.EndpointPolicySettin
 	m.EchStripEnabled = boolPtrOrDefault(row.EchStripEnabled)
 	m.DohBlockEnabled = boolPtrOrDefault(row.DohBlockEnabled)
 	m.QuicBlockEnabled = boolPtrOrDefault(row.QuicBlockEnabled)
+	m.HookRuleEnforcement = enumPtrToTF(row.HookRuleEnforcement)
+	m.LocalMcpRiskPolicy = localMcpRiskPolicyToTF(row.LocalMcpRiskPolicy)
 	m.CreatedAt = timePtrToTF(row.CreatedAt)
 	m.UpdatedAt = timePtrToTF(row.UpdatedAt)
 
@@ -520,4 +603,56 @@ func endpointSettingsToModel(tenantID string, row *adminapi.EndpointPolicySettin
 	m.ManagedByModule = strPtrToTF(row.ManagedByModule)
 	m.LastModifiedBy = enumPtrToTF(row.LastModifiedBy)
 	return m
+}
+
+// localMcpRiskPolicyToSDK sends the policy only when it is configured. All three
+// tiers are Required in the schema, so a known object always carries all three.
+func localMcpRiskPolicyToSDK(o types.Object) *gen.LocalMcpRiskPolicy {
+	if o.IsNull() || o.IsUnknown() {
+		return nil
+	}
+	tier := func(name string) string {
+		v, ok := o.Attributes()[name].(types.String)
+		if !ok {
+			return ""
+		}
+		return v.ValueString()
+	}
+	low := gen.LocalMcpRiskPolicyLow(tier("low"))
+	medium := gen.LocalMcpRiskPolicyMedium(tier("medium"))
+	high := gen.LocalMcpRiskPolicyHigh(tier("high"))
+	return &gen.LocalMcpRiskPolicy{Low: &low, Medium: &medium, High: &high}
+}
+
+// localMcpRiskPolicyToTF reads an absent policy, or one with no tier set, as null:
+// that is what the platform stores for "no policy" (it maps {} to null).
+func localMcpRiskPolicyToTF(p *gen.LocalMcpRiskPolicy) types.Object {
+	if p == nil || (p.Low == nil && p.Medium == nil && p.High == nil) {
+		return types.ObjectNull(localMcpRiskPolicyAttrTypes)
+	}
+	return types.ObjectValueMust(localMcpRiskPolicyAttrTypes, map[string]attr.Value{
+		"low":    enumPtrToTF(p.Low),
+		"medium": enumPtrToTF(p.Medium),
+		"high":   enumPtrToTF(p.High),
+	})
+}
+
+// addEndpointSettingsWriteError gives the one 409 this upsert can produce its own
+// message. addSDKError's conflict text is about a name or slug already in use,
+// which is wrong here: the platform refuses a move to `enforce` with 409 until the
+// scope's fleet can enforce call-time rules.
+func addEndpointSettingsWriteError(diags *diag.Diagnostics, op string, err error,
+	plan EndpointPolicySettingsResourceModel) {
+	if errors.Is(err, adminapi.ErrConflict) && plan.HookRuleEnforcement.ValueString() == "enforce" {
+		diags.AddError(
+			fmt.Sprintf("%s — fleet not ready for hook_rule_enforcement = \"enforce\"", op),
+			"The platform refuses to move this scope to `enforce` until every active device in it runs "+
+				"an agent build that enforces call-time MCP rules. Check `hookRuleEnforcementCoverage` "+
+				"on the posture fleet status in the admin console, update or retire the devices it "+
+				"lists, then re-apply. Until then, keep `hook_rule_enforcement = \"shadow\"` to count "+
+				"what the rules would deny.\n\nDetails: "+err.Error(),
+		)
+		return
+	}
+	addSDKError(diags, op, err)
 }
