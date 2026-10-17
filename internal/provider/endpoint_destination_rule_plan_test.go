@@ -188,3 +188,76 @@ func TestEndpointRuleModifyPlan_WarnsWhenCriteriaAreRemoved(t *testing.T) {
 		t.Errorf("warning detail = %q, want it to name the rule", got)
 	}
 }
+
+// Removing device_group_ids or an app filter widens the rule the same way
+// removing criteria does, and after an upgrade it can be a removal the provider
+// used to ignore, so ModifyPlan warns. Only a non-empty list going empty warns:
+// an unknown plan may resolve to the same list, and [] -> null (the one-time
+// update after upgrading) was never narrowed.
+func TestEndpointRuleModifyPlan_WarnsWhenTargetsAreRemoved(t *testing.T) {
+	ctx := context.Background()
+	s := endpointRuleSchema(t)
+	listType := s.Type().TerraformType(ctx).(tftypes.Object).AttributeTypes["device_group_ids"]
+	group := tftypes.NewValue(listType, []tftypes.Value{
+		tftypes.NewValue(tftypes.String, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+	})
+	null := tftypes.NewValue(listType, nil)
+	empty := tftypes.NewValue(listType, []tftypes.Value{})
+	unknown := tftypes.NewValue(listType, tftypes.UnknownValue)
+
+	for _, attr := range []string{"device_group_ids", "app_bundle_ids", "app_signing_ids", "app_team_ids"} {
+		for name, tc := range map[string]struct {
+			state, plan tftypes.Value
+			wantWarning bool
+		}{
+			"removed":       {state: group, plan: null, wantWarning: true},
+			"emptied":       {state: group, plan: empty, wantWarning: true},
+			"unchanged":     {state: group, plan: group},
+			"unknown":       {state: group, plan: unknown},
+			"empty to null": {state: empty, plan: null},
+			"added":         {state: null, plan: group},
+		} {
+			t.Run(attr+"/"+name, func(t *testing.T) {
+				state := tfsdk.State{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+					"name": tftypes.NewValue(tftypes.String, "allow-contractors"),
+					attr:   tc.state,
+				})}
+				plan := tfsdk.Plan{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+					"name": tftypes.NewValue(tftypes.String, "allow-contractors"),
+					attr:   tc.plan,
+				})}
+
+				r := &EndpointDestinationRuleResource{}
+				resp := &resource.ModifyPlanResponse{Plan: plan}
+				r.ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan}, resp)
+
+				if resp.Diagnostics.HasError() {
+					t.Fatalf("unexpected errors: %v", resp.Diagnostics.Errors())
+				}
+				warnings := resp.Diagnostics.Warnings()
+				if !tc.wantWarning {
+					if len(warnings) != 0 {
+						t.Errorf("unexpected warning: %v", warnings)
+					}
+					return
+				}
+				if len(warnings) != 1 {
+					t.Fatalf("got %d warnings, want 1: %v", len(warnings), warnings)
+				}
+				if got := warnings[0].Summary(); !strings.Contains(got, attr) {
+					t.Errorf("warning summary = %q, want it to name %s", got, attr)
+				}
+				detail := warnings[0].Detail()
+				if !strings.Contains(detail, "allow-contractors") {
+					t.Errorf("warning detail = %q, want it to name the rule", detail)
+				}
+				if !strings.Contains(detail, "1 `"+attr+"` value ") {
+					t.Errorf("warning detail = %q, want a singular count", detail)
+				}
+				if !strings.Contains(detail, "Earlier provider versions") {
+					t.Errorf("warning detail = %q, want the upgrade note", detail)
+				}
+			})
+		}
+	}
+}

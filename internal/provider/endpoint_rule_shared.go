@@ -79,6 +79,37 @@ func warnOnCriteriaRemoval(ctx context.Context, req resource.ModifyPlanRequest, 
 	}
 }
 
+// warnOnTargetRemoval warns when an apply is about to empty a list that narrows
+// the rule (device_group_ids, an app filter). Like criteria, an empty list
+// means "everything", so the removal widens the rule. widensTo names what the
+// rule then applies to; extra is appended to the detail, as for
+// warnOnCriteriaRemoval.
+func warnOnTargetRemoval(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse, attr, widensTo, extra string) {
+	if req.State.Raw.IsNull() || req.Plan.Raw.IsNull() {
+		return
+	}
+	var stateList, planList types.List
+	var name types.String
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root(attr), &stateList)...)
+	resp.Diagnostics.Append(req.Plan.GetAttribute(ctx, path.Root(attr), &planList)...)
+	resp.Diagnostics.Append(req.State.GetAttribute(ctx, path.Root("name"), &name)...)
+	if resp.Diagnostics.HasError() || planList.IsUnknown() {
+		return
+	}
+	if n := len(stateList.Elements()); n > 0 && len(planList.Elements()) == 0 {
+		values := "values"
+		if n == 1 {
+			values = "value"
+		}
+		resp.Diagnostics.AddAttributeWarning(path.Root(attr),
+			fmt.Sprintf("This apply removes the rule's `%s`", attr),
+			fmt.Sprintf("Rule %q currently has %d `%s` %s and the plan has none, so it will "+
+				"apply to %s. An empty list means \"no narrowing\", not \"nothing\".\n\n"+
+				"If you meant to keep the rule narrowed, add `%s` back to the config.%s",
+				name.ValueString(), n, attr, values, widensTo, attr, extra))
+	}
+}
+
 // emptyStringAsNull reads an absent or empty string as null, for an Optional
 // (not Computed) attribute the platform clears to "" or omits.
 func emptyStringAsNull(p *string) types.String {

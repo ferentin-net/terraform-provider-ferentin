@@ -167,6 +167,87 @@ func TestEndpointRuleToModel_RoundTrip(t *testing.T) {
 	}
 }
 
+// description, destination_hosts, app_*_ids and device_group_ids are Optional,
+// not Computed, so the platform's empty forms must read as null (a config that
+// omits them plans null, and removing one plans the clear), while an empty form
+// the config wrote explicitly is kept.
+func TestEndpointRule_EmptyFormsReadAsNullUnlessConfigured(t *testing.T) {
+	var diags diag.Diagnostics
+	m := endpointRuleToModel(fixtureTenantID, &adminapi.EndpointDestinationRule{
+		Description:      strPtr(""),
+		DestinationHosts: &[]string{},
+		AppBundleIds:     &[]string{},
+		AppSigningIds:    &[]string{},
+		AppTeamIds:       &[]string{},
+		DeviceGroupIds:   &[]adminapi.UUID{},
+	}, &diags)
+	lists := func(m EndpointDestinationRuleResourceModel) map[string]types.List {
+		return map[string]types.List{
+			"destination_hosts": m.DestinationHosts,
+			"app_bundle_ids":    m.AppBundleIDs,
+			"app_signing_ids":   m.AppSigningIDs,
+			"app_team_ids":      m.AppTeamIDs,
+			"device_group_ids":  m.DeviceGroupIDs,
+		}
+	}
+	if !m.Description.IsNull() {
+		t.Errorf("description = %v, want null", m.Description)
+	}
+	for name, l := range lists(m) {
+		if !l.IsNull() {
+			t.Errorf("%s = %v, want null", name, l)
+		}
+	}
+
+	nullList := types.ListNull(types.StringType)
+	unset := EndpointDestinationRuleResourceModel{
+		Description:      types.StringNull(),
+		DestinationHosts: nullList,
+		AppBundleIDs:     nullList,
+		AppSigningIDs:    nullList,
+		AppTeamIDs:       nullList,
+		DeviceGroupIDs:   nullList,
+	}
+	got := m
+	got.keepEmptyForms(unset)
+	if !got.Description.IsNull() {
+		t.Errorf("config omits description: %v, want null", got.Description)
+	}
+	for name, l := range lists(got) {
+		if !l.IsNull() {
+			t.Errorf("config omits %s: %v, want null", name, l)
+		}
+	}
+
+	emptyList := types.ListValueMust(types.StringType, []attr.Value{})
+	empty := EndpointDestinationRuleResourceModel{
+		Description:      types.StringValue(""),
+		DestinationHosts: emptyList,
+		AppBundleIDs:     emptyList,
+		AppSigningIDs:    emptyList,
+		AppTeamIDs:       emptyList,
+		DeviceGroupIDs:   emptyList,
+	}
+	got = m
+	got.keepEmptyForms(empty)
+	if got.Description.IsNull() || got.Description.ValueString() != "" {
+		t.Errorf(`config wrote description = "": got %v`, got.Description)
+	}
+	for name, l := range lists(got) {
+		if l.IsNull() || len(l.Elements()) != 0 {
+			t.Errorf("config wrote %s = []: got %v", name, l)
+		}
+	}
+
+	// A real value from the server is never replaced by the prior empty form.
+	groupID := mustParseUUID(t, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
+	m = endpointRuleToModel(fixtureTenantID, &adminapi.EndpointDestinationRule{DeviceGroupIds: &[]adminapi.UUID{groupID}}, &diags)
+	m.keepEmptyForms(empty)
+	if len(m.DeviceGroupIDs.Elements()) != 1 {
+		t.Errorf("server value lost: %v", m.DeviceGroupIDs)
+	}
+}
+
 func TestEndpointSettingsToModel_TenantDefaultVsGroupOverride(t *testing.T) {
 	now := time.Date(2026, 7, 28, 12, 0, 0, 0, time.UTC)
 	rowID := mustParseUUID(t, "33333333-3333-4333-8333-333333333333")

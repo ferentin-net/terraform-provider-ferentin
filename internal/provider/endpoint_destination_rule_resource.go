@@ -188,8 +188,14 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 				// over-long name fails at plan instead of as a 400 at apply.
 				Validators: []validator.String{stringvalidator.LengthBetween(1, 255)},
 			},
+			// description, destination_hosts, app_*_ids and device_group_ids are
+			// Optional, NOT Computed. The PUT replaces them, so removing one from
+			// config must plan a change; Optional+Computed would plan the old state
+			// value instead, and the rule would stay as it was until an unrelated
+			// edit cleared it. endpointRuleToModel reads the platform's empty forms
+			// as null.
 			"description": schema.StringAttribute{
-				Optional: true, Computed: true,
+				Optional: true,
 				// Mirrors @Size(max = 2000).
 				Validators: []validator.String{stringvalidator.LengthAtMost(2000)},
 			},
@@ -229,7 +235,7 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 			"destination_hosts": schema.ListAttribute{
 				MarkdownDescription: "Explicit host / suffix list. **Required when " +
 					"`destination_kind = \"host\"`.**",
-				Optional: true, Computed: true,
+				Optional:    true,
 				ElementType: types.StringType,
 			},
 
@@ -253,15 +259,15 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 			"app_bundle_ids": schema.ListAttribute{
 				MarkdownDescription: "macOS bundle identifiers the rule applies to (e.g. " +
 					"`com.anthropic.claudefordesktop`). Empty or unset = **any app**.",
-				Optional: true, Computed: true, ElementType: types.StringType,
+				Optional: true, ElementType: types.StringType,
 			},
 			"app_signing_ids": schema.ListAttribute{
 				MarkdownDescription: "macOS code-signing identifiers. Empty or unset = any app.",
-				Optional:            true, Computed: true, ElementType: types.StringType,
+				Optional:            true, ElementType: types.StringType,
 			},
 			"app_team_ids": schema.ListAttribute{
 				MarkdownDescription: "Apple Developer Team IDs. Empty or unset = any app.",
-				Optional:            true, Computed: true, ElementType: types.StringType,
+				Optional:            true, ElementType: types.StringType,
 			},
 
 			"device_group_ids": schema.ListAttribute{
@@ -270,7 +276,7 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 					"tenant**, including ungrouped ones.\n\n" +
 					"~> A group id belonging to another tenant is rejected with 404 (the platform " +
 					"deliberately does not distinguish \"not yours\" from \"does not exist\").",
-				Optional: true, Computed: true, ElementType: types.StringType,
+				Optional: true, ElementType: types.StringType,
 			},
 			"criteria_combinator": schema.StringAttribute{
 				MarkdownDescription: "How `criteria` GROUPS combine: `AND` or `OR`. Default `AND`. " +
@@ -368,6 +374,7 @@ func (r *EndpointDestinationRuleResource) Create(ctx context.Context, req resour
 		return
 	}
 	state := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
+	state.keepEmptyForms(plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -388,6 +395,7 @@ func (r *EndpointDestinationRuleResource) Read(ctx context.Context, req resource
 		return
 	}
 	refreshed := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
+	refreshed.keepEmptyForms(state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -418,6 +426,7 @@ func (r *EndpointDestinationRuleResource) Update(ctx context.Context, req resour
 		return
 	}
 	refreshed := endpointRuleToModel(tenantID, rule, &resp.Diagnostics)
+	refreshed.keepEmptyForms(plan)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -514,18 +523,18 @@ func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule
 	}
 	m.ID = types.StringValue(tenantID + "/" + m.RuleID.ValueString())
 	m.Name = strPtrToTF(rule.Name)
-	m.Description = strPtrToTF(rule.Description)
+	m.Description = emptyStringAsNull(rule.Description)
 	m.Priority = int32PtrToTF(rule.Priority)
 	m.Enabled = boolPtrOrDefault(rule.Enabled)
 	m.DestinationKind = strPtrToTF(rule.DestinationKind)
 	m.CatalogSlug = strPtrToTF(rule.CatalogSlug)
-	m.DestinationHosts = stringSliceToList(rule.DestinationHosts)
+	m.DestinationHosts = emptyListAsNull(stringSliceToList(rule.DestinationHosts))
 	m.Action = strPtrToTF(rule.Action)
 	m.SteerToURL = strPtrToTF(rule.SteerToUrl)
-	m.AppBundleIDs = stringSliceToList(rule.AppBundleIds)
-	m.AppSigningIDs = stringSliceToList(rule.AppSigningIds)
-	m.AppTeamIDs = stringSliceToList(rule.AppTeamIds)
-	m.DeviceGroupIDs = uuidSliceToList(rule.DeviceGroupIds)
+	m.AppBundleIDs = emptyListAsNull(stringSliceToList(rule.AppBundleIds))
+	m.AppSigningIDs = emptyListAsNull(stringSliceToList(rule.AppSigningIds))
+	m.AppTeamIDs = emptyListAsNull(stringSliceToList(rule.AppTeamIds))
+	m.DeviceGroupIDs = emptyListAsNull(uuidSliceToList(rule.DeviceGroupIds))
 	m.CriteriaCombinator = strPtrToTF(rule.CriteriaCombinator)
 	m.Criteria = endpointRuleCriteria(rule.Criteria, diags)
 	m.CreatedAt = timePtrToTF(rule.CreatedAt)
@@ -562,12 +571,32 @@ func endpointRuleCriteria(criteria *[]map[string]interface{}, diags *diag.Diagno
 	return models
 }
 
-// ModifyPlan warns when an apply is about to delete a rule's criteria; see
-// warnOnCriteriaRemoval. Under an allowlist posture (`default_destination_action
-// = "block"`) that warning is the difference between a scoped exception and a
-// fleet-wide one.
+// ModifyPlan warns when an apply is about to delete a rule's criteria, device
+// groups or app filters; see warnOnCriteriaRemoval and warnOnTargetRemoval.
+// Under an allowlist posture (`default_destination_action = "block"`) that
+// warning is the difference between a scoped exception and a fleet-wide one.
 func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	warnOnCriteriaRemoval(ctx, req, resp,
 		"\n\nIf you meant to keep them, add the `criteria` block back to the config (criteria "+
 			"authored in the admin console are not preserved for you — Terraform owns this field now).")
+	// Earlier versions planned no change when these were removed, so after an
+	// upgrade the warning can be about a removal made long ago.
+	const upgrade = " Earlier provider versions ignored the removal of this attribute, so after " +
+		"an upgrade this can be a removal made long ago."
+	warnOnTargetRemoval(ctx, req, resp, "device_group_ids",
+		"every device in the tenant, including ungrouped ones", upgrade)
+	for _, attr := range []string{"app_bundle_ids", "app_signing_ids", "app_team_ids"} {
+		warnOnTargetRemoval(ctx, req, resp, attr, "any app, unless another app filter still narrows it", upgrade)
+	}
+}
+
+// keepEmptyForms restores an empty form the config wrote explicitly for the
+// Optional, non-Computed attributes, which endpointRuleToModel reads as null.
+func (m *EndpointDestinationRuleResourceModel) keepEmptyForms(prior EndpointDestinationRuleResourceModel) {
+	m.Description = keepEmptyString(prior.Description, m.Description)
+	m.DestinationHosts = keepEmptyList(prior.DestinationHosts, m.DestinationHosts)
+	m.AppBundleIDs = keepEmptyList(prior.AppBundleIDs, m.AppBundleIDs)
+	m.AppSigningIDs = keepEmptyList(prior.AppSigningIDs, m.AppSigningIDs)
+	m.AppTeamIDs = keepEmptyList(prior.AppTeamIDs, m.AppTeamIDs)
+	m.DeviceGroupIDs = keepEmptyList(prior.DeviceGroupIDs, m.DeviceGroupIDs)
 }

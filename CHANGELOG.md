@@ -24,6 +24,14 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   examples now declare `required_version = ">= 1.11"`, and CI runs the unit
   tests and fixture validation on 1.11 and on the latest release.
 
+- **`ferentin_endpoint_destination_rule` can widen on the first apply after
+  upgrading.** If a config removed `device_group_ids` (or an app filter) in
+  the past, earlier versions ignored the removal and the rule stayed narrowed.
+  This version plans the removal, so the next apply makes the rule apply to
+  every device in the tenant (or every app). `terraform plan` warns when this
+  happens. Read the plan before applying. See the Fixed entry below.
+  (ferentin-net/terraform-provider-ferentin#18)
+
 ### Added
 - **New resource `ferentin_endpoint_mcp_rule`**: allow / block / steer for
   MCP servers and tool calls on managed devices, matched by `host` /
@@ -37,7 +45,9 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   values fully canonicalized); `match_values` keeps your spelling and the
   computed `stored_match_values` the platform's, so that does not show as
   drift. Read-only `enforcement` reports whether the fleet
-  enforces the rule. (ferentin-net/ferentin-cli-app#313)
+  enforces the rule. `terraform plan` warns when an apply removes a rule's
+  `criteria`, `device_group_ids` or `app_bundle_ids`, since each of those
+  widens it. (ferentin-net/ferentin-cli-app#313)
 - **`ferentin_data_protection_policy` can target enrolled endpoints.** New
   `apply_to_tool_input`, `apply_to_prompt_input` and `apply_to_tool_output`
   (each default `false`), `tool_output_unscanned_action` (`pass` / `withhold`,
@@ -87,6 +97,23 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **`ferentin_endpoint_destination_rule`: removing `description`,
+  `destination_hosts`, `app_bundle_ids`, `app_signing_ids`, `app_team_ids` or
+  `device_group_ids` from config now clears it.** These attributes were
+  Optional + Computed, so removing one planned no change: a rule that dropped
+  `device_group_ids` stayed narrowed to the old groups, and the platform
+  cleared the field later, on an unrelated apply that did not show it. They
+  are now Optional only, as on `ferentin_endpoint_mcp_rule`. **This changes
+  how an existing config behaves:** after upgrading, a config that removed one
+  of these attributes plans the clear it skipped before. Read the plan before
+  applying, especially for `device_group_ids`, where the clear widens the rule
+  to every device in the tenant. `terraform plan` warns when an apply removes
+  `device_group_ids`, `app_bundle_ids`, `app_signing_ids` or `app_team_ids`
+  from a rule that has them, the same way it warns about removing `criteria`.
+  A rule whose state holds an empty list or `""` for an attribute the config
+  omits may also plan a one-time update from `[]` / `""` to null; that update
+  changes nothing on the platform, and does not warn.
+  (ferentin-net/terraform-provider-ferentin#18)
 - **Every example now passes `terraform validate`, and CI checks it.**
   `TestExamplesValidate` validates each directory under `examples/` against
   the provider's schema, on Terraform 1.11 and latest. It found eight that did
