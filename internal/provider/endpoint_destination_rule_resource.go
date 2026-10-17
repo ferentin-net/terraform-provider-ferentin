@@ -579,10 +579,14 @@ func (r *EndpointDestinationRuleResource) ModifyPlan(ctx context.Context, req re
 	warnOnCriteriaRemoval(ctx, req, resp,
 		"\n\nIf you meant to keep them, add the `criteria` block back to the config (criteria "+
 			"authored in the admin console are not preserved for you — Terraform owns this field now).")
+	// Earlier versions planned no change when these were removed, so after an
+	// upgrade the warning can be about a removal made long ago.
+	const upgrade = " Earlier provider versions ignored the removal of this attribute, so after " +
+		"an upgrade this can be a removal made long ago."
 	warnOnTargetRemoval(ctx, req, resp, "device_group_ids",
-		"every device in the tenant, including ungrouped ones")
+		"every device in the tenant, including ungrouped ones", upgrade)
 	for _, attr := range []string{"app_bundle_ids", "app_signing_ids", "app_team_ids"} {
-		warnOnTargetRemoval(ctx, req, resp, attr, "apps it no longer filters by this attribute")
+		warnOnTargetRemoval(ctx, req, resp, attr, "any app, unless another app filter still narrows it", upgrade)
 	}
 }
 

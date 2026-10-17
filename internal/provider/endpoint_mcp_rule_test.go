@@ -362,6 +362,40 @@ func TestParseTenantScopedImportID(t *testing.T) {
 	}
 }
 
+// The MCP rule shares warnOnTargetRemoval with the destination rule; this pins
+// that the resource calls it for both lists, without the destination rule's
+// upgrade note (these attributes were never Computed here).
+func TestEndpointMCPRuleModifyPlan_WarnsWhenTargetsAreRemoved(t *testing.T) {
+	ctx := context.Background()
+	s := endpointMCPRuleSchema(t)
+	for _, attr := range []string{"device_group_ids", "app_bundle_ids"} {
+		listType := s.Type().TerraformType(ctx).(tftypes.Object).AttributeTypes[attr]
+		state := tfsdk.State{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+			"name": tftypes.NewValue(tftypes.String, "block-contractors"),
+			attr: tftypes.NewValue(listType, []tftypes.Value{
+				tftypes.NewValue(tftypes.String, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
+			}),
+		})}
+		plan := tfsdk.Plan{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+			"name": tftypes.NewValue(tftypes.String, "block-contractors"),
+			attr:   tftypes.NewValue(listType, nil),
+		})}
+		resp := &resource.ModifyPlanResponse{Plan: plan}
+		(&EndpointMCPRuleResource{}).ModifyPlan(ctx, resource.ModifyPlanRequest{State: state, Plan: plan}, resp)
+		warnings := resp.Diagnostics.Warnings()
+		if len(warnings) != 1 {
+			t.Fatalf("%s: got %d warnings, want 1: %v", attr, len(warnings), warnings)
+		}
+		detail := warnings[0].Detail()
+		if !strings.Contains(detail, "block-contractors") || !strings.Contains(detail, "1 `"+attr+"` value ") {
+			t.Errorf("%s: warning detail = %q, want the rule name and a singular count", attr, detail)
+		}
+		if strings.Contains(detail, "Earlier provider versions") {
+			t.Errorf("%s: MCP rule warning carries the destination rule's upgrade note: %q", attr, detail)
+		}
+	}
+}
+
 // The MCP rule shares warnOnCriteriaRemoval with the destination rule; this
 // pins that the resource actually calls it.
 func TestEndpointMCPRuleModifyPlan_WarnsWhenCriteriaAreRemoved(t *testing.T) {

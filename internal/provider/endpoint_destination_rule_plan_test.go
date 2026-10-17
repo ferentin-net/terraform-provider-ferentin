@@ -247,8 +247,15 @@ func TestEndpointRuleModifyPlan_WarnsWhenTargetsAreRemoved(t *testing.T) {
 				if got := warnings[0].Summary(); !strings.Contains(got, attr) {
 					t.Errorf("warning summary = %q, want it to name %s", got, attr)
 				}
-				if got := warnings[0].Detail(); !strings.Contains(got, "allow-contractors") {
-					t.Errorf("warning detail = %q, want it to name the rule", got)
+				detail := warnings[0].Detail()
+				if !strings.Contains(detail, "allow-contractors") {
+					t.Errorf("warning detail = %q, want it to name the rule", detail)
+				}
+				if !strings.Contains(detail, "1 `"+attr+"` value ") {
+					t.Errorf("warning detail = %q, want a singular count", detail)
+				}
+				if !strings.Contains(detail, "Earlier provider versions") {
+					t.Errorf("warning detail = %q, want the upgrade note", detail)
 				}
 			})
 		}

@@ -650,6 +650,8 @@ func endpointMCPRuleToModel(tenantID string, rule *adminapi.EndpointMCPRule, dia
 func (r *EndpointMCPRuleResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
 	warnOnCriteriaRemoval(ctx, req, resp,
 		"\n\nIf you meant to keep them, add the `criteria` block back to the config.")
+	warnOnTargetRemoval(ctx, req, resp, "device_group_ids", "every device in the tenant", "")
+	warnOnTargetRemoval(ctx, req, resp, "app_bundle_ids", "any app", "")
 }
 
 // keepEmptyForms restores an empty form the config wrote explicitly for the

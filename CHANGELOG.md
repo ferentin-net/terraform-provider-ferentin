@@ -45,7 +45,9 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   values fully canonicalized); `match_values` keeps your spelling and the
   computed `stored_match_values` the platform's, so that does not show as
   drift. Read-only `enforcement` reports whether the fleet
-  enforces the rule. (ferentin-net/ferentin-cli-app#313)
+  enforces the rule. `terraform plan` warns when an apply removes a rule's
+  `criteria`, `device_group_ids` or `app_bundle_ids`, since each of those
+  widens it. (ferentin-net/ferentin-cli-app#313)
 - **`ferentin_data_protection_policy` can target enrolled endpoints.** New
   `apply_to_tool_input`, `apply_to_prompt_input` and `apply_to_tool_output`
   (each default `false`), `tool_output_unscanned_action` (`pass` / `withhold`,
