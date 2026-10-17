@@ -118,17 +118,28 @@ testacc:
 # fix, misreported as `invalid_client`, which looks exactly like bad
 # credentials). The SDK now backs off on 429, but a subset is still faster and
 # does not spend a shared budget. FERENTIN_TOKEN avoids minting entirely.
+# The local dev admin-api, used when FERENTIN_ENDPOINT is unset. The preflight
+# prefers /usr/bin/curl, which (like Go on macOS) checks the system keychain; it
+# warns only when the provider would verify (FERENTIN_INSECURE_SKIP_VERIFY is
+# not 1 or true, the provider's own rule).
+LOCAL_ENDPOINT ?= https://api.local.ferentin.test
+
 testacc-local:
 	@test -n "$$FERENTIN_TENANT_ID" || { echo "FERENTIN_TENANT_ID must be set"; exit 1; }
 	@test -n "$$FERENTIN_TOKEN" -o -n "$$FERENTIN_CLIENT_ID" || \
 		{ echo "set FERENTIN_TOKEN, or FERENTIN_CLIENT_ID + FERENTIN_CLIENT_SECRET"; exit 1; }
-	@ep="$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test}"; \
-	curl -sk -o /dev/null --max-time 5 "$$ep/" || \
+	@ep="$${FERENTIN_ENDPOINT:-$(LOCAL_ENDPOINT)}"; \
+	c=/usr/bin/curl; [ -x "$$c" ] || c=curl; \
+	"$$c" -sk -o /dev/null --max-time 5 "$$ep/" || \
 		{ echo "$$ep is not reachable: is admin-api-server running (feri a)?"; exit 1; }; \
-	curl -s -o /dev/null --max-time 5 "$$ep/" || [ -n "$$FERENTIN_INSECURE_SKIP_VERIFY" ] || \
-		echo "warning: curl does not trust $$ep's certificate. If the tests fail with an x509 error, trust the local CA (see DEVELOPMENT.md)."
+	if ! "$$c" -s -o /dev/null --max-time 5 "$$ep/"; then \
+		case "$$FERENTIN_INSECURE_SKIP_VERIFY" in \
+			1|true) ;; \
+			*) echo "warning: curl does not trust $$ep's certificate. If the tests fail with an x509 error, trust the local CA (see DEVELOPMENT.md)." ;; \
+		esac; \
+	fi
 	TF_ACC=1 \
-	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-https://api.local.ferentin.test} \
+	FERENTIN_ENDPOINT=$${FERENTIN_ENDPOINT:-$(LOCAL_ENDPOINT)} \
 	go test ./internal/provider -v -count=1 -timeout 30m $(if $(RUN),-run '$(RUN)',)
 
 tidy:
