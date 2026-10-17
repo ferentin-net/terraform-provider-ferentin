@@ -37,6 +37,15 @@ resource "ferentin_endpoint_policy_settings" "default" {
     medium = "deny"
     high   = "deny"
   }
+
+  # Approval routing for step-up approvals on unvetted local MCP tools, as
+  # JSON. An ask_once / ask_every_call tier above needs this set. Clearing it
+  # is done in the admin console.
+  local_mcp_approval_config = jsonencode({
+    step_up_mode    = "approve"
+    timeout_seconds = 900
+    channels        = [{ type = "invocation_context" }]
+  })
 }
 
 # Contractors get the strict posture: quarantine unapproved MCP server configs,
@@ -57,6 +66,17 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
   ech_strip_enabled  = true
   doh_block_enabled  = true
   quic_block_enabled = true
+
+  # Block unapproved AI agents and every local (stdio) MCP server for this
+  # group. Both need the fleet on an agent that implements the control; an
+  # older agent keeps its last-known-good policy.
+  unapproved_agent_action = "block"
+  local_mcp_block_enabled = true
+
+  # Drop port-443 flows to bare public IPs (no hostname to match a rule),
+  # except the VPN concentrators reached that way.
+  unnamed_flow_block_enabled = true
+  unnamed_flow_exempt_cidrs  = ["203.0.113.0/24"]
 
   # Deny tool calls that match an MCP `block` rule. The platform refuses this
   # (409) until every active device in the group runs an agent that enforces
