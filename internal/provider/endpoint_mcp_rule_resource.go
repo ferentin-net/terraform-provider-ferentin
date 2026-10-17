@@ -68,9 +68,8 @@ const (
 //     rule, tool_behavior values trimmed and lowercased, url_prefix values
 //     canonicalized where possible (a block keeps the spelling only when
 //     canonicalizing fails), and allow / steer values fully canonicalized.
-//     State keeps the configured spelling in
-//     match_values and the server's in stored_match_values; see
-//     reconcileMatchValues.
+//     State keeps the configured spelling in match_values and the server's
+//     in stored_match_values; see reconcileMatchValues.
 type EndpointMCPRuleResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
