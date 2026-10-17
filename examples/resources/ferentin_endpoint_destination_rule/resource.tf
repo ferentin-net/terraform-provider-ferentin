@@ -109,9 +109,9 @@ resource "ferentin_endpoint_destination_rule" "allow_chatgpt_for_legal" {
 #    full boot security, content filter attached). A device whose posture is
 #    unknown counts as not compliant, so it falls through to later rules.
 #
-#    NOTE: a posture condition raises the endpoint policy section of every
-#    device that receives this rule to 1.4.0. Agents older than that refuse the
-#    section and keep their last-known-good policy until upgraded.
+#    A condition set in the admin console must be written here too: plan fails
+#    when the rule has one and the config omits it, since removing it widens
+#    the rule. `require_compliant = false` removes it.
 resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices" {
   name     = "allow-claude-compliant"
   priority = 15

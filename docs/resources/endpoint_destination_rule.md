@@ -139,9 +139,9 @@ resource "ferentin_endpoint_destination_rule" "allow_chatgpt_for_legal" {
 #    full boot security, content filter attached). A device whose posture is
 #    unknown counts as not compliant, so it falls through to later rules.
 #
-#    NOTE: a posture condition raises the endpoint policy section of every
-#    device that receives this rule to 1.4.0. Agents older than that refuse the
-#    section and keep their last-known-good policy until upgraded.
+#    A condition set in the admin console must be written here too: plan fails
+#    when the rule has one and the config omits it, since removing it widens
+#    the rule. `require_compliant = false` removes it.
 resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices" {
   name     = "allow-claude-compliant"
   priority = 15
@@ -195,9 +195,7 @@ Default `ai_provider`.
 
 Evaluated on the device. A device whose posture is unknown counts as not compliant for an `allow` rule, and does not escape a `block` rule.
 
-~> **Removing the condition widens the rule.** An `allow` or `steer` rule then applies to non-compliant devices too. A condition set in the admin console shows up in the plan as a removal unless the config declares it; the provider warns about it at plan time.
-
-~> **Agent version.** An enabled rule with a posture condition raises the endpoint policy section of every device that receives it to version `1.4.0`. Agents older than that refuse the section and keep enforcing their last-known-good policy, so they stop picking up endpoint policy changes until upgraded. (see [below for nested schema](#nestedatt--posture_predicate))
+~> **Removing the condition widens the rule.** An `allow` or `steer` rule then applies to non-compliant devices too. So `plan` fails when the rule has a condition (for example one set in the admin console) and the config omits this attribute: write `{ require_compliant = true }` to keep it, or `{ require_compliant = false }` to remove it. (see [below for nested schema](#nestedatt--posture_predicate))
 - `priority` (Number) Evaluation order — 1 is highest, first match wins. Default `100`.
 
 ~> **Ownership warning.** Because ordering *is* the policy semantics here, do not split ownership of `priority` between Terraform and the console. The console's reorder arrows swap two rows' priorities directly; if Terraform also declares `priority`, the next `plan` shows drift and the two fight over evaluation order.

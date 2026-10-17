@@ -4,14 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
-	"github.com/hashicorp/terraform-plugin-testing/knownvalue"
-	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
-	"github.com/hashicorp/terraform-plugin-testing/tfjsonpath"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
@@ -20,24 +18,29 @@ import (
 // TestAccEndpointDestinationRule_posturePredicate covers #20: an apply that
 // touches the rule must not erase its posture condition.
 //
-// Step 2 is the regression guard: an unrelated change (priority) keeps the
-// condition. Step 4 removes it from config and checks the platform cleared it.
-// Step 5 sets it outside Terraform, as the console does, and the plan must show
-// it. Before #20 that plan was empty and the next apply erased the condition.
+//   - Step 2 is the regression guard: an unrelated change (priority) keeps it.
+//   - Steps 4-5 remove it the supported way, `require_compliant = false`, after
+//     which the attribute can be left out.
+//   - Step 6 sets it outside Terraform, as the console does. A config that
+//     omits it must fail the plan, not erase it (before #20 the plan was empty
+//     and the next apply erased it).
 //
-// The rule is disabled throughout. A posture condition moves the devices that
-// receive the rule to bundle section 1.4.0, which older agents in the test
-// tenant would refuse.
+// The rule is disabled throughout, so the test never changes the policy on
+// devices enrolled in the test tenant.
 func TestAccEndpointDestinationRule_posturePredicate(t *testing.T) {
 	suffix := randomSuffix(t)
 	const r = "ferentin_endpoint_destination_rule.test"
+	const (
+		keep   = "  posture_predicate = { require_compliant = true }\n"
+		remove = "  posture_predicate = { require_compliant = false }\n"
+	)
 	var ruleID string
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: configEndpointRulePosture(suffix, 50, "  posture_predicate = { require_compliant = true }\n"),
+				Config: configEndpointRulePosture(suffix, 50, keep),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(r, "posture_predicate.require_compliant", "true"),
 					resource.TestCheckResourceAttrWith(r, "rule_id", func(v string) error {
@@ -47,7 +50,7 @@ func TestAccEndpointDestinationRule_posturePredicate(t *testing.T) {
 				),
 			},
 			{
-				Config: configEndpointRulePosture(suffix, 60, "  posture_predicate = { require_compliant = true }\n"),
+				Config: configEndpointRulePosture(suffix, 60, keep),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(r, "priority", "60"),
 					resource.TestCheckResourceAttr(r, "posture_predicate.require_compliant", "true"),
@@ -58,6 +61,13 @@ func TestAccEndpointDestinationRule_posturePredicate(t *testing.T) {
 				ResourceName:      r,
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+			{
+				Config: configEndpointRulePosture(suffix, 60, remove),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr(r, "posture_predicate.require_compliant", "false"),
+					testAccCheckRulePosturePredicate(t, &ruleID, false),
+				),
 			},
 			{
 				Config: configEndpointRulePosture(suffix, 60, ""),
@@ -93,24 +103,15 @@ func TestAccEndpointDestinationRule_posturePredicate(t *testing.T) {
 						t.Fatalf("out-of-band update: %v", err)
 					}
 				},
-				Config:             configEndpointRulePosture(suffix, 60, ""),
-				PlanOnly:           true,
-				ExpectNonEmptyPlan: true,
-				// Any diff would satisfy ExpectNonEmptyPlan; pin it to the
-				// predicate's removal. PreApply checks do not run on a PlanOnly
-				// step, PostApplyPostRefresh does.
-				ConfigPlanChecks: resource.ConfigPlanChecks{
-					PostApplyPostRefresh: []plancheck.PlanCheck{
-						plancheck.ExpectResourceAction(r, plancheck.ResourceActionUpdate),
-						plancheck.ExpectKnownValue(r, tfjsonpath.New("posture_predicate"), knownvalue.Null()),
-					},
-				},
+				Config:      configEndpointRulePosture(suffix, 60, ""),
+				PlanOnly:    true,
+				ExpectError: regexp.MustCompile(`omits the rule's device posture condition`),
 			},
 			{
-				// The plan-only step does not save its refresh; without this the
-				// destroy sends the pre-edit version as If-Match and gets 412.
-				RefreshState:       true,
-				ExpectNonEmptyPlan: true,
+				// Choosing removal clears it. A normal apply also refreshes the
+				// version the out-of-band edit bumped, so destroy's If-Match holds.
+				Config: configEndpointRulePosture(suffix, 60, remove),
+				Check:  testAccCheckRulePosturePredicate(t, &ruleID, false),
 			},
 		},
 	})
