@@ -25,6 +25,18 @@ resource "ferentin_device_group" "contractors" {
 resource "ferentin_endpoint_policy_settings" "default" {
   unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
+
+  # Count what MCP `block` rules would deny without denying anything.
+  hook_rule_enforcement = "shadow"
+
+  # Unvetted local MCP tools, by risk rating. Tenant default only: the platform
+  # refuses this on a device-group override. Any ask_once / ask_every_call tier
+  # needs approval routing configured in the admin console first.
+  local_mcp_risk_policy = {
+    low    = "allow"
+    medium = "deny"
+    high   = "deny"
+  }
 }
 
 # Contractors get the strict posture: quarantine unapproved MCP server configs,
@@ -45,4 +57,9 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
   ech_strip_enabled  = true
   doh_block_enabled  = true
   quic_block_enabled = true
+
+  # Deny tool calls that match an MCP `block` rule. The platform refuses this
+  # (409) until every active device in the group runs an agent that enforces
+  # call-time rules; check hookRuleEnforcementCoverage in the console first.
+  hook_rule_enforcement = "enforce"
 }

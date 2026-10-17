@@ -254,6 +254,69 @@ resource "ferentin_endpoint_policy_settings" "tenant" {
 	})
 }
 
+// TestAccEndpointPolicySettings_hookRuleAndRiskPolicy covers the two
+// server-defaulted, console-editable fields. The second step drops both from
+// config: the upsert keeps an omitted field and the provider does not send one
+// the config leaves out, so the values must survive. That is the property unit
+// tests cannot prove. `enforce` is not exercised: whether the platform accepts
+// it depends on the tenant's fleet (it returns 409 until devices support it).
+func TestAccEndpointPolicySettings_hookRuleAndRiskPolicy(t *testing.T) {
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: `
+resource "ferentin_endpoint_policy_settings" "tenant" {
+  unapproved_mcp_action      = "report_only"
+  default_destination_action = "allow"
+  hook_rule_enforcement      = "shadow"
+
+  # allow / deny only: an ask_* tier needs approval routing on the tenant.
+  local_mcp_risk_policy = {
+    low    = "allow"
+    medium = "deny"
+    high   = "deny"
+  }
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"hook_rule_enforcement", "shadow"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"local_mcp_risk_policy.low", "allow"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"local_mcp_risk_policy.medium", "deny"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"local_mcp_risk_policy.high", "deny"),
+				),
+			},
+			{
+				// Both omitted, another field changed so the apply really writes.
+				Config: `
+resource "ferentin_endpoint_policy_settings" "tenant" {
+  unapproved_mcp_action      = "quarantine"
+  default_destination_action = "allow"
+}
+`,
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"unapproved_mcp_action", "quarantine"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"hook_rule_enforcement", "shadow"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+						"local_mcp_risk_policy.medium", "deny"),
+				),
+			},
+			{
+				ResourceName:      "ferentin_endpoint_policy_settings.tenant",
+				ImportState:       true,
+				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
 // TestAccEndpointPolicySettings_groupOverride covers the per-group row, which
 // unlike the tenant default IS genuinely deleted on destroy (the group then
 // falls back to the tenant default).
