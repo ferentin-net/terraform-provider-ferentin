@@ -123,6 +123,14 @@ func TestAccEndpointMCPRule_outOfBandEditShowsAsDrift(t *testing.T) {
 				PlanOnly:           true,
 				ExpectNonEmptyPlan: true,
 			},
+			{
+				// The plan-only step does not save its refresh, and the post-test
+				// destroy does not refresh either, so without this the destroy
+				// sends the pre-edit version as If-Match and gets 412, leaving the
+				// rule behind.
+				RefreshState:       true,
+				ExpectNonEmptyPlan: true,
+			},
 		},
 	})
 }
