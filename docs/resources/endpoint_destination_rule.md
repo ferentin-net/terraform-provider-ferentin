@@ -85,7 +85,7 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned_hosts" {
   priority = 100
 
   destination_kind  = "host"
-  destination_hosts = ["api.unsanctioned-ai.example", "*.shadow-llm.example"]
+  destination_hosts = ["api.unsanctioned-ai.example", ".shadow-llm.example"]
   action            = "block"
 }
 
@@ -180,7 +180,15 @@ resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices
 ~> **Not yet enforced on-device.** The endpoint agent ships criteria in the policy bundle but refuses to match a rule that has them until the on-device user principal lands (platform#2014), so a criteria-scoped rule is inert on the fleet today. That is fail-closed for `allow` and `steer`, and it means a `block` rule scoped by criteria does not block. (see [below for nested schema](#nestedatt--criteria))
 - `criteria_combinator` (String) How `criteria` GROUPS combine: `AND` or `OR`. Default `AND`. Conditions *within* a group combine via that group's own `operator`, so this only matters once a rule has two or more groups.
 - `description` (String)
-- `destination_hosts` (List of String) Explicit host / suffix list. **Required when `destination_kind = "host"`.**
+- `destination_hosts` (List of String) Explicit host / suffix list. **Required when `destination_kind = "host"`.** At most 64.
+
+* `api.example.com` — that host alone. A bare host does **not** cover its subdomains.
+* `.example.com` — `example.com` and every host under it.
+* `*.example.com` — the same as `.example.com`.
+
+The platform trims and lowercases hosts; your spelling is kept here. A scheme, port, path, space or other `*` fails at plan.
+
+~> Prefer `.example.com`. Endpoint agents without ferentin-endpoint#1246 refuse `*.example.com`, and one host an agent refuses makes it refuse the tenant's **whole** endpoint policy and keep its last-known-good one.
 - `destination_kind` (String) How the destination is identified:
 
 * `ai_provider` — matches a provider from the platform's AI catalog via `catalog_slug`. The agent resolves hosts from the discovery data it already has, so a new provider host does **not** require a rule rewrite. Preferred.

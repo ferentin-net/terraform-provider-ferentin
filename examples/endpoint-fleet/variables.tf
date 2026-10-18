@@ -113,7 +113,7 @@ variable "mcp_gateway_url" {
 variable "blocked_hosts" {
   type        = list(string)
   description = "Explicit host / suffix deny list for shadow-AI endpoints with no catalog entry."
-  default     = ["api.unsanctioned-ai.example", "*.shadow-llm.example"]
+  default     = ["api.unsanctioned-ai.example", ".shadow-llm.example"]
 }
 
 variable "hook_rule_enforcement" {
