@@ -244,7 +244,8 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 			},
 			"steer_to_url": schema.StringAttribute{
 				MarkdownDescription: "Gateway route a remote `steer` rule sends the server to: this tenant's " +
-					"MCP gateway URL ending in the route of an enabled MCP server. **Required on a `steer` " +
+					"MCP gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`, " +
+					"ending in the route of an enabled MCP server. **Required on a `steer` " +
 					"rule with `match_kind` `host` or `url_prefix`; refused on any other rule.** Must be " +
 					"`https://`. A local steer is the shim wrap and has no target.",
 				Optional: true,

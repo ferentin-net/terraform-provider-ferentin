@@ -4,7 +4,7 @@ page_title: "ferentin_endpoint_destination_rule Resource - Ferentin"
 subcategory: ""
 description: |-
   Endpoint destination rule — allow / block / steer AI traffic on managed devices (the macOS endpoint agent). Rules are evaluated on-device, first match wins by ascending priority.
-  steer points the device at a service-edge base URL; the device never holds an upstream provider key — service-edge presents it.
+  ~> steer is not available on destination rules yet. Only MCP traffic is steered today, through the tenant's public edge, with ferentin_endpoint_mcp_rule. Use allow or block here; plan warns on a destination steer rule.
   Targeting device_group_ids bumps only those groups' policy-bundle versions, so devices in other groups do not re-pull.
   Import
   
@@ -15,7 +15,7 @@ description: |-
 
 Endpoint destination rule — allow / block / steer AI traffic on managed devices (the macOS endpoint agent). Rules are evaluated on-device, **first match wins** by ascending `priority`.
 
-`steer` points the device at a service-edge base URL; the device never holds an upstream provider key — service-edge presents it.
+~> **`steer` is not available on destination rules yet.** Only MCP traffic is steered today, through the tenant's public edge, with `ferentin_endpoint_mcp_rule`. Use `allow` or `block` here; `plan` warns on a destination `steer` rule.
 
 Targeting `device_group_ids` bumps only those groups' policy-bundle versions, so devices in other groups do not re-pull.
 
@@ -59,20 +59,17 @@ resource "ferentin_endpoint_destination_rule" "block_chatgpt_for_contractors" {
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
-# 2. Steer engineering's Claude Desktop traffic through service-edge so it is
-#    governed, logged, and DLP-scanned. The device never holds the upstream
-#    provider key — service-edge presents it.
-resource "ferentin_endpoint_destination_rule" "steer_claude_for_engineering" {
-  name     = "steer-claude-engineering"
+# 2. Allow engineering's Claude Desktop app to reach Anthropic. Scoped by
+#    bundle id, so a browser or script hitting the same hosts does not match.
+#    (Destination rules allow or block; `steer` is not available on them yet.
+#    Only MCP traffic is steered today, with ferentin_endpoint_mcp_rule.)
+resource "ferentin_endpoint_destination_rule" "allow_claude_for_engineering" {
+  name     = "allow-claude-engineering"
   priority = 20
 
   destination_kind = "ai_provider"
   catalog_slug     = "anthropic"
-  action           = "steer"
-
-  # Must be https:// — an http:// target would downgrade every steered flow on
-  # the fleet to cleartext, and both the provider and the platform reject it.
-  steer_to_url = "https://edge.example.com/v1"
+  action           = "allow"
 
   app_bundle_ids   = ["com.anthropic.claudefordesktop"]
   device_group_ids = [ferentin_device_group.engineering.group_id]
@@ -164,7 +161,7 @@ resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices
 
 ### Required
 
-- `action` (String) `allow`, `block`, or `steer`. `steer` requires `steer_to_url`.
+- `action` (String) `allow`, `block`, or `steer`. `steer` is not available on destination rules yet (see above) and requires `steer_to_url`.
 - `name` (String) Rule name, unique within the tenant. 1-255 characters.
 
 ### Optional
@@ -209,7 +206,7 @@ Evaluated on the device. A device whose posture is unknown counts as not complia
 - `priority` (Number) Evaluation order — 1 is highest, first match wins. Default `100`.
 
 ~> **Ownership warning.** Because ordering *is* the policy semantics here, do not split ownership of `priority` between Terraform and the console. The console's reorder arrows swap two rows' priorities directly; if Terraform also declares `priority`, the next `plan` shows drift and the two fight over evaluation order.
-- `steer_to_url` (String) service-edge base URL the agent rewrites the destination to. **Required when `action = "steer"`, and must be `https://`** — the platform rejects `http://` because it would silently downgrade every steered flow on the fleet to cleartext.
+- `steer_to_url` (String) Base URL the agent would rewrite the destination to, for destination steering, which is not available yet. **Required when `action = "steer"`, and must be `https://`** — the platform rejects `http://` because it would silently downgrade every steered flow on the fleet to cleartext.
 - `tenant_id` (String)
 
 ### Read-Only

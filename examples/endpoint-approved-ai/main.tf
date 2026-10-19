@@ -12,9 +12,9 @@
 # Everything no rule matches falls through to the tenant-default posture's
 # `default_destination_action` (allow, unless you set it to block).
 #
-# One tenant, no device groups and no service-edge: this is the starting point.
-# ../endpoint-fleet/ adds groups, steering through service-edge, MCP rules and
-# a staged rollout.
+# One tenant, no device groups and no MCP rules: this is the starting point.
+# ../endpoint-fleet/ adds groups, MCP rules, posture overrides and a staged
+# rollout.
 #
 # `terraform apply` STAGES the change. Devices pick it up only after someone
 # activates the pending changes in the admin console.

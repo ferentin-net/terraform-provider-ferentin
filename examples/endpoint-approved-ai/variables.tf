@@ -61,7 +61,7 @@ variable "unnamed_flow_exempt_cidrs" {
 
 variable "mcp_gateway_url" {
   type        = string
-  description = "Tenant MCP gateway that approved on-device MCP client configs are rewritten to. Null clears it. Must be https://."
+  description = "Tenant MCP gateway that approved on-device MCP client configs are rewritten to: https://<tenant-short-name>.mcp.ferentin.net/v1 on the public edge. Null clears it. Must be https://."
   default     = null
 
   validation {

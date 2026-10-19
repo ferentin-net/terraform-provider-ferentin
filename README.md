@@ -62,7 +62,7 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_workload_oauth_client` | Outbound OAuth credentials for `cc_federated` MCP upstreams. WriteOnly secrets. |
 | `ferentin_workload_identity_provider` | Inbound trust config for cloud-issued workload JWTs (AWS / GCP / Azure / GitHub …). |
 | `ferentin_device_group` | Device group — the policy-scoping unit endpoint policy targets. |
-| `ferentin_endpoint_destination_rule` | Allow / block / steer rule for AI traffic on managed devices (macOS endpoint agent), optionally narrowed to compliant devices (`posture_predicate`). |
+| `ferentin_endpoint_destination_rule` | Allow / block rule for AI traffic on managed devices (macOS endpoint agent), optionally narrowed to compliant devices (`posture_predicate`). Destination `steer` is not available yet. |
 | `ferentin_endpoint_mcp_rule` | Allow / block / steer rule for MCP servers and tool calls on managed devices: remote and local servers, tool calls, and tool behaviours. |
 | `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved MCP and agent actions, gateway target, DNS/QUIC and unnamed-flow blocks, local MCP block, call-time MCP enforcement, local MCP risk policy and approval routing. Tenant default or per-device-group override; values set in the console survive an apply that doesn't mention them. |
 

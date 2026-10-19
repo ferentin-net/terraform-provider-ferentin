@@ -9,7 +9,7 @@ description: |-
 
 Allow the AI providers you sanction, pin one of them to its signed desktop app, and block the rest, on every managed device in the tenant. The whole policy is four [`ferentin_endpoint_destination_rule`](../resources/endpoint_destination_rule.md) resources and the tenant-default [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row.
 
-The configuration is the [`endpoint-approved-ai`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-approved-ai) example. It uses no device groups and no service-edge, so it is the place to start. The [`endpoint-fleet`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-fleet) example builds on it with device groups, steering through service-edge, MCP rules and a staged rollout.
+The configuration is the [`endpoint-approved-ai`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-approved-ai) example. It uses no device groups and no MCP rules, so it is the place to start. The [`endpoint-fleet`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-fleet) example builds on it with device groups, MCP rules, posture overrides and a staged rollout.
 
 ## What you build
 
@@ -39,6 +39,8 @@ resource "ferentin_endpoint_destination_rule" "approved_anthropic" {
   destination_hosts = [".anthropic.com", ".claude.ai"]
 }
 ```
+
+Destination rules `allow` or `block`. `steer` is not available on them yet: only MCP traffic is steered today, through the tenant's public edge.
 
 A bare host (`api.openai.com`) matches that host alone. A leading dot (`.anthropic.com`) matches the domain and every host under it.
 

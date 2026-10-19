@@ -29,20 +29,17 @@ resource "ferentin_endpoint_destination_rule" "block_chatgpt_for_contractors" {
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
-# 2. Steer engineering's Claude Desktop traffic through service-edge so it is
-#    governed, logged, and DLP-scanned. The device never holds the upstream
-#    provider key — service-edge presents it.
-resource "ferentin_endpoint_destination_rule" "steer_claude_for_engineering" {
-  name     = "steer-claude-engineering"
+# 2. Allow engineering's Claude Desktop app to reach Anthropic. Scoped by
+#    bundle id, so a browser or script hitting the same hosts does not match.
+#    (Destination rules allow or block; `steer` is not available on them yet.
+#    Only MCP traffic is steered today, with ferentin_endpoint_mcp_rule.)
+resource "ferentin_endpoint_destination_rule" "allow_claude_for_engineering" {
+  name     = "allow-claude-engineering"
   priority = 20
 
   destination_kind = "ai_provider"
   catalog_slug     = "anthropic"
-  action           = "steer"
-
-  # Must be https:// — an http:// target would downgrade every steered flow on
-  # the fleet to cleartext, and both the provider and the platform reject it.
-  steer_to_url = "https://edge.example.com/v1"
+  action           = "allow"
 
   app_bundle_ids   = ["com.anthropic.claudefordesktop"]
   device_group_ids = [ferentin_device_group.engineering.group_id]

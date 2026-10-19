@@ -23,15 +23,14 @@ examples/endpoint-fleet/
    it.
 
 2. **[`ferentin_endpoint_destination_rule`](../../docs/resources/endpoint_destination_rule.md)**
-   — allow / block / steer per destination, evaluated **on-device, first match
+   — allow / block per destination, evaluated **on-device, first match
    wins by ascending `priority`**:
 
    | Priority | Action | Rule | Scope |
    | --- | --- | --- | --- |
-   | 5 | `allow` | OpenAI for legal & compliance | engineering group, narrowed by criteria and to compliant devices (`posture_predicate`) — **bypasses service-edge**, see below |
+   | 5 | `allow` | OpenAI for legal & compliance | engineering group, narrowed by criteria and to compliant devices (`posture_predicate`) |
    | 10 | `block` | ChatGPT desktop app | contractors group, by bundle id |
-   | 20 | `steer` | Anthropic → service-edge | fleet-wide |
-   | 30 | `steer` | OpenAI → service-edge | fleet-wide |
+   | 20 | `allow` | Sanctioned providers (Anthropic) | fleet-wide |
    | 100 | `block` | Unsanctioned hosts | fleet-wide |
 
    Specific-and-restrictive sits above broad-and-permissive, because the first
@@ -58,7 +57,7 @@ examples/endpoint-fleet/
 
 The rule set is identical at every stage. Only the posture — what happens to
 traffic **no rule matched** — changes. The stage is not an enforcement kill
-switch: the `block` and `steer` rules above enforce from the first apply, at
+switch: the `block` rules above enforce from the first apply, at
 `observe` too. Set `enabled = false` on a rule to ship it inert.
 
 ```sh
@@ -99,13 +98,18 @@ not a conflict.
 
 ## Sharp edges
 
-**An `allow` above a `steer` is a governance bypass.** First match ends
-evaluation, so the priority-5 carve-out means that population's traffic never
-reaches the priority-30 steer rule — no service-edge, and therefore no LLM
-policy, no DLP, no telemetry on it. That is what a carve-out *is*, but it is
-also the kind of exception that gets added for one team and outlives its
-reason. If you want the exception governed rather than exempted, make it a
-`steer` to a different service-edge URL instead of an `allow`.
+**Destination rules allow or block; they do not steer yet.** Only MCP traffic
+is steered today, through the tenant's public edge
+(`https://<tenant-short-name>.mcp.ferentin.net/v1`, the `mcp_gateway_url` the
+`steer` stage sets). An allowed destination is reached directly from the
+device, so gateway LLM policy and DLP do not see it. The provider warns at
+plan on a destination `steer` rule.
+
+**The legal carve-out is the only way to OpenAI.** OpenAI is not in
+`sanctioned_providers`, so at `allowlist` the priority-5 rule is what lets
+legal reach it, and criteria are not enforced on-device yet (below). Give an
+exception like this an owner: it is the kind that gets added for one team and
+outlives its reason.
 
 **`priority` is policy semantics, not cosmetics.** The admin console's reorder
 arrows write the same field. Don't split ownership of ordering between
