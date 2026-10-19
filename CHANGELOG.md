@@ -256,6 +256,21 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `insecure_skip_verify = true`, or trust the stack's CA.
 
 ### Security
+- **`SSL_CERT_FILE` and `SSL_CERT_DIR` no longer replace the macOS and
+  Windows certificate store.** Go 1.27 made them replace it by default, so a
+  CA file and a proxy in the environment terraform runs in could intercept the
+  auth server and the admin API. `go.mod` now sets
+  `godebug x509sslcertoverrideplatform=0`, as ferentin-cli-app does
+  (ferentin-cli-app#318 item 7); a dependency's `godebug` line does not reach
+  this binary. A corporate CA must be installed in the system store. On Linux
+  these variables are still the trust store, as they always were. A local
+  `go.work` must repeat the line (DEVELOPMENT.md).
+
+  This is a default, not a lock: `GODEBUG=x509sslcertoverrideplatform=1` in
+  terraform's environment restores Go's behaviour, and whoever controls that
+  environment controls this either way. The provider says so: it adds a
+  warning when that `GODEBUG` and `SSL_CERT_FILE` or `SSL_CERT_DIR` are both
+  set on macOS or Windows.
 - **Took the ferentin-cli-app SDK with the #183 TLS and redirect fixes**
   (`98aeb93`):
   - Certificate verification is never skipped for a Ferentin production

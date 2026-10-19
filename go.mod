@@ -4,6 +4,16 @@ go 1.27.0
 
 toolchain go1.27.2
 
+// SSL_CERT_FILE and SSL_CERT_DIR must not replace platform trust on macOS or
+// Windows. Go 1.27 made them do so by default, so a CA file and a proxy in the
+// environment terraform runs in could intercept the auth server and the admin
+// API. A godebug line in a dependency's go.mod does not reach this binary:
+// only the main module's applies, so ferentin-cli-app's own line (#318 item 7)
+// is repeated here. Go plans to remove the setting in 1.31; before taking that
+// toolchain, set RootCAs explicitly instead. See
+// internal/provider/sslcertfile_test.go.
+godebug x509sslcertoverrideplatform=0
+
 require (
 	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261018201210-6bc7dd0fcf43
 	github.com/google/uuid v1.6.0
