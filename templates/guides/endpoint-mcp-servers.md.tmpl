@@ -153,6 +153,8 @@ After activation, the example's `rule_enforcement` output reports whether the fl
 
 ## Sharp edges
 
+**Already configured in the console?** Import it first: see [Bring an existing endpoint policy under Terraform](../guides/endpoint-adopt-existing.md).
+
 **One configuration owns the tenant-default posture row.** Every endpoint example manages `ferentin_endpoint_policy_settings.default`. Applying two of them to one tenant makes them overwrite each other on every apply. Merge the attributes into one configuration.
 
 **Adopting a posture row resets what the config leaves out.** On a tenant whose posture was set in the console, the first apply adopts the row. The DNS/QUIC flags and `default_destination_action` take the provider's defaults, and `mcp_gateway_url` is cleared when left out. Read the first `plan`.
