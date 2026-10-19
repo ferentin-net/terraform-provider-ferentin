@@ -333,7 +333,10 @@ func (r *MCPLocalServerResource) Create(ctx context.Context, req resource.Create
 
 	var got *adminapi.MCPLocalServer
 	var err error
-	if isUnsetString(plan.CatalogSlug) {
+	// catalog_slug is Optional+Computed, so unset it plans as unknown, not null:
+	// only a known, non-empty slug means "add from the catalog".
+	fromCatalog := !plan.CatalogSlug.IsUnknown() && !plan.CatalogSlug.IsNull() && plan.CatalogSlug.ValueString() != ""
+	if !fromCatalog {
 		got, err = r.sdk.MCPLocalServers().Declare(ctx, tenantID, adminapi.MCPLocalServerDeclare{
 			ArgvTemplate: stringListToSDK(ctx, plan.ArgvTemplate),
 			DisplayName:  plan.DisplayName.ValueString(),

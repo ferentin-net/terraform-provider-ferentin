@@ -179,6 +179,9 @@ func TestMCPLocalServerCreate_DeclaresThenSetsStatus(t *testing.T) {
 		"argv_template": strList("uv", "run", "--directory", "*", "okta-mcp-server"),
 		"display_name":  str("Okta"), "status": str("blocked"), "reason": str("pilot"),
 		"version": tftypes.NewValue(tftypes.Number, tftypes.UnknownValue),
+		// As Terraform plans an unset Optional+Computed attribute: unknown, not
+		// null. Reading unknown as "set" sent the declare to /from-catalog.
+		"catalog_slug": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
 	})}
 	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s, Raw: plan.Raw}}
 	(&MCPLocalServerResource{sdk: api.serve(t), tenantID: fixtureTenantID}).Create(context.Background(),

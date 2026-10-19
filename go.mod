@@ -15,7 +15,7 @@ toolchain go1.27.2
 godebug x509sslcertoverrideplatform=0
 
 require (
-	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261019213129-8f89e2f7df9c
+	github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261019215853-31f515cadcdd
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/terraform-plugin-docs v0.25.0
 	github.com/hashicorp/terraform-plugin-framework v1.19.0
