@@ -157,6 +157,23 @@ func (r *EndpointDestinationRuleResource) ValidateConfig(ctx context.Context, re
 			"destination_hosts is required when destination_kind is \"host\"",
 			"List at least one host or suffix, or switch destination_kind to \"ai_provider\" and set catalog_slug.")
 	}
+	// One host the agent cannot read refuses the whole endpoint policy on every
+	// device (ferentin-endpoint#1242); see endpoint_destination_hosts.go.
+	// A known list has a known length even when some hosts are not yet known.
+	if n := len(destinationHosts.Elements()); n > destinationHostsMax {
+		resp.Diagnostics.AddAttributeError(path.Root("destination_hosts"),
+			fmt.Sprintf("destination_hosts has %d hosts; a rule may have at most %d", n, destinationHostsMax),
+			"Split it into several rules.")
+	}
+	for _, h := range destinationHostStrings(destinationHosts) {
+		if !validRuleHost(normalizeDestinationHost(h)) {
+			resp.Diagnostics.AddAttributeError(path.Root("destination_hosts"),
+				fmt.Sprintf("%q is not a destination host", h),
+				"Write a hostname (api.example.com), or a domain and every host under it "+
+					"(.example.com): no scheme, port, path, spaces, or '*' other than a leading '*.'. "+
+					"The endpoint agent refuses the tenant's whole policy over one host it cannot read.")
+		}
+	}
 	if !action.IsUnknown() && action.ValueString() == "steer" && isUnsetString(steerToURL) {
 		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
 			"steer_to_url is required when action is \"steer\"",
@@ -243,7 +260,16 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 			},
 			"destination_hosts": schema.ListAttribute{
 				MarkdownDescription: "Explicit host / suffix list. **Required when " +
-					"`destination_kind = \"host\"`.**",
+					"`destination_kind = \"host\"`.** At most 64.\n\n" +
+					"* `api.example.com` — that host alone. A bare host does **not** cover its subdomains.\n" +
+					"* `.example.com` — `example.com` and every host under it.\n" +
+					"* `*.example.com` — the same as `.example.com`.\n\n" +
+					"The platform trims and lowercases hosts; your spelling is kept here, and changing only " +
+					"the spelling plans an update that changes nothing on the platform. A scheme, port, " +
+					"path, inner space or other `*` fails at plan.\n\n" +
+					"~> Prefer `.example.com`. Endpoint agents without ferentin-endpoint#1246 refuse " +
+					"`*.example.com`, and one host an agent refuses makes it refuse the tenant's **whole** " +
+					"endpoint policy and keep its last-known-good one.",
 				Optional:    true,
 				ElementType: types.StringType,
 			},
@@ -726,9 +752,11 @@ func requiresCompliant(p types.Object) (requires, known bool) {
 
 // keepEmptyForms restores an empty form the config wrote explicitly for the
 // Optional, non-Computed attributes, which endpointRuleToModel reads as null.
+// It also keeps the configured spelling of destination_hosts, which the
+// platform stores trimmed and lowercased.
 func (m *EndpointDestinationRuleResourceModel) keepEmptyForms(prior EndpointDestinationRuleResourceModel) {
 	m.Description = keepEmptyString(prior.Description, m.Description)
-	m.DestinationHosts = keepEmptyList(prior.DestinationHosts, m.DestinationHosts)
+	m.DestinationHosts = keepEmptyList(prior.DestinationHosts, reconcileDestinationHosts(prior.DestinationHosts, m.DestinationHosts))
 	m.AppBundleIDs = keepEmptyList(prior.AppBundleIDs, m.AppBundleIDs)
 	m.AppSigningIDs = keepEmptyList(prior.AppSigningIDs, m.AppSigningIDs)
 	m.AppTeamIDs = keepEmptyList(prior.AppTeamIDs, m.AppTeamIDs)

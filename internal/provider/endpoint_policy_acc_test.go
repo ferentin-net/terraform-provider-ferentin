@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
+	"github.com/hashicorp/terraform-plugin-testing/terraform"
 )
 
 // Acceptance tests for the platform#2038 endpoint-policy entities. Gated by
@@ -125,6 +126,61 @@ func TestAccEndpointDestinationRule_basic(t *testing.T) {
 				ResourceName:      "ferentin_endpoint_destination_rule.test",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// TestAccEndpointDestinationRule_hostSpelling: the platform stores
+// destination_hosts trimmed and lowercased (ferentin-platform#3102). The
+// configured spelling must survive apply — otherwise it is an inconsistent
+// result — and re-plan clean. An import has no configured spelling and takes
+// the platform's. The rule is disabled so it governs nothing while it exists.
+func TestAccEndpointDestinationRule_hostSpelling(t *testing.T) {
+	suffix := randomSuffix(t)
+	config := func(hosts string) string {
+		return fmt.Sprintf(`
+resource "ferentin_endpoint_destination_rule" "test" {
+  name              = "tf-acc-hosts-%s"
+  destination_kind  = "host"
+  destination_hosts = %s
+  action            = "block"
+  enabled           = false
+}
+`, suffix, hosts)
+	}
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				Config: config(`["API.Tf-Acc.Example", ".Shadow.Tf-Acc.Example"]`),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "destination_hosts.0", "API.Tf-Acc.Example"),
+					resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test", "destination_hosts.1", ".Shadow.Tf-Acc.Example"),
+				),
+			},
+			{
+				ResourceName:            "ferentin_endpoint_destination_rule.test",
+				ImportState:             true,
+				ImportStateVerify:       true,
+				ImportStateVerifyIgnore: []string{"destination_hosts"},
+				ImportStateCheck: func(s []*terraform.InstanceState) error {
+					for k, want := range map[string]string{
+						"destination_hosts.0": "api.tf-acc.example",
+						"destination_hosts.1": ".shadow.tf-acc.example",
+					} {
+						if got := s[0].Attributes[k]; got != want {
+							return fmt.Errorf("imported %s = %q, want the platform's spelling %q", k, got, want)
+						}
+					}
+					return nil
+				},
+			},
+			{
+				Config: config(`["api.tf-acc.example", ".shadow.tf-acc.example"]`),
+				Check: resource.TestCheckResourceAttr("ferentin_endpoint_destination_rule.test",
+					"destination_hosts.0", "api.tf-acc.example"),
 			},
 		},
 	})

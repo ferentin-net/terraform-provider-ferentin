@@ -262,7 +262,7 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
   priority = 100
 
   destination_kind  = "host"
-  destination_hosts = ["api.unsanctioned-ai.example", "*.shadow-llm.example"]
+  destination_hosts = ["api.unsanctioned-ai.example", ".shadow-llm.example"]
   action            = "block"
 }
 

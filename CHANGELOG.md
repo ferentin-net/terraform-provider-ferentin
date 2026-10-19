@@ -114,6 +114,24 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **`ferentin_endpoint_destination_rule` refuses a destination host the
+  endpoint agent cannot read, at plan.** The agent checks every host when it
+  reads a policy and refuses the tenant's whole endpoint policy over one bad
+  host, keeping its last-known-good policy on every device. A scheme, port,
+  path, space, `*` anywhere but a leading `*.`, an empty label or a 64-character
+  label now fails at plan, as does a rule with more than 64 hosts. The check is
+  the agent's own grammar, pinned by a copy of the platform's
+  `destination-host-vectors.json` (ferentin-net/ferentin-platform#3102).
+  **A config that applied before may now fail at plan**: correct the host
+  before upgrading. Such a host already governed nothing: cp-server ships the
+  rule without it, and drops a host rule left with none.
+- **Mixed-case destination hosts no longer fail the apply.** The platform now
+  stores `destination_hosts` trimmed and lowercased; the provider keeps your
+  spelling when the platform stored exactly its normalized form.
+- **Docs: a bare destination host matches that host only**, not its
+  subdomains (ferentin-net/ferentin-platform#3103). The examples use
+  `.example.com` for a domain and its subdomains, because endpoint agents
+  without ferentin-net/ferentin-endpoint#1246 refuse `*.example.com`.
 - **`ferentin_endpoint_destination_rule` no longer erases a device posture
   condition set in the admin console.** The platform's update is a full
   replace, and the provider never sent `posturePredicate`, so every apply that
