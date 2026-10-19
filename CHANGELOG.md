@@ -268,6 +268,12 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   SDK now calls the right ones.
 
 ### Changed
+- **The provider overview indexes the provider.** `docs/index.md` (the
+  Registry's landing page for the provider) now lists the guides, and every
+  resource and data source grouped by area: AI gateway, managed endpoints,
+  identity and telemetry. Its summary mentions AI-agent decisions.
+  `TestDocsIndexListsEverything` fails when a resource, data source or guide
+  is added without a link there.
 - **`ferentin_otel_sink.has_credentials` is deprecated.** The platform removed
   sink credentials as a separate resource; a sink's credentials are its
   headers. The attribute is now true when the sink has any header. Use
