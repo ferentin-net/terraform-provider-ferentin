@@ -25,6 +25,11 @@ import (
 // telemetry sink (Datadog, Honeycomb, OTLP, …) for a tenant. Skips the
 // nested batch_config / retry_config / tls_config maps for v0.1; those
 // can be added incrementally when customers ask.
+//
+// Header values are write-only on the platform (ferentin-platform#3095): every
+// read returns otelSinkHeaderMask in place of the value. The mapper keeps the
+// configured value for a header the platform returns masked, so state matches
+// the config and a refresh shows no drift; only a header's name is compared.
 type OtelSinkResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
@@ -60,6 +65,10 @@ type OtelSinkResourceModel struct {
 	UpdatedBy      types.String `tfsdk:"updated_by"`
 }
 
+// otelSinkHeaderMask is what the admin API returns in place of every stored
+// header value (OtelSinkResponse.HEADER_VALUE_MASK).
+const otelSinkHeaderMask = "********"
+
 func NewOtelSinkResource() resource.Resource { return &OtelSinkResource{} }
 
 var (
@@ -89,8 +98,10 @@ func (r *OtelSinkResource) Configure(_ context.Context, req resource.ConfigureRe
 func (r *OtelSinkResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "A tenant OTEL sink — a telemetry destination (Datadog, Honeycomb, OTLP, …). " +
-			"Credentials for the sink are managed out-of-band via the `/credentials` sub-resource for v0.1; " +
-			"a future write-only `credentials` attribute is planned.\n\n" +
+			"The sink's credentials are its `headers` (`Authorization`, `dd-api-key`, a Splunk HEC token, …). " +
+			"The platform stores header values encrypted and never returns them, so the provider keeps " +
+			"the configured values in state and detects drift on header names only. A change made " +
+			"outside Terraform to a header's value is not detected.\n\n" +
 			"## Import\n\n" +
 			"Existing sinks can be imported using `<tenant_id>/<sink_id>` " +
 			"(or `<sink_id>` alone when the provider's default `tenant_id` matches):\n\n" +
@@ -146,20 +157,28 @@ func (r *OtelSinkResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 				Default:             booldefault.StaticBool(true),
 			},
 			"headers": schema.MapAttribute{
-				MarkdownDescription: "Custom HTTP headers sent on every export to this sink.",
-				Optional:            true, Computed: true,
+				MarkdownDescription: "Custom HTTP headers sent on every export to this sink, including its credentials. " +
+					"Values are write-only on the platform. After an import, every value reads as `" + otelSinkHeaderMask +
+					"` until the next apply sends the configured ones. Moving `endpoint` to another scheme, host or port " +
+					"requires every value, which the provider sends from the configuration.",
+				Optional: true, Computed: true, Sensitive: true,
 				ElementType: types.StringType,
 			},
 			"tags": schema.MapAttribute{
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
 			},
-			"sink_id":         schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"has_credentials": schema.BoolAttribute{Computed: true},
-			"created_at":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"created_by":      schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
-			"updated_at":      schema.StringAttribute{Computed: true},
-			"updated_by":      schema.StringAttribute{Computed: true},
+			"sink_id": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"has_credentials": schema.BoolAttribute{
+				Computed:            true,
+				MarkdownDescription: "Whether the sink carries any headers.",
+				DeprecationMessage: "The platform removed sink credentials as a separate resource: a sink's credentials are its headers. " +
+					"This is now true when the sink has any header. Use `length(headers) > 0` instead.",
+			},
+			"created_at": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"created_by": schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"updated_at": schema.StringAttribute{Computed: true},
+			"updated_by": schema.StringAttribute{Computed: true},
 		},
 	}
 }
@@ -184,7 +203,7 @@ func (r *OtelSinkResource) Create(ctx context.Context, req resource.CreateReques
 		addSDKError(&resp.Diagnostics, "Failed to create OTEL sink", err)
 		return
 	}
-	state := otelSinkToModel(tenantID, sink)
+	state := otelSinkToModel(tenantID, sink, plan.Headers)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -204,7 +223,7 @@ func (r *OtelSinkResource) Read(ctx context.Context, req resource.ReadRequest, r
 		addSDKError(&resp.Diagnostics, "Failed to read OTEL sink", err)
 		return
 	}
-	refreshed := otelSinkToModel(tenantID, sink)
+	refreshed := otelSinkToModel(tenantID, sink, state.Headers)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -240,7 +259,13 @@ func (r *OtelSinkResource) Update(ctx context.Context, req resource.UpdateReques
 		addSDKError(&resp.Diagnostics, "Failed to update OTEL sink", err)
 		return
 	}
-	refreshed := otelSinkToModel(tenantID, sink)
+	// With headers left out of the config the plan has them unknown and the
+	// platform keeps the stored ones, so the values to keep are in state.
+	known := plan.Headers
+	if known.IsUnknown() {
+		known = state.Headers
+	}
+	refreshed := otelSinkToModel(tenantID, sink, known)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
 }
 
@@ -313,7 +338,10 @@ func (r *OtelSinkResource) fillOptionals(ctx context.Context, plan *OtelSinkReso
 	}
 }
 
-func otelSinkToModel(tenantID string, sink *adminapi.OtelSink) OtelSinkResourceModel {
+// otelSinkToModel maps a sink response to state. known holds the header values
+// the caller already has (the plan after a write, state on a refresh): a header
+// the platform returns as otelSinkHeaderMask keeps its known value.
+func otelSinkToModel(tenantID string, sink *adminapi.OtelSink, known types.Map) OtelSinkResourceModel {
 	m := OtelSinkResourceModel{TenantID: types.StringValue(tenantID)}
 	if sink.Id != nil {
 		m.SinkID = types.StringValue(sink.Id.String())
@@ -332,14 +360,23 @@ func otelSinkToModel(tenantID string, sink *adminapi.OtelSink) OtelSinkResourceM
 	m.AuthType = strPtrToTF(sink.AuthType)
 	m.Timeout = strPtrToTF(sink.Timeout)
 	m.Enabled = boolPtrOrDefault(sink.Enabled)
-	m.HasCredentials = boolPtrOrDefault(sink.HasCredentials)
+	m.HasCredentials = types.BoolValue(sink.Headers != nil && len(*sink.Headers) > 0)
 	m.CreatedAt = timePtrToTF(sink.CreatedAt)
 	m.CreatedBy = strPtrToTF(sink.CreatedBy)
 	m.UpdatedAt = timePtrToTF(sink.UpdatedAt)
 	m.UpdatedBy = strPtrToTF(sink.UpdatedBy)
 	if sink.Headers != nil {
+		knownElems := map[string]attr.Value{}
+		if !known.IsNull() && !known.IsUnknown() {
+			knownElems = known.Elements()
+		}
 		elems := make(map[string]attr.Value, len(*sink.Headers))
 		for k, v := range *sink.Headers {
+			if prior, ok := knownElems[k].(types.String); ok && v == otelSinkHeaderMask &&
+				!prior.IsNull() && !prior.IsUnknown() {
+				elems[k] = prior
+				continue
+			}
 			elems[k] = types.StringValue(v)
 		}
 		mv, _ := types.MapValue(types.StringType, elems)

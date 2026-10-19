@@ -3,7 +3,7 @@
 page_title: "ferentin_otel_sink Resource - Ferentin"
 subcategory: ""
 description: |-
-  A tenant OTEL sink — a telemetry destination (Datadog, Honeycomb, OTLP, …). Credentials for the sink are managed out-of-band via the /credentials sub-resource for v0.1; a future write-only credentials attribute is planned.
+  A tenant OTEL sink — a telemetry destination (Datadog, Honeycomb, OTLP, …). The sink's credentials are its headers (Authorization, dd-api-key, a Splunk HEC token, …). The platform stores header values encrypted and never returns them, so the provider keeps the configured values in state and detects drift on header names only. A change made outside Terraform to a header's value is not detected.
   Import
   Existing sinks can be imported using <tenant_id>/<sink_id> (or <sink_id> alone when the provider's default tenant_id matches):
   
@@ -12,7 +12,7 @@ description: |-
 
 # ferentin_otel_sink (Resource)
 
-A tenant OTEL sink — a telemetry destination (Datadog, Honeycomb, OTLP, …). Credentials for the sink are managed out-of-band via the `/credentials` sub-resource for v0.1; a future write-only `credentials` attribute is planned.
+A tenant OTEL sink — a telemetry destination (Datadog, Honeycomb, OTLP, …). The sink's credentials are its `headers` (`Authorization`, `dd-api-key`, a Splunk HEC token, …). The platform stores header values encrypted and never returns them, so the provider keeps the configured values in state and detects drift on header names only. A change made outside Terraform to a header's value is not detected.
 
 ## Import
 
@@ -66,7 +66,7 @@ resource "ferentin_otel_sink" "primary_otlp" {
 - `compression` (String) Compression type. Allowed: `gzip`, `none`, `zstd`.
 - `description` (String)
 - `enabled` (Boolean) Whether this sink is active. Default `true`.
-- `headers` (Map of String) Custom HTTP headers sent on every export to this sink.
+- `headers` (Map of String, Sensitive) Custom HTTP headers sent on every export to this sink, including its credentials. Values are write-only on the platform. After an import, every value reads as `********` until the next apply sends the configured ones. Moving `endpoint` to another scheme, host or port requires every value, which the provider sends from the configuration.
 - `protocol` (String) Transport protocol. Allowed: `GRPC`, `HTTP`.
 - `provider_slug` (String) Catalog provider slug — pull from `data "ferentin_otel_sink_provider"`.
 - `region` (String)
@@ -78,7 +78,7 @@ resource "ferentin_otel_sink" "primary_otlp" {
 
 - `created_at` (String)
 - `created_by` (String)
-- `has_credentials` (Boolean)
+- `has_credentials` (Boolean, Deprecated) Whether the sink carries any headers.
 - `id` (String) The ID of this resource.
 - `sink_id` (String)
 - `updated_at` (String)

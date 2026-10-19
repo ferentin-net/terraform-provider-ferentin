@@ -133,6 +133,15 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **`ferentin_otel_sink` works against platforms with write-only sink headers.**
+  The platform now stores header values encrypted and returns each one as
+  `********` (ferentin-platform#3095). Without this, an apply that set
+  `headers` failed with "Provider produced inconsistent result after apply",
+  and every refresh planned to change them back. The provider keeps the
+  configured value for a header the platform returns masked, so drift is
+  detected on header names only. `headers` is now `Sensitive`. After an
+  import the values read as `********` until the next apply sends the
+  configured ones.
 - **Endpoint steering is MCP-only, through the public edge, and the docs now
   say so.** They described `steer` on `ferentin_endpoint_destination_rule` as
   pointing devices at a service-edge. Destination steering is not available
@@ -215,6 +224,10 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   SDK now calls the right ones.
 
 ### Changed
+- **`ferentin_otel_sink.has_credentials` is deprecated.** The platform removed
+  sink credentials as a separate resource; a sink's credentials are its
+  headers. The attribute is now true when the sink has any header. Use
+  `length(headers) > 0`.
 - **A profile's `insecure: true` overruled by the managed configuration now
   says so.** When the managed layer sets `insecure: false`, or exists and
   cannot be read, the provider emits a warning naming why, instead of leaving
