@@ -33,6 +33,17 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **Guides and examples: MCP servers and tool calls on managed endpoints.**
+  [`examples/endpoint-mcp-servers/`](examples/endpoint-mcp-servers/) blocks
+  unvetted remote MCP hosts, steers sanctioned ones to
+  `<mcp_gateway_url>/mcp/<server-slug>`, blocks known-bad local packages, and
+  sets the unapproved-MCP action and the unvetted-local-tool risk policy.
+  [`examples/endpoint-tool-call-guardrails/`](examples/endpoint-tool-call-guardrails/)
+  blocks exfiltration commands fleet-wide and the shell tool on a pilot group,
+  in `shadow` until the pilot group's own posture row moves to `enforce`. The
+  *Govern MCP servers on managed endpoints* and *Block risky tool calls from
+  coding agents* guides walk through each, including why a local `allow` runs
+  a server ungoverned and what `enforce` does not cover.
 - **Example and guide: approved AI on managed endpoints.**
   [`examples/endpoint-approved-ai/`](examples/endpoint-approved-ai/) allows
   Anthropic, pins OpenAI to the ChatGPT desktop app by Apple Team ID, blocks

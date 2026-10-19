@@ -149,6 +149,11 @@ Change one at a time, and activate after each apply.
 
 `terraform destroy` deletes the four rules. It does **not** reset the tenant-default posture: the platform refuses to delete the row every device resolves through, so Terraform drops it from state and the fleet keeps the last applied posture. To leave the fleet permissive, apply `default_destination_action = "allow"` and `unnamed_flow_block_enabled = false` first, activate, then destroy.
 
+## Next
+
+- [Govern MCP servers on managed endpoints](../guides/endpoint-mcp-servers.md): steer sanctioned remote MCP servers through the gateway, and block the rest.
+- [Block risky tool calls from coding agents](../guides/endpoint-tool-calls.md): count, then deny, the commands and tools agents should never run.
+
 ## The complete configuration
 
 {{ tffile "examples/endpoint-approved-ai/main.tf" }}
