@@ -2,7 +2,7 @@
 
 Terraform provider for the [Ferentin](https://ferentin.net) AI authorization platform. Declaratively manage tenant resources: edge sites, LLM / MCP / OTEL policies, MCP servers, data protection policies, AI-agent OIDC clients, workload identity, endpoint policy for managed devices (device groups, destination and MCP rules, posture), and the related catalogs.
 
-**Status:** `v0.1.0` candidate. Covers 17 resources + 15 data sources. See [CHANGELOG.md](CHANGELOG.md).
+**Status:** `v0.1.0` candidate. Covers 18 resources + 16 data sources. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
@@ -64,6 +64,7 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_device_group` | Device group — the policy-scoping unit endpoint policy targets. |
 | `ferentin_endpoint_destination_rule` | Allow / block rule for AI traffic on managed devices (macOS endpoint agent), optionally narrowed to compliant devices (`posture_predicate`). Destination `steer` is not available yet. |
 | `ferentin_endpoint_mcp_rule` | Allow / block / steer rule for MCP servers and tool calls on managed devices: remote and local servers, tool calls, and tool behaviours. |
+| `ferentin_endpoint_agent_approval` | Approve (`report_only`) or deny (`block`) one catalogued AI agent (Claude Code, Cursor, …) on managed devices, optionally per device group. |
 | `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved MCP and agent actions, gateway target, DNS/QUIC and unnamed-flow blocks, local MCP block, call-time MCP enforcement, local MCP risk policy and approval routing. Tenant default or per-device-group override; values set in the console survive an apply that doesn't mention them. |
 
 | Data source | Purpose |
@@ -79,6 +80,7 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_device_groups` | Every device group in the tenant, with `import_id` and `managed_by`. |
 | `ferentin_endpoint_destination_rules` / `ferentin_endpoint_mcp_rules` | Every endpoint rule of that kind, in evaluation order, with `import_id` and `managed_by`. |
 | `ferentin_endpoint_policy_settings_scopes` | Every endpoint posture row: the tenant default, then each group override. |
+| `ferentin_endpoint_agent_approvals` | Every AI-agent decision, with `import_id` and `managed_by`. |
 
 ## Environment variables
 

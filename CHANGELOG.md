@@ -33,6 +33,21 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **New resource `ferentin_endpoint_agent_approval`**: approve (`report_only`)
+  or deny (`block`) one catalogued AI agent (`claude-code`, `cursor`,
+  `openclaw`, …) on managed devices, optionally narrowed to device groups
+  (platform#2275). An agent with no decision falls through to
+  `unapproved_agent_action`. The platform writes decisions with an upsert, so
+  Create refuses a slug that already has one and says to import it rather than
+  overwriting a console decision. `plan` warns when destroying an approval
+  would deny the agent under a `block` default, and when removing
+  `device_group_ids` widens a decision to every device. A decision whose
+  stored scope the platform cannot read (`scope_unreadable`) is in force on no
+  device; the provider plans an update that writes the configured scope back.
+  `ferentin_endpoint_agent_approvals` lists every decision, and
+  `examples/endpoint-adopt-existing` now imports them too.
+  `examples/endpoint-fleet` approves `claude-code` and `cursor` everywhere
+  (`approved_agents`), ahead of the stage that blocks unapproved agents.
 - **List data sources for the endpoint surface**: `ferentin_device_groups`,
   `ferentin_endpoint_destination_rules`, `ferentin_endpoint_mcp_rules` and
   `ferentin_endpoint_policy_settings_scopes` return every object of that kind

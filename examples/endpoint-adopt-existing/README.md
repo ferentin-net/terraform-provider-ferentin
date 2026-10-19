@@ -1,7 +1,8 @@
 # Adopt an existing endpoint policy
 
 Print an `import` block for every endpoint object Terraform does not manage
-yet: device groups, destination rules, MCP rules and posture rows. It reads
+yet: device groups, destination rules, MCP rules, posture rows and AI-agent
+decisions. It reads
 from the tenant and writes nothing to it.
 
 This is step 1 of the
@@ -17,11 +18,12 @@ terraform output -raw import_blocks > ../my-endpoint-policy/imports.tf
 terraform output already_managed
 ```
 
-`apply` only reads the four list data sources
+`apply` only reads the five list data sources
 ([`ferentin_device_groups`](../../docs/data-sources/device_groups.md),
 [`ferentin_endpoint_destination_rules`](../../docs/data-sources/endpoint_destination_rules.md),
 [`ferentin_endpoint_mcp_rules`](../../docs/data-sources/endpoint_mcp_rules.md),
-[`ferentin_endpoint_policy_settings_scopes`](../../docs/data-sources/endpoint_policy_settings_scopes.md))
+[`ferentin_endpoint_policy_settings_scopes`](../../docs/data-sources/endpoint_policy_settings_scopes.md),
+[`ferentin_endpoint_agent_approvals`](../../docs/data-sources/endpoint_agent_approvals.md))
 and records their outputs in local state.
 
 Then, in the configuration that will own the policy:
@@ -47,7 +49,8 @@ with both values, so you can check.
 
 Each import is named after the object: lowercased, non-alphanumerics folded to
 `_`, with a kind prefix (`g_`, `d_`, `m_`, `p_`) and the first 8 characters of
-its ID, so two similar names cannot collide. The tenant-default posture row is
+its ID, so two similar names cannot collide. An agent decision is named after
+its catalog slug (`a_claude_code`), which is already unique. The tenant-default posture row is
 `ferentin_endpoint_policy_settings.default`. Rename them in the owning
 configuration before its first apply; afterwards a rename needs a `moved`
 block.

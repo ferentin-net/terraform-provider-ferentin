@@ -1,13 +1,16 @@
 # Endpoint policy for a managed macOS fleet, staged from observe to enforce.
 #
-# Four moving parts:
+# Five moving parts:
 #
 #   1. Device groups     — the targeting dimension for everything else.
-#   2. Destination rules — allow / block / steer per AI destination, evaluated
+#   2. Destination rules — allow / block per AI destination, evaluated
 #                          ON-DEVICE, first match wins by ascending priority.
 #   3. MCP rules         — allow / block for MCP servers (remote and local) and
 #                          for what AI tools may do (tool behaviours).
-#   4. Posture           — what happens to traffic and to unapproved MCP server
+#   4. Agent decisions   — which catalogued AI agents (Claude Code, Cursor, …)
+#                          are approved to run, ahead of the stage that blocks
+#                          the rest.
+#   5. Posture           — what happens to traffic and to unapproved MCP server
 #                          configs and agents when NO rule matches, and whether
 #                          call-time MCP blocks deny or only count. One
 #                          tenant-default row plus optional per-group overrides.
@@ -246,7 +249,27 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
   device_group_ids = [local.group_ids["contractors"]]
 }
 
-# --- 4. Posture ----------------------------------------------------------
+# --- 4. AI-agent decisions -----------------------------------------------
+# An agent with no decision falls through to `unapproved_agent_action` on its
+# scope's posture: report_only at `observe` and `steer`, block at `allowlist`
+# and on the strict overrides from the first apply. Approving the agents your
+# teams rely on first is what keeps that block from stopping a developer
+# working, and CLI agents installed by npm or Homebrew have the weakest
+# identity matches, so a missed one is the likeliest surprise.
+#
+# No device_group_ids: the approval reaches every device, contractors included.
+#
+# ~> Destroying an approval is not neutral: the agent falls back to
+#    unapproved_agent_action, which DENIES it wherever that is `block`.
+resource "ferentin_endpoint_agent_approval" "approved" {
+  for_each = var.approved_agents
+
+  catalog_slug = each.key
+  action       = "report_only"
+  description  = "Sanctioned for every population"
+}
+
+# --- 5. Posture ----------------------------------------------------------
 
 # Tenant default. No device_group_id — every device, including ungrouped ones,
 # resolves through this row.

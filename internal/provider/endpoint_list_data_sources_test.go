@@ -39,6 +39,9 @@ func endpointListServer(t *testing.T) *adminapi.SDKClient {
 		"/endpoint-policy/settings": `[
 			{"id":"44444444-4444-4444-8444-444444444444","deviceGroupId":"` + listGroupA + `","unapprovedMcpAction":"quarantine","defaultDestinationAction":"allow","hookRuleEnforcement":"enforce","managedBy":"console","lastModifiedBy":"console"},
 			{"id":"55555555-5555-4555-8555-555555555555","unapprovedMcpAction":"report_only","defaultDestinationAction":"block","hookRuleEnforcement":"shadow","managedBy":"console","lastModifiedBy":"iac"}]`,
+		"/endpoint-policy/agent-approvals": `[
+			{"catalogSlug":"openclaw","action":"block","deviceGroupIds":["` + listGroupA + `"],"managedBy":"iac","lastModifiedBy":"iac"},
+			{"catalogSlug":"cursor","action":"report_only","managedBy":"console","lastModifiedBy":"console","scopeUnreadable":true}]`,
 		"/endpoint-mcp-rules": `[
 			{"id":"` + listRule2 + `","name":"local","priority":30,"action":"block","matchKind":"package","matchValues":["npm:@example/bad"],"enforcement":"active","managedBy":"console","lastModifiedBy":"console"},
 			{"id":"` + listRule1 + `","name":"remote","priority":10,"action":"block","matchKind":"host","matchValues":["mcp.unvetted.example"],"managedBy":"iac","lastModifiedBy":"iac"}]`,
@@ -177,5 +180,22 @@ func TestEndpointPolicySettingsScopesDataSource_TenantDefaultFirst(t *testing.T)
 	}
 	if def.DefaultDestinationAction.ValueString() != "block" || def.LastModifiedBy.ValueString() != "iac" {
 		t.Errorf("default_destination_action = %s, last_modified_by = %s", def.DefaultDestinationAction, def.LastModifiedBy)
+	}
+}
+
+func TestEndpointAgentApprovalsDataSource_ListsBySlug(t *testing.T) {
+	ds := &EndpointAgentApprovalsDataSource{endpointListDataSource{sdk: endpointListServer(t), tenantID: fixtureTenantID}}
+	var got EndpointAgentApprovalsDataSourceModel
+	readList(t, ds, &got)
+
+	if len(got.Approvals) != 2 || got.Approvals[0].CatalogSlug.ValueString() != "cursor" {
+		t.Fatalf("approvals = %v, want cursor before openclaw", got.Approvals)
+	}
+	c, o := got.Approvals[0], got.Approvals[1]
+	if c.ImportID.ValueString() != fixtureTenantID+"/cursor" || !c.ScopeUnreadable.ValueBool() || !c.DeviceGroupIDs.IsNull() {
+		t.Errorf("cursor = %s, scope_unreadable %s, device_group_ids %s", c.ImportID, c.ScopeUnreadable, c.DeviceGroupIDs)
+	}
+	if o.Action.ValueString() != "block" || len(o.DeviceGroupIDs.Elements()) != 1 || o.ScopeUnreadable.ValueBool() {
+		t.Errorf("openclaw = %s, %s, scope_unreadable %s", o.Action, o.DeviceGroupIDs, o.ScopeUnreadable)
 	}
 }
