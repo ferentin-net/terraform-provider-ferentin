@@ -4,6 +4,8 @@ import (
 	"strings"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
+	"golang.org/x/text/cases"
+	"golang.org/x/text/language"
 )
 
 // The endpoint agent's grammar for a destination rule's destination_hosts,
@@ -30,8 +32,13 @@ const (
 
 // normalizeDestinationHost is the form admin-api checks and stores: trimmed and
 // lowercased. Java's trim() strips code points up to U+0020, so this does too.
+//
+// Lowercased with full case mapping, as Java's toLowerCase(Locale.ROOT) is, not
+// strings.ToLower's one-to-one mapping: strings.ToLower reads `İ.example` as
+// the valid `i.example`, where admin-api reads `i̇.example` and refuses it.
+// A Caser holds state, so each call makes its own.
 func normalizeDestinationHost(s string) string {
-	return strings.ToLower(strings.TrimFunc(s, func(r rune) bool { return r <= ' ' }))
+	return cases.Lower(language.Und).String(strings.TrimFunc(s, func(r rune) bool { return r <= ' ' }))
 }
 
 // validRuleHost is valid_rule_host: a hostname, or a suffix spelled

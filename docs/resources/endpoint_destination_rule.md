@@ -186,7 +186,7 @@ resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices
 * `.example.com` — `example.com` and every host under it.
 * `*.example.com` — the same as `.example.com`.
 
-The platform trims and lowercases hosts; your spelling is kept here. A scheme, port, path, space or other `*` fails at plan.
+The platform trims and lowercases hosts; your spelling is kept here, and changing only the spelling plans an update that changes nothing on the platform. A scheme, port, path, inner space or other `*` fails at plan.
 
 ~> Prefer `.example.com`. Endpoint agents without ferentin-endpoint#1246 refuse `*.example.com`, and one host an agent refuses makes it refuse the tenant's **whole** endpoint policy and keep its last-known-good one.
 - `destination_kind` (String) How the destination is identified:

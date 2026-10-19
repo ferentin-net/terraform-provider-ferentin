@@ -166,8 +166,13 @@ resource "ferentin_endpoint_destination_rule" "test" {
 				ImportStateVerify:       true,
 				ImportStateVerifyIgnore: []string{"destination_hosts"},
 				ImportStateCheck: func(s []*terraform.InstanceState) error {
-					if got := s[0].Attributes["destination_hosts.0"]; got != "api.tf-acc.example" {
-						return fmt.Errorf("imported destination_hosts.0 = %q, want the platform's spelling", got)
+					for k, want := range map[string]string{
+						"destination_hosts.0": "api.tf-acc.example",
+						"destination_hosts.1": ".shadow.tf-acc.example",
+					} {
+						if got := s[0].Attributes[k]; got != want {
+							return fmt.Errorf("imported %s = %q, want the platform's spelling %q", k, got, want)
+						}
 					}
 					return nil
 				},

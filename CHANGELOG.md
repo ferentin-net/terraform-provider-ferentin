@@ -122,6 +122,9 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   label now fails at plan, as does a rule with more than 64 hosts. The check is
   the agent's own grammar, pinned by a copy of the platform's
   `destination-host-vectors.json` (ferentin-net/ferentin-platform#3102).
+  **A config that applied before may now fail at plan**: correct the host
+  before upgrading. Such a host already governed nothing: cp-server ships the
+  rule without it, and drops a host rule left with none.
 - **Mixed-case destination hosts no longer fail the apply.** The platform now
   stores `destination_hosts` trimmed and lowercased; the provider keeps your
   spelling when the platform stored exactly its normalized form.

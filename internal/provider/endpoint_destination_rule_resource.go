@@ -159,9 +159,10 @@ func (r *EndpointDestinationRuleResource) ValidateConfig(ctx context.Context, re
 	}
 	// One host the agent cannot read refuses the whole endpoint policy on every
 	// device (ferentin-endpoint#1242); see endpoint_destination_hosts.go.
-	if hosts := destinationHostStrings(destinationHosts); len(hosts) > destinationHostsMax {
+	// A known list has a known length even when some hosts are not yet known.
+	if n := len(destinationHosts.Elements()); n > destinationHostsMax {
 		resp.Diagnostics.AddAttributeError(path.Root("destination_hosts"),
-			fmt.Sprintf("destination_hosts has %d hosts; a rule may have at most %d", len(hosts), destinationHostsMax),
+			fmt.Sprintf("destination_hosts has %d hosts; a rule may have at most %d", n, destinationHostsMax),
 			"Split it into several rules.")
 	}
 	for _, h := range destinationHostStrings(destinationHosts) {
@@ -263,8 +264,9 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 					"* `api.example.com` — that host alone. A bare host does **not** cover its subdomains.\n" +
 					"* `.example.com` — `example.com` and every host under it.\n" +
 					"* `*.example.com` — the same as `.example.com`.\n\n" +
-					"The platform trims and lowercases hosts; your spelling is kept here. A scheme, port, " +
-					"path, space or other `*` fails at plan.\n\n" +
+					"The platform trims and lowercases hosts; your spelling is kept here, and changing only " +
+					"the spelling plans an update that changes nothing on the platform. A scheme, port, " +
+					"path, inner space or other `*` fails at plan.\n\n" +
 					"~> Prefer `.example.com`. Endpoint agents without ferentin-endpoint#1246 refuse " +
 					"`*.example.com`, and one host an agent refuses makes it refuse the tenant's **whole** " +
 					"endpoint policy and keep its last-known-good one.",

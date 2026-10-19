@@ -12,7 +12,7 @@ VERSION     := dev
 OS_ARCH     := $(shell go env GOOS)_$(shell go env GOARCH)
 INSTALL_DIR := $(HOME)/.terraform.d/plugins/$(HOSTNAME)/$(NAMESPACE)/$(NAME)/$(VERSION)/$(OS_ARCH)
 
-.PHONY: build install fmt lint vet vuln test testacc testacc-local tidy clean docs docs-check
+.PHONY: build install fmt lint vet vuln test testacc testacc-local tidy clean docs docs-check sync-host-vectors
 .PHONY: print-golangci-lint-version
 
 # The ONE place the golangci-lint version is written. The CI lint job reads it
@@ -172,6 +172,18 @@ docs-check:
 		status=$$?; \
 		rm -rf $(DOCS_CHECK_DIR); \
 		exit $$status
+
+# Copy the platform's destination host vectors byte for byte (never edit the
+# copy), then print the hash to pin in destinationHostVectorsSHA256 in
+# internal/provider/endpoint_destination_hosts_test.go.
+PLATFORM_DIR ?= ../ferentin-platform
+HOST_VECTORS := testdata/cross-language/destination-host-vectors.json
+
+sync-host-vectors:
+	cp "$(PLATFORM_DIR)/shared-core/src/test/resources/fixtures/cross-language/destination-host-vectors.json" \
+		internal/provider/$(HOST_VECTORS)
+	@echo "platform $$(git -C "$(PLATFORM_DIR)" rev-parse --short HEAD), sha256:"
+	@shasum -a 256 internal/provider/$(HOST_VECTORS) | cut -d' ' -f1
 
 clean:
 	rm -f $(BINARY)

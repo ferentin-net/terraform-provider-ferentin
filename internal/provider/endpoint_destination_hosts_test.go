@@ -2,6 +2,8 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -18,7 +20,11 @@ import (
 // copy of ferentin-platform's
 // shared-core/src/test/resources/fixtures/cross-language/destination-host-vectors.json
 // (platform 6e11cd18e, sha256 026e2a1789e43777d48e35e65a9e527124a6a83d541b42cbd38cefb1f829d6b8).
-// Refresh it by copying, never by editing: it is the agent's grammar.
+// Refresh it by copying, never by editing: it is the agent's grammar. `make
+// sync-host-vectors` copies it and prints the new hash for
+// destinationHostVectorsSHA256.
+const destinationHostVectorsSHA256 = "026e2a1789e43777d48e35e65a9e527124a6a83d541b42cbd38cefb1f829d6b8"
+
 type destinationHostVectors struct {
 	SchemaVersion int `json:"schema_version"`
 	Validity      []struct {
@@ -26,12 +32,19 @@ type destinationHostVectors struct {
 		Valid bool   `json:"valid"`
 		Why   string `json:"why"`
 	} `json:"validity"`
+	Matching []struct {
+		Pattern string `json:"pattern"`
+	} `json:"matching"`
 }
 
 func TestValidRuleHost_CrossLanguageVectors(t *testing.T) {
 	raw, err := os.ReadFile("testdata/cross-language/destination-host-vectors.json")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if sum := sha256.Sum256(raw); hex.EncodeToString(sum[:]) != destinationHostVectorsSHA256 {
+		t.Fatalf("destination-host-vectors.json sha256 %x, pinned %s: copy the platform's file, do not edit it",
+			sum, destinationHostVectorsSHA256)
 	}
 	var v destinationHostVectors
 	if err := json.Unmarshal(raw, &v); err != nil {
@@ -47,6 +60,23 @@ func TestValidRuleHost_CrossLanguageVectors(t *testing.T) {
 		if got := validRuleHost(c.Host); got != c.Valid {
 			t.Errorf("validRuleHost(%q) = %v, want %v (%s)", c.Host, got, c.Valid, c.Why)
 		}
+	}
+	// Every pattern the matcher is pinned with is one the grammar accepts.
+	for _, m := range v.Matching {
+		if !validRuleHost(m.Pattern) {
+			t.Errorf("matching pattern %q refused", m.Pattern)
+		}
+	}
+}
+
+// Lowercased as Java's toLowerCase(Locale.ROOT) does. strings.ToLower maps
+// `İ` to `i`, which would pass `İ.example` at plan for admin-api to refuse.
+func TestNormalizeDestinationHost_FullCaseMapping(t *testing.T) {
+	if got := normalizeDestinationHost("\u0130.example"); validRuleHost(got) {
+		t.Errorf("İ.example normalized to %q and accepted; admin-api refuses it", got)
+	}
+	if got := normalizeDestinationHost("\u212A.example"); got != "k.example" {
+		t.Errorf("Kelvin-sign host normalized to %q; admin-api stores k.example", got)
 	}
 }
 
@@ -148,5 +178,10 @@ func TestEndpointRuleValidateConfig_DestinationHosts(t *testing.T) {
 	}
 	if errs := validate(many...); len(errs) != 1 || !strings.Contains(errs[0], "at most 64") {
 		t.Errorf("want the 64-host bound, got %v", errs)
+	}
+	// The list's length is known even when a host in it is not.
+	many[0] = tftypes.NewValue(tftypes.String, tftypes.UnknownValue)
+	if errs := validate(many...); len(errs) != 1 || !strings.Contains(errs[0], "at most 64") {
+		t.Errorf("want the 64-host bound with an unknown host, got %v", errs)
 	}
 }
