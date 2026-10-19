@@ -43,7 +43,12 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   in `shadow` until the pilot group's own posture row moves to `enforce`. The
   *Govern MCP servers on managed endpoints* and *Block risky tool calls from
   coding agents* guides walk through each, including why a local `allow` runs
-  a server ungoverned and what `enforce` does not cover.
+  a server ungoverned and what `enforce` does not cover. A third guide,
+  *Bring an existing endpoint policy under Terraform*, imports device groups,
+  rules and posture rows configured in the console with `import` blocks and
+  `-generate-config-out`, lists the plan differences that matter, and notes
+  that the console keeps reorder arrows on an imported rule because
+  `managed_by` stays `console`.
 - **Example and guide: approved AI on managed endpoints.**
   [`examples/endpoint-approved-ai/`](examples/endpoint-approved-ai/) allows
   Anthropic, pins OpenAI to the ChatGPT desktop app by Apple Team ID, blocks

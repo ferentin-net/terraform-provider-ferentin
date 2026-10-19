@@ -143,6 +143,8 @@ The same readiness check applies to the whole tenant. Every apply writes every v
 
 ## Sharp edges
 
+**Already configured in the console?** Import it first: see [Bring an existing endpoint policy under Terraform](../guides/endpoint-adopt-existing.md).
+
 **One configuration owns the tenant-default posture row.** Every endpoint example manages `ferentin_endpoint_policy_settings.default`; applying two to one tenant makes them overwrite each other. Merge `hook_rule_enforcement` into the configuration that already owns it.
 
 **Destroying the tenant-default row does not reset it**, so a tenant on `enforce` stays on `enforce`. Apply `shadow` and activate before destroying. A group override is genuinely deleted, and the group falls back to the tenant default.
