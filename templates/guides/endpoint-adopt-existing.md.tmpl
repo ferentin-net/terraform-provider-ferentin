@@ -14,29 +14,39 @@ Importing only reads from the platform. Nothing changes on the tenant, and nothi
 ## Before you start
 
 - Terraform 1.11 or later, and a provider configured for the tenant with `policy:rw` (rules and posture) and `devices:groups:rw` (device groups). See the [provider overview](../index.md).
-- Your tenant ID.
 
-## 1. List what exists
+## 1. List what exists, as import blocks
 
-Import needs each object's ID. The admin API lists them; with the client credentials the provider uses:
+The [`endpoint-adopt-existing`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-adopt-existing) example reads the four list data sources, [`ferentin_device_groups`](../data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](../data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](../data-sources/endpoint_mcp_rules.md) and [`ferentin_endpoint_policy_settings_scopes`](../data-sources/endpoint_policy_settings_scopes.md), and prints an `import` block for each object to adopt:
 
 ```sh
-TENANT_ID=...
-TOKEN=$(curl -s -X POST "https://auth.ferentin.net/tenant/$TENANT_ID/token" \
-  -u "$FERENTIN_CLIENT_ID:$FERENTIN_CLIENT_SECRET" -d grant_type=client_credentials | jq -r .access_token)
-API="https://api.ferentin.net/admin/tenants/$TENANT_ID"
-
-curl -s -H "Authorization: Bearer $TOKEN" "$API/device-groups" \
-  | jq -r '.[] | [.groupId, .name, .source, .managedBy] | @tsv'
-curl -s -H "Authorization: Bearer $TOKEN" "$API/endpoint-policy/destination-rules" \
-  | jq -r '.[] | [.id, .priority, .action, .name, .managedBy] | @tsv'
-curl -s -H "Authorization: Bearer $TOKEN" "$API/endpoint-mcp-rules" \
-  | jq -r '.[] | [.id, .priority, .action, .matchKind, .name, .managedBy] | @tsv'
+cd endpoint-adopt-existing
+terraform init
+terraform apply                    # reads only; writes nothing to the tenant
+terraform output -raw import_blocks > ../my-endpoint-policy/imports.tf
+terraform output already_managed   # what it skipped, and why
 ```
 
-Posture has one row per scope: the tenant default, plus one for each device group with an override. `managedBy` tells you who created each object: `console`, or `iac` for something Terraform already manages elsewhere. Import only what no other configuration owns.
+```terraform
+import {
+  to = ferentin_device_group.g_engineering_e6c81c22
+  id = "<tenant_id>/<group_id>"
+}
 
-## 2. Write import blocks
+import {
+  to = ferentin_endpoint_destination_rule.d_allow_anthropic_3804043c
+  id = "<tenant_id>/<rule_id>"
+}
+
+import {
+  to = ferentin_endpoint_policy_settings.default
+  id = "<tenant_id>"
+}
+```
+
+By default it picks objects created in the console (`managed_by = "console"`) that Terraform has not written since. **`managed_by` never changes**, so an object created in the console and imported by another configuration still says `console`; its `last_modified_by = "iac"` is the sign that some configuration owns it, and the example skips it. Import only what no other configuration owns.
+
+Every list item also carries `import_id`, so you can write the blocks by hand instead. The IDs take these forms:
 
 | Resource | Import ID |
 | --- | --- |
@@ -46,32 +56,11 @@ Posture has one row per scope: the tenant default, plus one for each device grou
 | [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md), tenant default | `<tenant_id>` |
 | `ferentin_endpoint_policy_settings`, group override | `<tenant_id>/<device_group_id>` |
 
-```terraform
-import {
-  to = ferentin_device_group.engineering
-  id = "<tenant_id>/<group_id>"
-}
+-> Terraform does not generate configuration for an `import` block that uses `for_each`, which is why the example prints one block per object rather than importing from the data sources directly.
 
-import {
-  to = ferentin_endpoint_destination_rule.allow_anthropic
-  id = "<tenant_id>/<rule_id>"
-}
+## 2. Put them in the owning configuration
 
-import {
-  to = ferentin_endpoint_mcp_rule.allow_figma
-  id = "<tenant_id>/<rule_id>"
-}
-
-import {
-  to = ferentin_endpoint_policy_settings.default
-  id = "<tenant_id>"
-}
-
-import {
-  to = ferentin_endpoint_policy_settings.engineering
-  id = "<tenant_id>/<group_id>"
-}
-```
+Copy `imports.tf` into the directory of the configuration that will own the policy, next to its provider configuration.
 
 **Import the posture rows, even though the resource is an upsert.** Without an import, the first apply adopts the existing row and writes your config over it, including the provider's defaults for attributes you left out. With an import, the plan shows every difference first.
 
@@ -97,7 +86,7 @@ Move the blocks into your configuration, then:
 - **Delete `tenant_id`** from each block; it defaults to the provider's.
 - **Delete the `= null` lines.** An unset attribute means the same thing.
 - **Replace pasted UUIDs with references**, so a group and the rules that target it stay connected: `device_group_ids = [ferentin_device_group.engineering.group_id]`, and `device_group_id = ferentin_device_group.engineering.group_id` on a group's posture row.
-- **Rename the resources** to something you will recognize. Renaming in config before the first apply is free; afterwards it needs a `moved` block.
+- **Rename the resources** to something you will recognize: change the name in both the resource block and its `import` block's `to`. Renaming before the first apply is free; afterwards it needs a `moved` block.
 
 Plan again after each change. The goal is still **0 to change**.
 

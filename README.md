@@ -2,7 +2,7 @@
 
 Terraform provider for the [Ferentin](https://ferentin.net) AI authorization platform. Declaratively manage tenant resources: edge sites, LLM / MCP / OTEL policies, MCP servers, data protection policies, AI-agent OIDC clients, workload identity, endpoint policy for managed devices (device groups, destination and MCP rules, posture), and the related catalogs.
 
-**Status:** `v0.1.0` candidate. Covers 17 resources + 11 data sources. See [CHANGELOG.md](CHANGELOG.md).
+**Status:** `v0.1.0` candidate. Covers 17 resources + 15 data sources. See [CHANGELOG.md](CHANGELOG.md).
 
 ## Quick start
 
@@ -76,6 +76,9 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_data_protection_detectors` / `ferentin_data_protection_detector` | Built-in DLP detector catalog (list / single). |
 | `ferentin_workload_oauth_client_test` | Re-runs the IdP probe on every plan; surfaces `overall_pass` + error categories. |
 | `ferentin_workload_identity_provider_test` | Re-runs the trust-config probe; returns raw JSON for `jsondecode()`. |
+| `ferentin_device_groups` | Every device group in the tenant, with `import_id` and `managed_by`. |
+| `ferentin_endpoint_destination_rules` / `ferentin_endpoint_mcp_rules` | Every endpoint rule of that kind, in evaluation order, with `import_id` and `managed_by`. |
+| `ferentin_endpoint_policy_settings_scopes` | Every endpoint posture row: the tenant default, then each group override. |
 
 ## Environment variables
 
