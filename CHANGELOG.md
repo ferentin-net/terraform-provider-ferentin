@@ -122,6 +122,18 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **Endpoint steering is MCP-only, through the public edge, and the docs now
+  say so.** They described `steer` on `ferentin_endpoint_destination_rule` as
+  pointing devices at a service-edge. Destination steering is not available
+  yet: only MCP traffic is steered, through the tenant's public edge,
+  `https://<tenant-short-name>.mcp.ferentin.net/v1` (the `mcp_gateway_url` on
+  `ferentin_endpoint_policy_settings`, and the base of `steer_to_url` on
+  `ferentin_endpoint_mcp_rule`). `plan` now warns on a destination `steer`
+  rule; it still plans. The `endpoint-fleet`, `complete` and destination-rule
+  examples allow their sanctioned providers instead of steering them, and
+  `endpoint-fleet`'s `steered_providers` and `service_edge_url` variables are
+  replaced by `sanctioned_providers`. OpenAI is no longer on that fleet-wide
+  list, so the legal carve-out is the only way to it.
 - **`ferentin_endpoint_destination_rule` refuses a destination host the
   endpoint agent cannot read, at plan.** The agent checks every host when it
   reads a policy and refuses the tenant's whole endpoint policy over one bad

@@ -232,12 +232,13 @@ resource "ferentin_endpoint_destination_rule" "block_chatgpt_contractors" {
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
-# Everyone else's Anthropic traffic is steered through service-edge, where the
-# llm_policy and data_protection_policy above actually apply. The device never
-# holds the provider key — service-edge presents it.
-resource "ferentin_endpoint_destination_rule" "steer_anthropic" {
-  name        = "steer-anthropic-to-edge"
-  description = "Route Claude traffic through service-edge so LLM + DLP policy applies"
+# Everyone may reach Anthropic. An allowed destination is reached directly from
+# the device: the llm_policy and data_protection_policy above govern gateway
+# traffic, not this. Destination rules allow or block; `steer` is not available
+# on them yet. Only MCP traffic is steered today (see mcp_gateway_url below).
+resource "ferentin_endpoint_destination_rule" "allow_anthropic" {
+  name        = "allow-anthropic"
+  description = "Claude is a sanctioned AI provider"
   priority    = 20
 
   destination_kind = "ai_provider"
@@ -249,10 +250,7 @@ resource "ferentin_endpoint_destination_rule" "steer_anthropic" {
   # hosts from. They happen to agree on "anthropic"; wiring one to the other
   # would assert a guarantee the platform does not make.
   catalog_slug = "anthropic"
-  action       = "steer"
-
-  # Must be https:// — http:// would downgrade every steered flow on the fleet.
-  steer_to_url = var.service_edge_url
+  action       = "allow"
 }
 
 # Explicit deny list, fleet-wide. No device_group_ids = every device in the

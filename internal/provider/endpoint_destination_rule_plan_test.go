@@ -261,3 +261,38 @@ func TestEndpointRuleModifyPlan_WarnsWhenTargetsAreRemoved(t *testing.T) {
 		}
 	}
 }
+
+// Destination steering is not available yet (only MCP traffic is steered), so a
+// destination `steer` rule still plans but says so; allow and block stay quiet.
+func TestEndpointRuleValidateConfig_SteerWarns(t *testing.T) {
+	ctx := context.Background()
+	s := endpointRuleSchema(t)
+
+	validate := func(action string) *resource.ValidateConfigResponse {
+		attrs := map[string]tftypes.Value{
+			"name":         tftypes.NewValue(tftypes.String, "r"),
+			"action":       tftypes.NewValue(tftypes.String, action),
+			"catalog_slug": tftypes.NewValue(tftypes.String, "anthropic"),
+		}
+		if action == "steer" {
+			attrs["steer_to_url"] = tftypes.NewValue(tftypes.String, "https://edge.example.com/v1")
+		}
+		cfg := tfsdk.Config{Schema: s, Raw: endpointRuleValue(t, s, attrs)}
+		resp := &resource.ValidateConfigResponse{}
+		(&EndpointDestinationRuleResource{}).ValidateConfig(ctx, resource.ValidateConfigRequest{Config: cfg}, resp)
+		return resp
+	}
+
+	resp := validate("steer")
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("a complete steer rule must still plan: %v", resp.Diagnostics.Errors())
+	}
+	if w := resp.Diagnostics.Warnings(); len(w) != 1 || !strings.Contains(w[0].Summary(), "not available yet") {
+		t.Errorf("want one not-available warning, got %v", w)
+	}
+	for _, a := range []string{"allow", "block"} {
+		if w := validate(a).Diagnostics.Warnings(); len(w) != 0 {
+			t.Errorf("%s rule warned: %v", a, w)
+		}
+	}
+}

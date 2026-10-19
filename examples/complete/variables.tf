@@ -21,21 +21,10 @@ variable "anthropic_api_key" {
   sensitive   = true
 }
 
-variable "service_edge_url" {
-  type        = string
-  description = "service-edge base URL that managed devices are steered to. Must be https://."
-  default     = "https://edge.example.com/v1"
-
-  validation {
-    condition     = startswith(var.service_edge_url, "https://")
-    error_message = "service_edge_url must be https:// — http:// downgrades every steered flow on the fleet to cleartext."
-  }
-}
-
 variable "mcp_gateway_url" {
   type        = string
-  description = "Tenant MCP gateway base URL that approved on-device MCP client configs are rewritten to. Must be https://."
-  default     = "https://mcp.example.com"
+  description = "Tenant MCP gateway that approved on-device MCP client configs are rewritten to: https://<tenant-short-name>.mcp.ferentin.net/v1 on the public edge. Must be https://."
+  default     = "https://acme.mcp.ferentin.net/v1"
 
   validation {
     condition     = startswith(var.mcp_gateway_url, "https://")

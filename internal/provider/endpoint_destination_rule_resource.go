@@ -174,10 +174,18 @@ func (r *EndpointDestinationRuleResource) ValidateConfig(ctx context.Context, re
 					"The endpoint agent refuses the tenant's whole policy over one host it cannot read.")
 		}
 	}
-	if !action.IsUnknown() && action.ValueString() == "steer" && isUnsetString(steerToURL) {
-		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
-			"steer_to_url is required when action is \"steer\"",
-			"Point it at the https:// base URL of the service-edge that should receive the steered traffic.")
+	if !action.IsUnknown() && action.ValueString() == "steer" {
+		// Kept valid so existing configs still plan, but said out loud: only MCP
+		// traffic is steered today, by ferentin_endpoint_mcp_rule.
+		resp.Diagnostics.AddAttributeWarning(path.Root("action"),
+			"Destination steering is not available yet",
+			"Only MCP traffic is steered today, through the tenant's public edge, with "+
+				"ferentin_endpoint_mcp_rule. Use \"allow\" or \"block\" on a destination rule.")
+		if isUnsetString(steerToURL) {
+			resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
+				"steer_to_url is required when action is \"steer\"",
+				"Point it at the https:// base URL that should receive the steered traffic.")
+		}
 	}
 }
 
@@ -186,8 +194,9 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 		MarkdownDescription: "Endpoint destination rule — allow / block / steer AI traffic on managed " +
 			"devices (the macOS endpoint agent). Rules are evaluated on-device, **first match wins** by " +
 			"ascending `priority`.\n\n" +
-			"`steer` points the device at a service-edge base URL; the device never holds an upstream " +
-			"provider key — service-edge presents it.\n\n" +
+			"~> **`steer` is not available on destination rules yet.** Only MCP traffic is steered " +
+			"today, through the tenant's public edge, with `ferentin_endpoint_mcp_rule`. Use `allow` " +
+			"or `block` here; `plan` warns on a destination `steer` rule.\n\n" +
 			"Targeting `device_group_ids` bumps only those groups' policy-bundle versions, so devices in " +
 			"other groups do not re-pull.\n\n" +
 			"## Import\n\n" +
@@ -275,12 +284,14 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 			},
 
 			"action": schema.StringAttribute{
-				MarkdownDescription: "`allow`, `block`, or `steer`. `steer` requires `steer_to_url`.",
-				Required:            true,
-				Validators:          []validator.String{stringvalidator.OneOf("allow", "block", "steer")},
+				MarkdownDescription: "`allow`, `block`, or `steer`. `steer` is not available on " +
+					"destination rules yet (see above) and requires `steer_to_url`.",
+				Required:   true,
+				Validators: []validator.String{stringvalidator.OneOf("allow", "block", "steer")},
 			},
 			"steer_to_url": schema.StringAttribute{
-				MarkdownDescription: "service-edge base URL the agent rewrites the destination to. " +
+				MarkdownDescription: "Base URL the agent would rewrite the destination to, for destination " +
+					"steering, which is not available yet. " +
 					"**Required when `action = \"steer\"`, and must be `https://`** — the platform " +
 					"rejects `http://` because it would silently downgrade every steered flow on the " +
 					"fleet to cleartext.",

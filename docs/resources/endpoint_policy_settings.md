@@ -103,8 +103,9 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
 
   unapproved_mcp_action = "quarantine"
 
-  # Approved MCP client configs are rewritten to point here. Must be https://.
-  mcp_gateway_url = "https://acme.mcp.example.com"
+  # Approved MCP client configs are rewritten to point here: the tenant's MCP
+  # gateway on the public edge, https://<tenant-short-name>.mcp.ferentin.net/v1.
+  mcp_gateway_url = "https://acme.mcp.ferentin.net/v1"
 
   # With "block", your destination rules become an allowlist — make sure they
   # cover every sanctioned provider before flipping this.
@@ -168,7 +169,7 @@ A key this provider version does not know fails at plan rather than being droppe
 ~> Any `ask_*` tier needs approval routing (`localMcpApprovalConfig` with at least one channel), which this resource does not manage; set it up in the admin console first or the platform rejects the write.
 
 Removing this attribute from config leaves the stored policy in place. Clearing it is done in the admin console. (see [below for nested schema](#nestedatt--local_mcp_risk_policy))
-- `mcp_gateway_url` (String) Tenant MCP gateway base URL that approved server configs are rewritten to point at. Unset = the agent reports what it finds and rewrites nothing.
+- `mcp_gateway_url` (String) Tenant MCP gateway base URL that approved server configs are rewritten to point at: the tenant's gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`. Unset = the agent reports what it finds and rewrites nothing.
 
 Must be `https://` — an `http://` value would downgrade every governed MCP session on the fleet to cleartext, which is strictly worse than the ungoverned status quo it replaces. The platform rejects it; this fails at plan.
 - `quic_block_enabled` (Boolean) Block QUIC / UDP-443 to force TCP fallback where SNI is inspectable. Default `false`.

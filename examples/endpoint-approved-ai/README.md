@@ -2,9 +2,9 @@
 
 Allow the AI providers you sanction, pin one of them to its signed desktop app,
 and block the rest, on every managed device in the tenant. Four destination
-rules and the tenant-default posture, with no device groups and no
-service-edge. Start here; [`../endpoint-fleet/`](../endpoint-fleet/) adds groups,
-steering, MCP rules and a staged rollout.
+rules and the tenant-default posture, with no device groups and no MCP
+rules. Start here; [`../endpoint-fleet/`](../endpoint-fleet/) adds groups,
+MCP rules, posture overrides and a staged rollout.
 
 The walk-through, with the reasoning behind each rule, is the
 [Approve AI apps on managed endpoints](../../docs/guides/endpoint-approved-ai.md)
