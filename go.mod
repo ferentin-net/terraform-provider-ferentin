@@ -9,8 +9,8 @@ toolchain go1.27.2
 // environment terraform runs in could intercept the auth server and the admin
 // API. A godebug line in a dependency's go.mod does not reach this binary:
 // only the main module's applies, so ferentin-cli-app's own line (#318 item 7)
-// is repeated here. Go plans to remove the setting in 1.31; an unknown key here
-// fails the build, which is the signal to set RootCAs explicitly. See
+// is repeated here. Go plans to remove the setting in 1.31; before taking that
+// toolchain, set RootCAs explicitly instead. See
 // internal/provider/sslcertfile_test.go.
 godebug x509sslcertoverrideplatform=0
 

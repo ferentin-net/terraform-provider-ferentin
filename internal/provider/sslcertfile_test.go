@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +79,9 @@ func verifyLeafAgainstSystemRoots(t *testing.T) {
 		t.Fatal(err)
 	}
 	block, _ := pem.Decode(raw)
+	if block == nil {
+		t.Fatal("leaf file holds no PEM block")
+	}
 	leaf, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
 		t.Fatal(err)
@@ -135,4 +139,27 @@ func throwawayChain(t *testing.T) (caPEM, leafPEM []byte) {
 	}
 	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
 		pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leafDER})
+}
+
+// TestDefaultGODEBUG_KeepsPlatformTrust checks the setting where every OS can
+// see it: the build records its default GODEBUG, from go.mod or, in workspace
+// mode, go.work. TestSSLCertFile_DoesNotReplacePlatformTrust proves the
+// setting works but only runs on macOS and Windows, and CI and the release
+// build run on Linux.
+func TestDefaultGODEBUG_KeepsPlatformTrust(t *testing.T) {
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		t.Fatal("no build info")
+	}
+	for _, s := range bi.Settings {
+		if s.Key != "DefaultGODEBUG" {
+			continue
+		}
+		if godebugOverridesTrust(s.Value) || !strings.Contains(s.Value, "x509sslcertoverrideplatform=0") {
+			break
+		}
+		return
+	}
+	t.Fatal("the build's default GODEBUG does not set x509sslcertoverrideplatform=0 " +
+		"(is `godebug x509sslcertoverrideplatform=0` in go.mod, and in go.work if you use one?)")
 }

@@ -25,7 +25,10 @@ func TestTrustOverrideWarning(t *testing.T) {
 		{"trailing space is not 0", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=0 ", "SSL_CERT_FILE", "x"), true},
 		{"leading space is another key", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=1, x509sslcertoverrideplatform=0", "SSL_CERT_FILE", "x"), true},
 		{"last one wins", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=1,x509sslcertoverrideplatform=0", "SSL_CERT_FILE", "x"), false},
-		{"bisect suffix", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=0#1", "SSL_CERT_FILE", "x"), false},
+		// A bisect pattern makes the value "" for stacks it does not match.
+		{"bisect pattern", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=0#n", "SSL_CERT_FILE", "x"), true},
+		{"bisect pattern that may match", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=0#1", "SSL_CERT_FILE", "x"), true},
+		{"empty value is not 0", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=", "SSL_CERT_FILE", "x"), true},
 		{"override off", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=0", "SSL_CERT_FILE", "x"), false},
 		{"no CA file", "darwin", env("GODEBUG", "x509sslcertoverrideplatform=1"), false},
 		{"linux is the trust store anyway", "linux", env("GODEBUG", "x509sslcertoverrideplatform=1", "SSL_CERT_FILE", "x"), false},

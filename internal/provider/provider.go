@@ -252,7 +252,7 @@ func (p *FerentinProvider) Configure(ctx context.Context, req provider.Configure
 	}
 
 	if w := trustOverrideWarningForThisRun(); w != "" {
-		resp.Diagnostics.AddWarning("SSL_CERT_FILE replaces the system certificate store for this run", w)
+		resp.Diagnostics.AddWarning("SSL_CERT_FILE or SSL_CERT_DIR replaces the system certificate store for this run", w)
 	}
 
 	endpoint := stringOrEnv(data.Endpoint, envEndpoint)

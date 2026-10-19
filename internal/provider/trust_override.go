@@ -39,21 +39,20 @@ func trustOverrideWarning(goos string, getenv func(string) string) string {
 		"install the CA in the system store instead."
 }
 
-// godebugOverridesTrust reports whether a GODEBUG value sets
+// godebugOverridesTrust reports whether a GODEBUG value may set
 // x509sslcertoverrideplatform to anything but 0, as the Go runtime reads it:
 // entries split on ',', the last one naming the key wins, the name ends at
-// the first '=', nothing is trimmed, and the value ends at a '#' bisect
-// pattern. A copy of ferentin-cli-app's check of the same name, which lives in
-// its command package and cannot be imported.
+// the first '=', and nothing is trimmed. A '#' starts a bisect pattern, and
+// for a call stack the pattern does not match the runtime reads the value as
+// "", which is not 0, so any pattern counts as an override: whether it matches
+// depends on the stack. Adapted from ferentin-cli-app's check of the same
+// name, which lives in its command package and cannot be imported.
 func godebugOverridesTrust(godebug string) bool {
 	entries := strings.Split(godebug, ",")
 	for i := len(entries) - 1; i >= 0; i-- {
 		name, value, ok := strings.Cut(entries[i], "=")
 		if !ok || name != "x509sslcertoverrideplatform" {
 			continue
-		}
-		if j := strings.IndexByte(value, '#'); j >= 0 {
-			value = value[:j]
 		}
 		return value != "0"
 	}
