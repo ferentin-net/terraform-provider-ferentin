@@ -33,6 +33,19 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **New resource `ferentin_mcp_local_server`**: approve or block a local
+  (stdio) MCP server so managed devices run it governed, through `ferentin mcp
+  local` (ferentin-platform#2126, IaC-ready in #3188). Create one from exactly
+  one of `argv_template` (with `display_name`; `*` matches one argument) or
+  `catalog_slug`; it is approved on creation, and `status` and `argv_template`
+  change in place with `If-Match`. Import manages the verdict of a server a
+  device reported, too. The platform keeps such a server, so destroying it
+  stops managing it with a warning instead of failing. A create that collides
+  with a registered server says to import it. `ferentin_mcp_local_servers`
+  lists every server, and `examples/endpoint-adopt-existing` imports the ones
+  created in the console. The *Govern MCP servers* guide and
+  `examples/endpoint-mcp-servers` approve a local server with it, instead of
+  sending readers to the admin console.
 - **New resource `ferentin_endpoint_agent_approval`**: approve (`report_only`)
   or deny (`block`) one catalogued AI agent (`claude-code`, `cursor`,
   `openclaw`, …) on managed devices, optionally narrowed to device groups

@@ -145,10 +145,10 @@ puts the developer's entry back exactly as written, so the server runs outside
 Ferentin and nothing sees its tool calls. It is also tenant-wide:
 `device_group_ids` and `criteria` are refused on a `package` or
 `argv_contains` allow until devices carry an authenticated identity when a
-local server is admitted. Approving a server under Registries → MCP Servers →
-Local servers in the admin console keeps every call governed; the provider
-does not manage that approval yet. Narrowing a `block` is fine, as the shell
-rule does.
+local server is admitted. Approving the server instead, with
+[`ferentin_mcp_local_server`](../../docs/resources/mcp_local_server.md) or in
+the admin console, keeps every call governed. Narrowing a `block` is fine, as
+the shell rule does.
 
 **Destroying an agent approval denies the agent where the default blocks.**
 Removing a slug from `approved_agents` deletes its decision, and the agent

@@ -14,7 +14,7 @@ description: |-
 Start here for managed endpoints. Each guide walks through a working configuration from the repository's `examples/`.
 
 - [Approve AI apps on managed endpoints](guides/endpoint-approved-ai.md): allow the sanctioned AI providers, pin one to its signed desktop app, block the rest.
-- [Govern MCP servers on managed endpoints](guides/endpoint-mcp-servers.md): steer sanctioned remote MCP servers through the tenant's gateway, block unvetted ones and known-bad local packages.
+- [Govern MCP servers on managed endpoints](guides/endpoint-mcp-servers.md): steer sanctioned remote MCP servers through the tenant's gateway, approve the local servers developers run, and block the rest.
 - [Block risky tool calls from coding agents](guides/endpoint-tool-calls.md): count, then deny, the commands and tools agents should never run, one device group at a time.
 - [Bring an existing endpoint policy under Terraform](guides/endpoint-adopt-existing.md): import what was configured in the admin console, with a first apply that changes nothing.
 
@@ -43,9 +43,10 @@ Lookups: [`ferentin_llm_provider`](data-sources/llm_provider.md), [`ferentin_mcp
 | [`ferentin_endpoint_destination_rule`](resources/endpoint_destination_rule.md) | Allow or block AI destinations on the device |
 | [`ferentin_endpoint_mcp_rule`](resources/endpoint_mcp_rule.md) | Allow, block or steer MCP servers, and block tool calls |
 | [`ferentin_endpoint_agent_approval`](resources/endpoint_agent_approval.md) | Approve or deny one catalogued AI agent |
+| [`ferentin_mcp_local_server`](resources/mcp_local_server.md) | Approve or block a local (stdio) MCP server, so devices run it governed |
 | [`ferentin_endpoint_policy_settings`](resources/endpoint_policy_settings.md) | Posture: what happens when no rule matches, per tenant or device group |
 
-Lists, for finding and importing what exists: [`ferentin_device_groups`](data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](data-sources/endpoint_mcp_rules.md), [`ferentin_endpoint_agent_approvals`](data-sources/endpoint_agent_approvals.md) and [`ferentin_endpoint_policy_settings_scopes`](data-sources/endpoint_policy_settings_scopes.md).
+Lists, for finding and importing what exists: [`ferentin_device_groups`](data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](data-sources/endpoint_mcp_rules.md), [`ferentin_endpoint_agent_approvals`](data-sources/endpoint_agent_approvals.md), [`ferentin_mcp_local_servers`](data-sources/mcp_local_servers.md) and [`ferentin_endpoint_policy_settings_scopes`](data-sources/endpoint_policy_settings_scopes.md).
 
 ### Identity
 

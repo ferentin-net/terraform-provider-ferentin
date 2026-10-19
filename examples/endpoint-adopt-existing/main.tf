@@ -1,6 +1,6 @@
 # Print an `import` block for every endpoint object Terraform does not manage
-# yet: device groups, destination rules, MCP rules, posture rows and AI-agent
-# decisions.
+# yet: device groups, destination rules, MCP rules, posture rows, AI-agent
+# decisions and local MCP servers.
 #
 #   terraform init
 #   terraform apply                       # reads only; writes nothing to the tenant
@@ -36,6 +36,7 @@ data "ferentin_endpoint_destination_rules" "all" {}
 data "ferentin_endpoint_mcp_rules" "all" {}
 data "ferentin_endpoint_policy_settings_scopes" "all" {}
 data "ferentin_endpoint_agent_approvals" "all" {}
+data "ferentin_mcp_local_servers" "all" {}
 
 locals {
   # Resource names: the object's name, lowercased, non-alphanumerics folded to
@@ -46,6 +47,7 @@ locals {
       [for g in data.ferentin_device_groups.all.groups : { id = g.group_id, name = g.name }],
       [for r in data.ferentin_endpoint_destination_rules.all.rules : { id = r.rule_id, name = r.name }],
       [for r in data.ferentin_endpoint_mcp_rules.all.rules : { id = r.rule_id, name = r.name }],
+      [for s in data.ferentin_mcp_local_servers.all.servers : { id = s.server_id, name = s.display_name }],
     ) : o.id => "${trim(replace(lower(o.name), "/[^a-z0-9]+/", "_"), "_")}_${substr(o.id, 0, 8)}"
   }
 
@@ -63,6 +65,7 @@ locals {
     [for x in data.ferentin_endpoint_mcp_rules.all.rules : { k = "m:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
     [for x in data.ferentin_endpoint_policy_settings_scopes.all.scopes : { k = "p:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
     [for x in data.ferentin_endpoint_agent_approvals.all.approvals : { k = "a:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
+    [for x in data.ferentin_mcp_local_servers.all.servers : { k = "l:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
     ) : o.k => contains(local.adopt, o.by) && !(var.skip_last_written_by_terraform && o.last == "iac")
   }
 
@@ -84,6 +87,9 @@ locals {
     [for a in data.ferentin_endpoint_agent_approvals.all.approvals : {
       to = "ferentin_endpoint_agent_approval.a_${trim(replace(lower(a.catalog_slug), "/[^a-z0-9]+/", "_"), "_")}", id = a.import_id
     } if local.wanted["a:${a.import_id}"]],
+    [for s in data.ferentin_mcp_local_servers.all.servers : {
+      to = "ferentin_mcp_local_server.l_${local.label[s.server_id]}", id = s.import_id
+    } if local.wanted["l:${s.import_id}"]],
   )
 }
 
@@ -100,5 +106,6 @@ output "already_managed" {
     [for r in data.ferentin_endpoint_mcp_rules.all.rules : "MCP rule ${r.name} (created by ${r.managed_by}, last written by ${r.last_modified_by})" if !local.wanted["m:${r.import_id}"]],
     [for s in data.ferentin_endpoint_policy_settings_scopes.all.scopes : "posture ${coalesce(s.device_group_id, "tenant default")} (created by ${s.managed_by}, last written by ${s.last_modified_by})" if !local.wanted["p:${s.import_id}"]],
     [for a in data.ferentin_endpoint_agent_approvals.all.approvals : "agent decision ${a.catalog_slug} (created by ${a.managed_by}, last written by ${a.last_modified_by})" if !local.wanted["a:${a.import_id}"]],
+    [for s in data.ferentin_mcp_local_servers.all.servers : "local MCP server ${s.display_name} (created by ${s.managed_by}, last written by ${s.last_modified_by})" if !local.wanted["l:${s.import_id}"]],
   )
 }

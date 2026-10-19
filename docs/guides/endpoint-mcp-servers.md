@@ -7,7 +7,7 @@ description: |-
 
 # Govern MCP servers on managed endpoints
 
-Steer the remote MCP servers you have sanctioned through your tenant's MCP gateway, block the ones you have not, block known-bad local packages, and decide what happens to every other MCP server a developer configures. The policy is three kinds of [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md) and the tenant-default [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row.
+Steer the remote MCP servers you have sanctioned through your tenant's MCP gateway, block the ones you have not, approve the local servers your developers run and block known-bad ones, and decide what happens to every other MCP server a developer configures. The policy is three kinds of [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md), a [`ferentin_mcp_local_server`](../resources/mcp_local_server.md) approval, and the tenant-default [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row.
 
 The configuration is the [`endpoint-mcp-servers`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-mcp-servers) example. It pairs with [Approve AI apps on managed endpoints](../guides/endpoint-approved-ai.md), which covers network destinations, and [Block risky tool calls from coding agents](../guides/endpoint-tool-calls.md), which covers what agents do once a server runs.
 
@@ -20,6 +20,7 @@ MCP rules are evaluated **on the device**, in ascending `priority`, and the **fi
 | 10 | `block` | remote host `mcp.unvetted.example` | the server is blocked |
 | 20 | `steer` | remote host `api.githubcopilot.com` | the developer's entry is rewritten to the tenant's gateway route for the server |
 | 30 | `block` | local package `npm:@example/unvetted-mcp` | the entry becomes a refusal that explains the block |
+| — | approved | `ferentin_mcp_local_server`: `uv run --directory * okta-mcp-server` | the entry is wrapped in `ferentin mcp local` and runs governed |
 | — | `unapproved_mcp_action` | any other MCP server config that is not approved | `report_only`, until you choose `quarantine` or `block` |
 
 ## Before you start
@@ -74,7 +75,19 @@ resource "ferentin_endpoint_mcp_rule" "steer_github" {
 
 `app_bundle_ids` narrows a rule to an MCP **client**, such as Claude Desktop or Cursor, by bundle identifier. It never names the server.
 
-## 3. Local servers: block, and approve rather than allow
+## 3. Local servers: approve the ones you run, block the rest
+
+```terraform
+resource "ferentin_mcp_local_server" "okta" {
+  display_name  = "Okta MCP"
+  argv_template = ["uv", "run", "--directory", "*", "okta-mcp-server"]
+}
+```
+
+[`ferentin_mcp_local_server`](../resources/mcp_local_server.md) approves a local server tenant-wide. `argv_template` is the command line the approval covers, as the client's config spells it; `*` matches exactly one argument, so this one approves `okta-mcp-server` from any checkout directory. Devices consult a template only for a command line that names no package. For a packaged server in the local MCP catalog, set `catalog_slug` instead, and the approval is keyed on the entry's packages. Its tools still start unvetted: `local_mcp_risk_policy` (step 5) decides what developers get from them.
+
+~> The template ships **verbatim** in the signed policy bundle to every managed device. Put `*` where a credential or anything private would go.
+
 
 ```terraform
 resource "ferentin_endpoint_mcp_rule" "block_local_packages" {
@@ -90,7 +103,7 @@ A `package` value is one exact registry-qualified id: `npm:@scope/name`, `pypi:n
 
 To let a local server run, prefer **approving** it to writing an `allow` rule:
 
-- **Approve it** under Registries → MCP Servers → Local servers in the admin console. The agent wraps the entry in `ferentin mcp local`, so admission, tool filtering and every call are governed. The provider does not manage local-server approval yet.
+- **Approve it**, with `ferentin_mcp_local_server` or in the admin console. The agent wraps the entry in `ferentin mcp local`, so admission, tool filtering and every call are governed.
 - **An `allow` rule** puts the entry back exactly as written. The server runs outside Ferentin and nothing sees its tool calls. A local `allow` is also tenant-wide for now: `plan` refuses `device_group_ids` or `criteria` on it, because devices do not yet carry an authenticated identity when a local server is admitted.
 - **A local `steer` rule** keeps an entry wrapped, but `ferentin mcp local` still refuses the server until it is approved. Use one for a command line too long to approve on its own: the agent reads at most 64 arguments of an entry, so name the first 60 in a steer rule, then approve the server.
 
@@ -174,7 +187,9 @@ After activation, the example's `rule_enforcement` output reports whether the fl
 #   2x  steer  sanctioned remote servers → the tenant's MCP gateway route
 #   30  block  known-bad local (stdio) packages
 #
-# MCP server configs no rule matches get the posture's `unapproved_mcp_action`.
+# Local servers your developers run are approved with ferentin_mcp_local_server,
+# which keeps them governed through `ferentin mcp local`. MCP server configs no
+# rule matches and nothing approves get the posture's `unapproved_mcp_action`.
 #
 # `terraform apply` STAGES the change. Devices pick it up only after someone
 # activates the pending changes in the admin console.
@@ -233,6 +248,16 @@ resource "ferentin_endpoint_mcp_rule" "block_local_packages" {
   match_kind   = "package"
   match_values = var.blocked_local_packages
   action       = "block"
+}
+
+# Approved local (stdio) servers, by the command line each approval covers.
+# `*` matches exactly one argument. Approving keeps the server governed; an
+# endpoint `allow` rule would run it outside Ferentin instead.
+resource "ferentin_mcp_local_server" "approved" {
+  for_each = var.approved_local_servers
+
+  display_name  = each.value.display_name
+  argv_template = each.value.argv_template
 }
 
 # The tenant-default posture row, which every device resolves through. Only one
