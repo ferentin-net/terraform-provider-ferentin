@@ -33,6 +33,14 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **Example and guide: approved AI on managed endpoints.**
+  [`examples/endpoint-approved-ai/`](examples/endpoint-approved-ai/) allows
+  Anthropic, pins OpenAI to the ChatGPT desktop app by Apple Team ID, blocks
+  OpenAI from every other app and blocks DeepSeek, with the tenant-default
+  posture as the fallthrough. The new *Approve AI apps on managed endpoints*
+  guide (`docs/guides/`) walks through it rule by rule, and is the first doc
+  to say that `apply` only stages endpoint policy: devices pick it up after
+  an activation in the admin console.
 - **New resource `ferentin_endpoint_mcp_rule`**: allow / block / steer for
   MCP servers and tool calls on managed devices, matched by `host` /
   `url_prefix` (remote servers), `package` / `argv_contains` (local servers),
