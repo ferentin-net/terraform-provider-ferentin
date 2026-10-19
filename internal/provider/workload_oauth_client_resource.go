@@ -254,9 +254,9 @@ func (r *WorkloadOAuthClientResource) Schema(_ context.Context, _ resource.Schem
 			"created_by":              schema.StringAttribute{Computed: true},
 			"updated_at":              schema.StringAttribute{Computed: true},
 			"updated_by":              schema.StringAttribute{Computed: true},
-			"managed_by":              schema.StringAttribute{Computed: true},
-			"managed_by_client_id":    schema.StringAttribute{Computed: true},
-			"managed_by_module":       schema.StringAttribute{Computed: true},
+			"managed_by":              schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"managed_by_client_id":    schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
+			"managed_by_module":       schema.StringAttribute{Computed: true, PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()}},
 			"last_modified_by":        schema.StringAttribute{Computed: true},
 		},
 	}

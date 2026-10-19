@@ -138,6 +138,19 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **An update no longer plans `managed_by`, `managed_by_client_id` and
+  `managed_by_module` as `(known after apply)`.** The platform sets them once,
+  at create, and never changes them, but nine resources re-planned them on
+  every update, which read as if an apply could change who created the object.
+  They now keep their state value (`UseStateForUnknown`), as `ferentin_ai_agent`
+  and `ferentin_mcp_provider` already did, and a unit test holds every
+  resource to it.
+- **`examples/endpoint-fleet` no longer allows a local MCP package.** A local
+  `allow` runs the server outside Ferentin, ungoverned. Rung 20 now blocks
+  known-bad local packages (`blocked_local_mcp_packages` replaces
+  `allowed_local_mcp_packages`), and the README says to approve internal local
+  servers in the admin console instead. The `ferentin_endpoint_mcp_rule`
+  example says the same beside its `allow`.
 - **`ferentin_otel_sink` works against platforms with write-only sink headers.**
   The platform now stores header values encrypted and returns each one as
   `********` (ferentin-platform#3095). Without this, an apply that set

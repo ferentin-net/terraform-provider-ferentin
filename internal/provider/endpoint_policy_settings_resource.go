@@ -456,15 +456,18 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 				MarkdownDescription: "Provenance of the original creator (`iac` for this provider). " +
 					"Immutable after create. On an adopted row this reports whoever created it first — " +
 					"`console`, for posture configured in the admin console before Terraform took over.",
-				Computed: true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_client_id": schema.StringAttribute{
 				MarkdownDescription: "OAuth2 `client_id` of the creator, from the authenticated principal.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_module": schema.StringAttribute{
 				MarkdownDescription: "Module label this provider sent via `X-Ferentin-Managed-By-Module`.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"last_modified_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance of the most recent writer. Divergence from `managed_by` " +

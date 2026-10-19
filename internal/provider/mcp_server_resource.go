@@ -464,14 +464,17 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance label of the original creator (platform #651). Immutable.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_client_id": schema.StringAttribute{
 				MarkdownDescription: "OAuth2 client_id of the original creator.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_module": schema.StringAttribute{
 				MarkdownDescription: "Module label from `X-Ferentin-Managed-By-Module`.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"last_modified_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance of the most recent writer; drift signal when ≠ `managed_by`.",

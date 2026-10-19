@@ -132,8 +132,8 @@ variable "blocked_mcp_hosts" {
   default     = ["mcp.unvetted.example"]
 }
 
-variable "allowed_local_mcp_packages" {
+variable "blocked_local_mcp_packages" {
   type        = list(string)
-  description = "Local (stdio) MCP server packages allowed tenant-wide, as registry-qualified ids such as npm:@acme/server."
-  default     = ["npm:@acme/internal-mcp"]
+  description = "Local (stdio) MCP server packages blocked on every device, as exact registry-qualified ids such as npm:@scope/name. To let an internal local server run governed, approve it in the admin console rather than allowing it here."
+  default     = ["npm:@example/unvetted-mcp"]
 }

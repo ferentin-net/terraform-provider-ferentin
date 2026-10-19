@@ -169,16 +169,19 @@ func (r *DeviceGroupResource) Schema(_ context.Context, _ resource.SchemaRequest
 				MarkdownDescription: "Provenance of the original creator (`iac` for this provider). " +
 					"Immutable after create. A group synced from Jamf or SCIM reports whatever " +
 					"stamped it — not `iac`.",
-				Computed: true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_client_id": schema.StringAttribute{
 				MarkdownDescription: "OAuth2 `client_id` of the creator, from the authenticated " +
 					"principal (never a header).",
-				Computed: true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_module": schema.StringAttribute{
 				MarkdownDescription: "Module label this provider sent via `X-Ferentin-Managed-By-Module`.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"last_modified_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance of the most recent writer. **Divergence from " +
