@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 	openapi_types "github.com/oapi-codegen/runtime/types"
 
@@ -165,20 +166,20 @@ func TestMcpPolicyToModel_RoundTrip(t *testing.T) {
 func TestOtelSinkToModel_RoundTrip(t *testing.T) {
 	sinkID := mustParseUUID(t, "44444444-4444-4444-8444-444444444444")
 	sink := &adminapi.OtelSink{
-		Id:             &sinkID,
-		Name:           strPtr("primary-otlp"),
-		Endpoint:       strPtr("https://otel.example.com"),
-		SinkType:       strPtr("otlp_http"),
-		Description:    strPtr("Primary collector"),
-		Protocol:       strPtr("http"),
-		Compression:    strPtr("gzip"),
-		AuthType:       strPtr("bearer"),
-		Enabled:        boolPtr(true),
-		HasCredentials: boolPtr(true),
-		Headers:        &map[string]string{"X-Tenant": "acme"},
-		Tags:           &map[string]string{"env": "prod"},
+		Id:          &sinkID,
+		Name:        strPtr("primary-otlp"),
+		Endpoint:    strPtr("https://otel.example.com"),
+		SinkType:    strPtr("otlp_http"),
+		Description: strPtr("Primary collector"),
+		Protocol:    strPtr("http"),
+		Compression: strPtr("gzip"),
+		AuthType:    strPtr("bearer"),
+		Enabled:     boolPtr(true),
+		Headers:     &map[string]string{"X-Tenant": otelSinkHeaderMask},
+		Tags:        &map[string]string{"env": "prod"},
 	}
-	m := otelSinkToModel(fixtureTenantID, sink)
+	known := types.MapValueMust(types.StringType, map[string]attr.Value{"X-Tenant": types.StringValue("acme")})
+	m := otelSinkToModel(fixtureTenantID, sink, known)
 	if m.Name.ValueString() != "primary-otlp" {
 		t.Errorf("Name = %q", m.Name.ValueString())
 	}
@@ -187,6 +188,52 @@ func TestOtelSinkToModel_RoundTrip(t *testing.T) {
 	}
 	if !m.Enabled.ValueBool() {
 		t.Errorf("Enabled = false")
+	}
+	if !m.HasCredentials.ValueBool() {
+		t.Errorf("HasCredentials = false with a header set")
+	}
+	if got := m.Headers.Elements()["X-Tenant"]; got != types.StringValue("acme") {
+		t.Errorf("Headers[X-Tenant] = %v, want the known value kept over the mask", got)
+	}
+}
+
+// The platform returns every header value masked (ferentin-platform#3095).
+// A masked header with a known value keeps it; one with none (an import, or a
+// header added outside Terraform) stays masked so it plans as a change; a value
+// the platform does return is taken as sent.
+func TestOtelSinkToModel_MaskedHeaders(t *testing.T) {
+	sink := &adminapi.OtelSink{Headers: &map[string]string{
+		"Authorization": otelSinkHeaderMask,
+		"X-Added":       otelSinkHeaderMask,
+		"X-Plain":       "visible",
+	}}
+	known := types.MapValueMust(types.StringType, map[string]attr.Value{
+		"Authorization": types.StringValue("Bearer s3cret"),
+		"X-Plain":       types.StringValue("stale"),
+		"X-Removed":     types.StringValue("gone"),
+	})
+	want := map[string]attr.Value{
+		"Authorization": types.StringValue("Bearer s3cret"),
+		"X-Added":       types.StringValue(otelSinkHeaderMask),
+		"X-Plain":       types.StringValue("visible"),
+	}
+	got := otelSinkToModel(fixtureTenantID, sink, known).Headers.Elements()
+	if len(got) != len(want) {
+		t.Fatalf("Headers = %v, want %v", got, want)
+	}
+	for h, v := range want {
+		if got[h] != v {
+			t.Errorf("Headers[%s] = %v, want %v", h, got[h], v)
+		}
+	}
+	for name, k := range map[string]types.Map{"null": types.MapNull(types.StringType), "unknown": types.MapUnknown(types.StringType)} {
+		m := otelSinkToModel(fixtureTenantID, sink, k)
+		if got := m.Headers.Elements()["Authorization"]; got != types.StringValue(otelSinkHeaderMask) {
+			t.Errorf("%s: Headers[Authorization] = %v, want the mask", name, got)
+		}
+	}
+	if m := otelSinkToModel(fixtureTenantID, &adminapi.OtelSink{}, known); m.HasCredentials.ValueBool() || !m.Headers.IsNull() {
+		t.Errorf("no headers: HasCredentials = %v, Headers = %v", m.HasCredentials, m.Headers)
 	}
 }
 
