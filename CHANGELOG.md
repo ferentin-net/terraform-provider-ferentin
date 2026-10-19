@@ -33,6 +33,17 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **List data sources for the endpoint surface**: `ferentin_device_groups`,
+  `ferentin_endpoint_destination_rules`, `ferentin_endpoint_mcp_rules` and
+  `ferentin_endpoint_policy_settings_scopes` return every object of that kind
+  in the tenant, whoever created it. Rules come in evaluation order. Every
+  item carries `import_id` (what the resource's `import` block takes) and
+  `managed_by` / `last_modified_by`. The new
+  [`examples/endpoint-adopt-existing/`](examples/endpoint-adopt-existing/)
+  uses them to print an `import` block for each object created in the console
+  that no Terraform configuration has written since, and the *Bring an
+  existing endpoint policy under Terraform* guide now starts there instead of
+  with `curl` against the admin API.
 - **Guides and examples: MCP servers and tool calls on managed endpoints.**
   [`examples/endpoint-mcp-servers/`](examples/endpoint-mcp-servers/) blocks
   unvetted remote MCP hosts, steers sanctioned ones to
