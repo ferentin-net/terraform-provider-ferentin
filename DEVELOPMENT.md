@@ -203,7 +203,14 @@ To develop against your local SDK checkout, create a Go workspace **inside this 
 
 ```sh
 go work init . ../ferentin-cli-app
+go work edit -godebug=x509sslcertoverrideplatform=0
 ```
+
+The second line is not optional. In workspace mode Go reads `godebug` from
+`go.work` and ignores the one in `go.mod`, so without it a local build lets
+`SSL_CERT_FILE` replace the macOS and Windows certificate store, which release
+builds (built from `go.mod`, no workspace) do not.
+`TestSSLCertFile_DoesNotReplacePlatformTrust` fails if it is missing.
 
 `go.work` and `go.work.sum` are gitignored. Nothing else changes — `go build`, `go test`, and `make install` all pick up the sibling checkout automatically. `GOWORK=off` restores proxy resolution if you need to reproduce a CI failure locally.
 
