@@ -137,3 +137,9 @@ variable "blocked_local_mcp_packages" {
   description = "Local (stdio) MCP server packages blocked on every device, as exact registry-qualified ids such as npm:@scope/name. To let an internal local server run governed, approve it in the admin console rather than allowing it here."
   default     = ["npm:@example/unvetted-mcp"]
 }
+
+variable "approved_agents" {
+  type        = set(string)
+  description = "AI agents approved to run on every device, as detection-catalog slugs (claude-code, cursor, codex-cli, …). Everything else is reported at observe and blocked at allowlist and on the strict groups."
+  default     = ["claude-code", "cursor"]
+}

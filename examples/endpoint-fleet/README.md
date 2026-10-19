@@ -10,11 +10,11 @@ out.
 ```
 examples/endpoint-fleet/
 ├── README.md
-├── main.tf        # groups, the two rule ladders, posture
+├── main.tf        # groups, the two rule ladders, agent decisions, posture
 └── variables.tf   # stage + call-time enforcement selectors, group / provider / host inputs
 ```
 
-## The four moving parts
+## The five moving parts
 
 1. **[`ferentin_device_group`](../../docs/resources/device_group.md)** — the
    targeting dimension. Created with `for_each` over a map, so adding a
@@ -46,7 +46,15 @@ examples/endpoint-fleet/
    | 20 | `block` | Known-bad local MCP packages (`package`) | fleet-wide |
    | 30 | `block` | Shell from AI tools (`tool_behavior`) | contractors group |
 
-4. **[`ferentin_endpoint_policy_settings`](../../docs/resources/endpoint_policy_settings.md)**
+4. **[`ferentin_endpoint_agent_approval`](../../docs/resources/endpoint_agent_approval.md)**
+   — which catalogued AI agents are approved to run (`approved_agents`:
+   `claude-code` and `cursor` by default), on every device. An agent with no
+   decision falls through to `unapproved_agent_action`: reported at
+   `observe` and `steer`, blocked at `allowlist` and on the strict groups from
+   the first apply. Approve the agents your teams rely on before either
+   applies.
+
+5. **[`ferentin_endpoint_policy_settings`](../../docs/resources/endpoint_policy_settings.md)**
    — what happens when **no** rule matches, plus the unapproved-MCP and
    unapproved-agent actions, the DNS/QUIC flags, and whether call-time MCP
    blocks deny or only count (`hook_rule_enforcement`). One tenant-default row
@@ -142,6 +150,12 @@ Local servers in the admin console keeps every call governed; the provider
 does not manage that approval yet. Narrowing a `block` is fine, as the shell
 rule does.
 
+**Destroying an agent approval denies the agent where the default blocks.**
+Removing a slug from `approved_agents` deletes its decision, and the agent
+falls back to `unapproved_agent_action`: on the contractors group, and on
+every device at `allowlist`, that blocks it. `plan` warns. To deny an agent on
+purpose, give it a `block` decision instead.
+
 **`local_mcp_block_enabled` is absolute.** On the contractors override it
 beats approvals and any `allow` rule: contractors run no local MCP servers at
 all. Turn it off for a group to let approvals and rules decide there.
@@ -177,6 +191,7 @@ the tenant-default posture row, which cannot be cleanly destroyed afterwards.
 terraform import 'ferentin_device_group.this["engineering"]'          <tenant_id>/<group_id>
 terraform import ferentin_endpoint_destination_rule.block_unsanctioned <tenant_id>/<rule_id>
 terraform import ferentin_endpoint_mcp_rule.block_unvetted_remote      <tenant_id>/<rule_id>
+terraform import 'ferentin_endpoint_agent_approval.approved["cursor"]' <tenant_id>/cursor
 terraform import ferentin_endpoint_policy_settings.default             <tenant_id>
 terraform import 'ferentin_endpoint_policy_settings.override["contractors"]' <tenant_id>/<device_group_id>
 ```

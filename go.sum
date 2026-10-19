@@ -52,8 +52,8 @@ github.com/emirpasic/gods v1.18.1/go.mod h1:8tpGGwCnJ5H4r6BWwaV6OrWmMoPhUl5jm/FM
 github.com/fatih/color v1.13.0/go.mod h1:kLAiJbzzSOZDVNGyDpeOxJ47H46qBXwg5ILebYFFOfk=
 github.com/fatih/color v1.19.0 h1:Zp3PiM21/9Ld6FzSKyL5c/BULoe/ONr9KlbYVOfG8+w=
 github.com/fatih/color v1.19.0/go.mod h1:zNk67I0ZUT1bEGsSGyCZYZNrHuTkJJB+r6Q9VuMi0LE=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261019190209-b2f3ed95a91d h1:yAde4O8srG2/BtDLadciDUAhJVuKlkN4eDMEgTSYLxk=
-github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261019190209-b2f3ed95a91d/go.mod h1:MNHjfNKUO7CbgQHTBv2vSdIvMaCW7DCwCLFdxyFUFSI=
+github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261019202358-02d543e3d05e h1:ifUlDHaCqzI0QOAeRyOccElM0JGkQak0/pzFuWCy3tw=
+github.com/ferentin-net/ferentin-cli-app v0.4.6-0.20261019202358-02d543e3d05e/go.mod h1:MNHjfNKUO7CbgQHTBv2vSdIvMaCW7DCwCLFdxyFUFSI=
 github.com/frankban/quicktest v1.14.6 h1:7Xjx+VpznH+oBnejlPUj8oUpdxnVs4f8XU8WnHkI4W8=
 github.com/frankban/quicktest v1.14.6/go.mod h1:4ptaffx2x8+WTWXmUCuVU6aPUX1/Mz7zb5vbUoiM6w0=
 github.com/fsnotify/fsnotify v1.10.1 h1:b0/UzAf9yR5rhf3RPm9gf3ehBPpf0oZKIjtpKrx59Ho=

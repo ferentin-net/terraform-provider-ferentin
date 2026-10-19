@@ -2,7 +2,7 @@
 page_title: "Bring an existing endpoint policy under Terraform"
 subcategory: "Guides"
 description: |-
-  Import device groups, destination rules, MCP rules and posture rows configured in the admin console, so the first apply changes nothing on the fleet.
+  Import device groups, destination rules, MCP rules, posture rows and AI-agent decisions configured in the admin console, so the first apply changes nothing on the fleet.
 ---
 
 # Bring an existing endpoint policy under Terraform
@@ -17,7 +17,7 @@ Importing only reads from the platform. Nothing changes on the tenant, and nothi
 
 ## 1. List what exists, as import blocks
 
-The [`endpoint-adopt-existing`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-adopt-existing) example reads the four list data sources, [`ferentin_device_groups`](../data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](../data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](../data-sources/endpoint_mcp_rules.md) and [`ferentin_endpoint_policy_settings_scopes`](../data-sources/endpoint_policy_settings_scopes.md), and prints an `import` block for each object to adopt:
+The [`endpoint-adopt-existing`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-adopt-existing) example reads the five list data sources, [`ferentin_device_groups`](../data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](../data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](../data-sources/endpoint_mcp_rules.md), [`ferentin_endpoint_policy_settings_scopes`](../data-sources/endpoint_policy_settings_scopes.md) and [`ferentin_endpoint_agent_approvals`](../data-sources/endpoint_agent_approvals.md), and prints an `import` block for each object to adopt:
 
 ```sh
 cd endpoint-adopt-existing
@@ -55,6 +55,7 @@ Every list item also carries `import_id`, so you can write the blocks by hand in
 | [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md) | `<tenant_id>/<rule_id>` |
 | [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md), tenant default | `<tenant_id>` |
 | `ferentin_endpoint_policy_settings`, group override | `<tenant_id>/<device_group_id>` |
+| [`ferentin_endpoint_agent_approval`](../resources/endpoint_agent_approval.md) | `<tenant_id>/<catalog_slug>` |
 
 -> Terraform does not generate configuration for an `import` block that uses `for_each`, which is why the example prints one block per object rather than importing from the data sources directly.
 

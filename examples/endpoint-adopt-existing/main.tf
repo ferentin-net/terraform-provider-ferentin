@@ -1,5 +1,6 @@
 # Print an `import` block for every endpoint object Terraform does not manage
-# yet: device groups, destination rules, MCP rules and posture rows.
+# yet: device groups, destination rules, MCP rules, posture rows and AI-agent
+# decisions.
 #
 #   terraform init
 #   terraform apply                       # reads only; writes nothing to the tenant
@@ -34,6 +35,7 @@ data "ferentin_device_groups" "all" {}
 data "ferentin_endpoint_destination_rules" "all" {}
 data "ferentin_endpoint_mcp_rules" "all" {}
 data "ferentin_endpoint_policy_settings_scopes" "all" {}
+data "ferentin_endpoint_agent_approvals" "all" {}
 
 locals {
   # Resource names: the object's name, lowercased, non-alphanumerics folded to
@@ -60,6 +62,7 @@ locals {
     [for x in data.ferentin_endpoint_destination_rules.all.rules : { k = "d:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
     [for x in data.ferentin_endpoint_mcp_rules.all.rules : { k = "m:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
     [for x in data.ferentin_endpoint_policy_settings_scopes.all.scopes : { k = "p:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
+    [for x in data.ferentin_endpoint_agent_approvals.all.approvals : { k = "a:${x.import_id}", by = x.managed_by, last = x.last_modified_by }],
     ) : o.k => contains(local.adopt, o.by) && !(var.skip_last_written_by_terraform && o.last == "iac")
   }
 
@@ -78,6 +81,9 @@ locals {
       to = "ferentin_endpoint_policy_settings.${s.device_group_id == null ? "default" : "p_${lookup(local.label, s.device_group_id, s.device_group_id)}"}"
       id = s.import_id
     } if local.wanted["p:${s.import_id}"]],
+    [for a in data.ferentin_endpoint_agent_approvals.all.approvals : {
+      to = "ferentin_endpoint_agent_approval.a_${trim(replace(lower(a.catalog_slug), "/[^a-z0-9]+/", "_"), "_")}", id = a.import_id
+    } if local.wanted["a:${a.import_id}"]],
   )
 }
 
@@ -93,5 +99,6 @@ output "already_managed" {
     [for r in data.ferentin_endpoint_destination_rules.all.rules : "destination rule ${r.name} (created by ${r.managed_by}, last written by ${r.last_modified_by})" if !local.wanted["d:${r.import_id}"]],
     [for r in data.ferentin_endpoint_mcp_rules.all.rules : "MCP rule ${r.name} (created by ${r.managed_by}, last written by ${r.last_modified_by})" if !local.wanted["m:${r.import_id}"]],
     [for s in data.ferentin_endpoint_policy_settings_scopes.all.scopes : "posture ${coalesce(s.device_group_id, "tenant default")} (created by ${s.managed_by}, last written by ${s.last_modified_by})" if !local.wanted["p:${s.import_id}"]],
+    [for a in data.ferentin_endpoint_agent_approvals.all.approvals : "agent decision ${a.catalog_slug} (created by ${a.managed_by}, last written by ${a.last_modified_by})" if !local.wanted["a:${a.import_id}"]],
   )
 }

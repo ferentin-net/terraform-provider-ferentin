@@ -14,7 +14,8 @@ import (
 )
 
 // List data sources for the endpoint surface: every device group, destination
-// rule, MCP rule and posture row in the tenant, whoever created it. Their first job is
+// rule, MCP rule, posture row and AI-agent decision in the tenant, whoever
+// created it. Their first job is
 // adoption — finding what the admin console created so it can be imported —
 // which is why every item carries `import_id` (the resource's import ID) and
 // `managed_by` (who created it). Items reuse the resources' own read mapping,
@@ -400,6 +401,87 @@ func (d *EndpointPolicySettingsScopesDataSource) Read(ctx context.Context, req d
 			return gi.IsNull()
 		}
 		return gi.ValueString() < gj.ValueString()
+	})
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// ---------------------------------------------------------------------------
+// ferentin_endpoint_agent_approvals
+
+type EndpointAgentApprovalsDataSource struct{ endpointListDataSource }
+
+type EndpointAgentApprovalsDataSourceModel struct {
+	TenantID  types.String                    `tfsdk:"tenant_id"`
+	Approvals []EndpointAgentApprovalListItem `tfsdk:"approvals"`
+}
+
+type EndpointAgentApprovalListItem struct {
+	CatalogSlug     types.String `tfsdk:"catalog_slug"`
+	ImportID        types.String `tfsdk:"import_id"`
+	Action          types.String `tfsdk:"action"`
+	DeviceGroupIDs  types.List   `tfsdk:"device_group_ids"`
+	ScopeUnreadable types.Bool   `tfsdk:"scope_unreadable"`
+	ManagedBy       types.String `tfsdk:"managed_by"`
+	LastModifiedBy  types.String `tfsdk:"last_modified_by"`
+}
+
+func NewEndpointAgentApprovalsDataSource() datasource.DataSource {
+	return &EndpointAgentApprovalsDataSource{}
+}
+
+var _ datasource.DataSourceWithConfigure = (*EndpointAgentApprovalsDataSource)(nil)
+
+func (d *EndpointAgentApprovalsDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_endpoint_agent_approvals"
+}
+
+func (d *EndpointAgentApprovalsDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "List every AI-agent decision in the tenant (`ferentin_endpoint_agent_approval`), " +
+			"sorted by catalog slug. An agent with no decision is not listed: it falls through to " +
+			"`unapproved_agent_action` on the posture." + endpointListAdoptionNote,
+		Attributes: map[string]schema.Attribute{
+			"tenant_id": schema.StringAttribute{Optional: true,
+				MarkdownDescription: "Tenant to list. Defaults to the provider's."},
+			"approvals": schema.ListNestedAttribute{
+				Computed: true,
+				NestedObject: schema.NestedAttributeObject{Attributes: withProvenance(map[string]schema.Attribute{
+					"catalog_slug": schema.StringAttribute{Computed: true},
+					"import_id":    schema.StringAttribute{Computed: true, MarkdownDescription: "`<tenant_id>/<catalog_slug>`, for an `import` block."},
+					"action":       schema.StringAttribute{Computed: true, MarkdownDescription: "`report_only` (approved) or `block`."},
+					"device_group_ids": schema.ListAttribute{Computed: true, ElementType: types.StringType,
+						MarkdownDescription: "Null = every device, unless `scope_unreadable` is true."},
+					"scope_unreadable": schema.BoolAttribute{Computed: true,
+						MarkdownDescription: "True when the stored scope cannot be read, which puts the decision in force on no device."},
+				})},
+			},
+		},
+	}
+}
+
+func (d *EndpointAgentApprovalsDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var data EndpointAgentApprovalsDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	tenantID := dpCatalogTenant(data.TenantID, d.tenantID)
+	all, err := d.sdk.EndpointAgentApprovals().List(ctx, tenantID)
+	if err != nil {
+		addSDKError(&resp.Diagnostics, "Failed to list endpoint agent approvals", err)
+		return
+	}
+	data.Approvals = make([]EndpointAgentApprovalListItem, 0, len(all))
+	for i := range all {
+		m := agentApprovalToModel(tenantID, &all[i])
+		data.Approvals = append(data.Approvals, EndpointAgentApprovalListItem{
+			CatalogSlug: m.CatalogSlug, ImportID: m.ID, Action: m.Action,
+			DeviceGroupIDs: m.DeviceGroupIDs, ScopeUnreadable: m.ScopeUnreadable,
+			ManagedBy: m.ManagedBy, LastModifiedBy: m.LastModifiedBy,
+		})
+	}
+	sort.SliceStable(data.Approvals, func(i, j int) bool {
+		return data.Approvals[i].CatalogSlug.ValueString() < data.Approvals[j].CatalogSlug.ValueString()
 	})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

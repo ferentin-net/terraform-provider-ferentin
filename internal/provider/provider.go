@@ -553,6 +553,7 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewDeviceGroupResource,
 		NewEndpointDestinationRuleResource,
 		NewEndpointMCPRuleResource,
+		NewEndpointAgentApprovalResource,
 		NewEndpointPolicySettingsResource,
 	}
 }
@@ -574,6 +575,7 @@ func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.Da
 		NewEndpointDestinationRulesDataSource,
 		NewEndpointMCPRulesDataSource,
 		NewEndpointPolicySettingsScopesDataSource,
+		NewEndpointAgentApprovalsDataSource,
 	}
 }
 
