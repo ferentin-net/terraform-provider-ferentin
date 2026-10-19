@@ -33,6 +33,25 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **Guides and examples: MCP servers and tool calls on managed endpoints.**
+  [`examples/endpoint-mcp-servers/`](examples/endpoint-mcp-servers/) blocks
+  unvetted remote MCP hosts, steers sanctioned ones to
+  `<mcp_gateway_url>/mcp/<server-slug>`, blocks known-bad local packages, and
+  sets the unapproved-MCP action and the unvetted-local-tool risk policy.
+  [`examples/endpoint-tool-call-guardrails/`](examples/endpoint-tool-call-guardrails/)
+  blocks exfiltration commands fleet-wide and the shell tool on a pilot group,
+  in `shadow` until the pilot group's own posture row moves to `enforce`. The
+  *Govern MCP servers on managed endpoints* and *Block risky tool calls from
+  coding agents* guides walk through each, including why a local `allow` runs
+  a server ungoverned and what `enforce` does not cover.
+- **Example and guide: approved AI on managed endpoints.**
+  [`examples/endpoint-approved-ai/`](examples/endpoint-approved-ai/) allows
+  Anthropic, pins OpenAI to the ChatGPT desktop app by Apple Team ID, blocks
+  OpenAI from every other app and blocks DeepSeek, with the tenant-default
+  posture as the fallthrough. The new *Approve AI apps on managed endpoints*
+  guide (`docs/guides/`) walks through it rule by rule, and is the first doc
+  to say that `apply` only stages endpoint policy: devices pick it up after
+  an activation in the admin console.
 - **New resource `ferentin_endpoint_mcp_rule`**: allow / block / steer for
   MCP servers and tool calls on managed devices, matched by `host` /
   `url_prefix` (remote servers), `package` / `argv_contains` (local servers),
@@ -123,6 +142,18 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   detected on header names only. `headers` is now `Sensitive`. After an
   import the values read as `********` until the next apply sends the
   configured ones.
+- **Endpoint steering is MCP-only, through the public edge, and the docs now
+  say so.** They described `steer` on `ferentin_endpoint_destination_rule` as
+  pointing devices at a service-edge. Destination steering is not available
+  yet: only MCP traffic is steered, through the tenant's public edge,
+  `https://<tenant-short-name>.mcp.ferentin.net/v1` (the `mcp_gateway_url` on
+  `ferentin_endpoint_policy_settings`, and the base of `steer_to_url` on
+  `ferentin_endpoint_mcp_rule`). `plan` now warns on a destination `steer`
+  rule; it still plans. The `endpoint-fleet`, `complete` and destination-rule
+  examples allow their sanctioned providers instead of steering them, and
+  `endpoint-fleet`'s `steered_providers` and `service_edge_url` variables are
+  replaced by `sanctioned_providers`. OpenAI is no longer on that fleet-wide
+  list, so the legal carve-out is the only way to it.
 - **`ferentin_endpoint_destination_rule` refuses a destination host the
   endpoint agent cannot read, at plan.** The agent checks every host when it
   reads a policy and refuses the tenant's whole endpoint policy over one bad

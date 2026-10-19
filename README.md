@@ -30,7 +30,7 @@ resource "ferentin_edge_site" "us_east" {
 }
 ```
 
-A multi-resource end-to-end composition lives in [`examples/complete/`](examples/complete/). The [`examples/mcp-server-from-card/`](examples/mcp-server-from-card/) example drives an MCP provider + server pair from a discovered [`server-card.json`](https://modelcontextprotocol.io) so the Terraform config stays in sync with the upstream MCP server as it evolves. [`examples/endpoint-fleet/`](examples/endpoint-fleet/) covers the managed-device surface on its own — device groups, the on-device destination-rule and MCP-rule ladders, posture staged from observe to enforce, and call-time MCP enforcement moved from shadow to enforce.
+A multi-resource end-to-end composition lives in [`examples/complete/`](examples/complete/). The [`examples/mcp-server-from-card/`](examples/mcp-server-from-card/) example drives an MCP provider + server pair from a discovered [`server-card.json`](https://modelcontextprotocol.io) so the Terraform config stays in sync with the upstream MCP server as it evolves. [`examples/endpoint-approved-ai/`](examples/endpoint-approved-ai/) is the smallest endpoint policy worth deploying — allow the sanctioned AI providers, pin one to its signed desktop app, block the rest — and the [Approve AI apps on managed endpoints](docs/guides/endpoint-approved-ai.md) guide walks through it. [`examples/endpoint-mcp-servers/`](examples/endpoint-mcp-servers/) ([guide](docs/guides/endpoint-mcp-servers.md)) steers sanctioned remote MCP servers through the tenant's gateway and blocks the rest, and [`examples/endpoint-tool-call-guardrails/`](examples/endpoint-tool-call-guardrails/) ([guide](docs/guides/endpoint-tool-calls.md)) counts, then denies, risky tool calls from coding agents, one device group at a time. [`examples/endpoint-fleet/`](examples/endpoint-fleet/) covers the managed-device surface on its own — device groups, the on-device destination-rule and MCP-rule ladders, posture staged from observe to enforce, and call-time MCP enforcement moved from shadow to enforce.
 
 ## Authentication
 
@@ -62,7 +62,7 @@ Full provider attribute reference at [`docs/index.md`](docs/index.md).
 | `ferentin_workload_oauth_client` | Outbound OAuth credentials for `cc_federated` MCP upstreams. WriteOnly secrets. |
 | `ferentin_workload_identity_provider` | Inbound trust config for cloud-issued workload JWTs (AWS / GCP / Azure / GitHub …). |
 | `ferentin_device_group` | Device group — the policy-scoping unit endpoint policy targets. |
-| `ferentin_endpoint_destination_rule` | Allow / block / steer rule for AI traffic on managed devices (macOS endpoint agent), optionally narrowed to compliant devices (`posture_predicate`). |
+| `ferentin_endpoint_destination_rule` | Allow / block rule for AI traffic on managed devices (macOS endpoint agent), optionally narrowed to compliant devices (`posture_predicate`). Destination `steer` is not available yet. |
 | `ferentin_endpoint_mcp_rule` | Allow / block / steer rule for MCP servers and tool calls on managed devices: remote and local servers, tool calls, and tool behaviours. |
 | `ferentin_endpoint_policy_settings` | Endpoint posture — unapproved MCP and agent actions, gateway target, DNS/QUIC and unnamed-flow blocks, local MCP block, call-time MCP enforcement, local MCP risk policy and approval routing. Tenant default or per-device-group override; values set in the console survive an apply that doesn't mention them. |
 

@@ -56,8 +56,9 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
 
   unapproved_mcp_action = "quarantine"
 
-  # Approved MCP client configs are rewritten to point here. Must be https://.
-  mcp_gateway_url = "https://acme.mcp.example.com"
+  # Approved MCP client configs are rewritten to point here: the tenant's MCP
+  # gateway on the public edge, https://<tenant-short-name>.mcp.ferentin.net/v1.
+  mcp_gateway_url = "https://acme.mcp.ferentin.net/v1"
 
   # With "block", your destination rules become an allowlist — make sure they
   # cover every sanctioned provider before flipping this.

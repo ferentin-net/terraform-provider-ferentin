@@ -90,24 +90,24 @@ locals {
 #
 #     5    allow   OpenAI for legal/compliance      (narrow carve-out)
 #    10    block   ChatGPT desktop for contractors  (population block)
-#    20    steer   Anthropic → service-edge         (fleet-wide governance)
-#    30    steer   OpenAI    → service-edge         (fleet-wide governance)
+#    20    allow   Anthropic                        (fleet-wide sanctioned)
 #   100    block   unsanctioned hosts               (catch-all deny)
+#
+# Destination rules allow or block. `steer` is not available on them yet: only
+# MCP traffic is steered today, through the tenant's public edge (see
+# mcp_gateway_url in the posture below). An allowed destination is reached
+# directly from the device, so gateway LLM policy and DLP do not see it.
 #
 # ~> Do not split ownership of `priority` with the admin console. The console's
 #    reorder arrows swap two rows' priorities directly; if Terraform also
 #    declares priority, the next plan shows drift and the two fight over
 #    evaluation order — which here IS the policy.
 
-# 5. Carve-out: legal and compliance keep direct OpenAI access.
-#
-# ~> An `allow` above a `steer` is a GOVERNANCE BYPASS, not just a permission.
-#    Matching ends evaluation, so this population's traffic never reaches the
-#    steer rule at priority 30 — no service-edge, which means no LLM policy, no
-#    DLP, and no telemetry for it. That is the point of a carve-out, but it is
-#    the kind of thing that gets added for one team and quietly outlives the
-#    reason. If you want the exception governed, make it a `steer` to a
-#    different service-edge URL instead of an `allow`.
+# 5. Carve-out: legal and compliance may use OpenAI, which is not on the
+#    fleet-wide sanctioned list. Once the stage blocks unmatched destinations
+#    (`allowlist`), this rule is the only way to reach OpenAI. It is the kind
+#    of exception that gets added for one team and quietly outlives the reason,
+#    so give it an owner.
 #
 # ~> Criteria NARROW a rule. Deleting this `criteria` block does not delete the
 #    carve-out — it widens the allow to every user on those devices. That is a
@@ -151,7 +151,7 @@ resource "ferentin_endpoint_destination_rule" "allow_openai_legal" {
 
 # 10. Contractors may not run the ChatGPT desktop app. Scoped by bundle id: a
 #     browser hitting the same host is a different code identity and falls
-#     through to the steer rules below.
+#     through to the rules below.
 resource "ferentin_endpoint_destination_rule" "block_chatgpt_contractors" {
   name        = "block-chatgpt-contractors"
   description = "Contractors may not use the ChatGPT desktop app"
@@ -165,27 +165,19 @@ resource "ferentin_endpoint_destination_rule" "block_chatgpt_contractors" {
   device_group_ids = [local.group_ids["contractors"]]
 }
 
-# 20 + 30. Steer sanctioned providers through service-edge, where LLM policy,
-# DLP, and telemetry actually apply. The device never holds an upstream
-# provider key — service-edge presents it.
-#
-# for_each keeps the two rules in lockstep: same target, same semantics, one
-# entry per catalog slug. Priorities are derived so the ladder above stays
-# readable as slugs are added.
-resource "ferentin_endpoint_destination_rule" "steer" {
-  for_each = var.steered_providers
+# 20. Sanctioned providers, fleet-wide. for_each keeps them in lockstep, one
+# rule per catalog slug, with the priority in the variable so the ladder above
+# stays readable as slugs are added.
+resource "ferentin_endpoint_destination_rule" "allow_sanctioned" {
+  for_each = var.sanctioned_providers
 
-  name        = "steer-${each.key}-to-edge"
-  description = "Route ${each.key} traffic through service-edge for governance"
+  name        = "allow-${each.key}"
+  description = "${each.key} is a sanctioned AI provider"
   priority    = each.value.priority
 
   destination_kind = "ai_provider"
   catalog_slug     = each.key
-  action           = "steer"
-
-  # Must be https:// — an http:// target downgrades every steered flow on the
-  # fleet to cleartext. The provider rejects it at plan time.
-  steer_to_url = var.service_edge_url
+  action           = "allow"
 
   # No device_group_ids: every device in the tenant, including ungrouped ones.
   # Targeting groups instead would bump only those groups' bundle versions, so
@@ -330,7 +322,7 @@ output "rule_ladder" {
         ferentin_endpoint_destination_rule.block_chatgpt_contractors,
         ferentin_endpoint_destination_rule.block_unsanctioned,
       ],
-      values(ferentin_endpoint_destination_rule.steer),
+      values(ferentin_endpoint_destination_rule.allow_sanctioned),
     ) : format("%04d %-6s %s", r.priority, r.action, r.name)
   ])
 }

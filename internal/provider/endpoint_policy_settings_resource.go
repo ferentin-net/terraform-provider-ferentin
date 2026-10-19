@@ -250,7 +250,9 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 			},
 			"mcp_gateway_url": schema.StringAttribute{
 				MarkdownDescription: "Tenant MCP gateway base URL that approved server configs are " +
-					"rewritten to point at. Unset = the agent reports what it finds and rewrites nothing.\n\n" +
+					"rewritten to point at: the tenant's gateway on the public edge, " +
+					"`https://<tenant-short-name>.mcp.ferentin.net/v1`. Unset = the agent reports what it " +
+					"finds and rewrites nothing.\n\n" +
 					"Must be `https://` — an `http://` value would downgrade every governed MCP session " +
 					"on the fleet to cleartext, which is strictly worse than the ungoverned status quo it " +
 					"replaces. The platform rejects it; this fails at plan.",

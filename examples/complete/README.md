@@ -49,7 +49,7 @@ export FERENTIN_TENANT_ID="<your-tenant-uuid>"
 | `ferentin_otel_policy`            | Trace forwarding to Honeycomb                          |
 | `ferentin_ai_agent`               | Claude-platform team assistant (OIDC client)           |
 | `ferentin_device_group`             | `engineering` (MDM-sourced) + `contractors` (manual)   |
-| `ferentin_endpoint_destination_rule` | Block ChatGPT for contractors, steer Claude to service-edge, deny unsanctioned hosts |
+| `ferentin_endpoint_destination_rule` | Block ChatGPT for contractors, allow Claude, deny unsanctioned hosts |
 | `ferentin_endpoint_mcp_rule` | Block an unvetted remote MCP server; block shell from AI tools for contractors |
 | `ferentin_endpoint_policy_settings` | Tenant-default observe posture (call-time MCP blocks in `shadow`) + strict contractor override |
 
