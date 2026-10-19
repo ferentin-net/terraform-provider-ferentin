@@ -43,7 +43,7 @@ examples/endpoint-fleet/
    | Priority | Action | Rule | Scope |
    | --- | --- | --- | --- |
    | 10 | `block` | Unvetted remote MCP hosts (`host`) | fleet-wide |
-   | 20 | `allow` | Internal local MCP packages (`package`) | tenant-wide (a local `allow` cannot be narrowed yet) |
+   | 20 | `block` | Known-bad local MCP packages (`package`) | fleet-wide |
    | 30 | `block` | Shell from AI tools (`tool_behavior`) | contractors group |
 
 4. **[`ferentin_endpoint_policy_settings`](../../docs/resources/endpoint_policy_settings.md)**
@@ -132,14 +132,19 @@ leaves it out, `plan` fails and says how to keep it (`true`) or remove it
 (`false`). Removing it widens the rule to non-compliant devices, so the
 provider won't do it silently.
 
-**A local MCP `allow` is tenant-wide.** `device_group_ids` and `criteria` are
-refused on a `package` or `argv_contains` allow until devices carry an
-authenticated identity when a local server is admitted. Narrowing a `block` is
-fine, as the shell rule does.
+**Approve internal local MCP servers; don't `allow` them.** A local `allow`
+puts the developer's entry back exactly as written, so the server runs outside
+Ferentin and nothing sees its tool calls. It is also tenant-wide:
+`device_group_ids` and `criteria` are refused on a `package` or
+`argv_contains` allow until devices carry an authenticated identity when a
+local server is admitted. Approving a server under Registries → MCP Servers →
+Local servers in the admin console keeps every call governed; the provider
+does not manage that approval yet. Narrowing a `block` is fine, as the shell
+rule does.
 
 **`local_mcp_block_enabled` is absolute.** On the contractors override it
-beats the priority-20 allow: contractors run no local MCP servers at all. Turn
-it off for a group to let rules decide there.
+beats approvals and any `allow` rule: contractors run no local MCP servers at
+all. Turn it off for a group to let approvals and rules decide there.
 
 **Destroying the tenant-default posture does not reset it.** The platform
 refuses to delete a row every device resolves through, so Terraform drops it

@@ -329,14 +329,17 @@ func (r *LLMProviderResource) Schema(_ context.Context, _ resource.SchemaRequest
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance label of the original creator (platform #651). Immutable.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_client_id": schema.StringAttribute{
 				MarkdownDescription: "OAuth2 client_id of the original creator.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_module": schema.StringAttribute{
 				MarkdownDescription: "Module label the creator passed via `X-Ferentin-Managed-By-Module`.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"last_modified_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance of the most recent writer; diverges from `managed_by` when an " +

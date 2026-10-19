@@ -203,7 +203,7 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
 # A separate ladder from the destination rules, also first-match-wins:
 #
 #    10    block   unvetted remote MCP hosts        (fleet-wide)
-#    20    allow   internal local MCP packages      (tenant-wide only)
+#    20    block   known-bad local MCP packages     (fleet-wide)
 #    30    block   shell from AI tools              (contractors)
 #
 # The platform normalizes match values (hosts are lowercased, allow values
@@ -217,17 +217,21 @@ resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
   action       = "block"
 }
 
-# A local `allow` cannot be narrowed by device_group_ids or criteria yet:
-# devices carry no authenticated identity when a local server is admitted, so
-# the narrowing would be ignored and the allow would apply tenant-wide. The
-# provider fails the plan if you try. local_mcp_block_enabled on a group
-# override (below) beats this allow for that group.
-resource "ferentin_endpoint_mcp_rule" "allow_internal_packages" {
-  name         = "allow-internal-mcp-packages"
+# Local (stdio) packages nobody should start. A block replaces the entry with
+# a refusal that explains it and offers an appeal.
+#
+# Internal local servers are deliberately NOT given an `allow` rule here: an
+# allow puts the entry back exactly as written, so the server runs outside
+# Ferentin and nothing sees its tool calls (and a local allow is tenant-wide,
+# because devices carry no authenticated identity when one is admitted).
+# Approve them under Registries → MCP Servers → Local servers in the admin
+# console instead, which keeps every call governed.
+resource "ferentin_endpoint_mcp_rule" "block_local_packages" {
+  name         = "block-known-bad-local-mcp-packages"
   priority     = 20
   match_kind   = "package"
-  match_values = var.allowed_local_mcp_packages
-  action       = "allow"
+  match_values = var.blocked_local_mcp_packages
+  action       = "block"
 }
 
 # Tool behaviours expand into call-time rules for every AI tool that can
@@ -332,7 +336,7 @@ output "mcp_rule_ladder" {
   value = sort([
     for r in [
       ferentin_endpoint_mcp_rule.block_unvetted_remote,
-      ferentin_endpoint_mcp_rule.allow_internal_packages,
+      ferentin_endpoint_mcp_rule.block_local_packages,
       ferentin_endpoint_mcp_rule.block_shell_contractors,
     ] : format("%04d %-6s %s", r.priority, r.action, r.name)
   ])

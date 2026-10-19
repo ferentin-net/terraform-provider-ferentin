@@ -272,15 +272,18 @@ func (r *EdgeSiteResource) Schema(_ context.Context, _ resource.SchemaRequest, r
 			"managed_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance label of the original creator (per platform #651). Immutable.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_client_id": schema.StringAttribute{
 				MarkdownDescription: "OAuth2 client_id of the original creator. Null when the creator was a user " +
 					"via auth-code grant.",
-				Computed: true,
+				Computed:      true,
+				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"managed_by_module": schema.StringAttribute{
 				MarkdownDescription: "Module label the creator passed via `X-Ferentin-Managed-By-Module`.",
 				Computed:            true,
+				PlanModifiers:       []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
 			},
 			"last_modified_by": schema.StringAttribute{
 				MarkdownDescription: "Provenance label of the most recent writer. Diverges from `managed_by` when " +

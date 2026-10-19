@@ -59,9 +59,12 @@ resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
-# Local (stdio) MCP server: allow one npm package. A local allow must be
-# tenant-wide for now: devices carry no authenticated identity when a local
-# server is admitted, so device_group_ids or criteria here are refused.
+# Local (stdio) MCP server: allow one npm package. An allow puts the entry
+# back exactly as written, so the server runs outside Ferentin and nothing sees
+# its tool calls; to keep a local server governed, approve it under Local
+# servers in the admin console instead. A local allow must also be tenant-wide
+# for now: devices carry no authenticated identity when a local server is
+# admitted, so device_group_ids or criteria here are refused.
 resource "ferentin_endpoint_mcp_rule" "allow_internal_package" {
   name         = "allow-internal-mcp-package"
   priority     = 20
