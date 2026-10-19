@@ -13,7 +13,7 @@ guide.
 ```
 examples/endpoint-mcp-servers/
 ├── README.md
-├── main.tf        # the MCP rule ladder, the tenant-default posture, two outputs
+├── main.tf        # the MCP rule ladder, approved local servers, the tenant-default posture, two outputs
 └── variables.tf   # gateway URL, steered servers, blocked hosts and packages, posture
 ```
 
@@ -29,7 +29,9 @@ rules are evaluated **on the device, first match wins by ascending
 | 2x | `steer` | remote hosts → `<mcp_gateway_url>/mcp/<server_slug>` | `steered_remote_servers` |
 | 30 | `block` | local packages | `blocked_local_packages` |
 
-Everything else that is not approved gets `unapproved_mcp_action`
+Local servers in `approved_local_servers` are approved with
+[`ferentin_mcp_local_server`](../../docs/resources/mcp_local_server.md) and run
+governed. Everything else that is not approved gets `unapproved_mcp_action`
 (`report_only` by default).
 
 ## Running it
@@ -57,10 +59,9 @@ terraform apply -var unapproved_mcp_action=quarantine
 ## Sharp edges
 
 **A local `allow` runs the server outside Ferentin.** Nothing sees its tool
-calls. To let a local server run and keep it governed, approve it under
-Registries → MCP Servers → Local servers in the admin console (the provider
-does not manage local-server approval yet). A local `steer` keeps an entry
-wrapped, but the server is still refused until it is approved.
+calls. To let a local server run and keep it governed, approve it, as
+`approved_local_servers` does with `ferentin_mcp_local_server`. A local `steer`
+keeps an entry wrapped, but the server is still refused until it is approved.
 
 **One configuration owns the tenant-default posture row.** If another config
 (such as [`../endpoint-approved-ai/`](../endpoint-approved-ai/)) already
@@ -76,4 +77,5 @@ first.
 
 ## Required scopes
 
-`policy:rw` for the rules and the posture.
+`policy:rw` for the rules and the posture, and `mcp:servers:rw` for the local
+server approvals.

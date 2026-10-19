@@ -1,8 +1,8 @@
 # Adopt an existing endpoint policy
 
 Print an `import` block for every endpoint object Terraform does not manage
-yet: device groups, destination rules, MCP rules, posture rows and AI-agent
-decisions. It reads
+yet: device groups, destination rules, MCP rules, posture rows, AI-agent
+decisions and local MCP servers. It reads
 from the tenant and writes nothing to it.
 
 This is step 1 of the
@@ -18,12 +18,13 @@ terraform output -raw import_blocks > ../my-endpoint-policy/imports.tf
 terraform output already_managed
 ```
 
-`apply` only reads the five list data sources
+`apply` only reads the six list data sources
 ([`ferentin_device_groups`](../../docs/data-sources/device_groups.md),
 [`ferentin_endpoint_destination_rules`](../../docs/data-sources/endpoint_destination_rules.md),
 [`ferentin_endpoint_mcp_rules`](../../docs/data-sources/endpoint_mcp_rules.md),
 [`ferentin_endpoint_policy_settings_scopes`](../../docs/data-sources/endpoint_policy_settings_scopes.md),
-[`ferentin_endpoint_agent_approvals`](../../docs/data-sources/endpoint_agent_approvals.md))
+[`ferentin_endpoint_agent_approvals`](../../docs/data-sources/endpoint_agent_approvals.md),
+[`ferentin_mcp_local_servers`](../../docs/data-sources/mcp_local_servers.md))
 and records their outputs in local state.
 
 Then, in the configuration that will own the policy:
@@ -33,6 +34,11 @@ terraform plan -generate-config-out=generated.tf
 ```
 
 ## Which objects it picks
+
+A local MCP server a device reported is `managed_by = "system"`, so the
+default skips it. Add `"system"` to `adopt_managed_by` to import those too,
+and manage their verdict (`status`); the platform keeps them, so destroying
+one later only stops managing it.
 
 An object gets an import block when:
 
@@ -48,7 +54,7 @@ with both values, so you can check.
 ## Names
 
 Each import is named after the object: lowercased, non-alphanumerics folded to
-`_`, with a kind prefix (`g_`, `d_`, `m_`, `p_`) and the first 8 characters of
+`_`, with a kind prefix (`g_`, `d_`, `m_`, `p_`, `l_`) and the first 8 characters of
 its ID, so two similar names cannot collide. An agent decision is named after
 its catalog slug (`a_claude_code`), which is already unique. The tenant-default posture row is
 `ferentin_endpoint_policy_settings.default`. Rename them in the owning

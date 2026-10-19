@@ -14,8 +14,8 @@ import (
 )
 
 // List data sources for the endpoint surface: every device group, destination
-// rule, MCP rule, posture row and AI-agent decision in the tenant, whoever
-// created it. Their first job is
+// rule, MCP rule, posture row, AI-agent decision and local MCP server in the
+// tenant, whoever created it. Their first job is
 // adoption — finding what the admin console created so it can be imported —
 // which is why every item carries `import_id` (the resource's import ID) and
 // `managed_by` (who created it). Items reuse the resources' own read mapping,
@@ -482,6 +482,96 @@ func (d *EndpointAgentApprovalsDataSource) Read(ctx context.Context, req datasou
 	}
 	sort.SliceStable(data.Approvals, func(i, j int) bool {
 		return data.Approvals[i].CatalogSlug.ValueString() < data.Approvals[j].CatalogSlug.ValueString()
+	})
+	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
+}
+
+// ---------------------------------------------------------------------------
+// ferentin_mcp_local_servers
+
+type MCPLocalServersDataSource struct{ endpointListDataSource }
+
+type MCPLocalServersDataSourceModel struct {
+	TenantID types.String             `tfsdk:"tenant_id"`
+	Servers  []MCPLocalServerListItem `tfsdk:"servers"`
+}
+
+type MCPLocalServerListItem struct {
+	ServerID        types.String `tfsdk:"server_id"`
+	ImportID        types.String `tfsdk:"import_id"`
+	DisplayName     types.String `tfsdk:"display_name"`
+	Kind            types.String `tfsdk:"kind"`
+	DeclaredVia     types.String `tfsdk:"declared_via"`
+	Status          types.String `tfsdk:"status"`
+	EffectiveStatus types.String `tfsdk:"effective_status"`
+	ArgvTemplate    types.List   `tfsdk:"argv_template"`
+	Packages        types.List   `tfsdk:"packages"`
+	ManagedBy       types.String `tfsdk:"managed_by"`
+	LastModifiedBy  types.String `tfsdk:"last_modified_by"`
+}
+
+func NewMCPLocalServersDataSource() datasource.DataSource { return &MCPLocalServersDataSource{} }
+
+var _ datasource.DataSourceWithConfigure = (*MCPLocalServersDataSource)(nil)
+
+func (d *MCPLocalServersDataSource) Metadata(_ context.Context, req datasource.MetadataRequest, resp *datasource.MetadataResponse) {
+	resp.TypeName = req.ProviderTypeName + "_mcp_local_servers"
+}
+
+func (d *MCPLocalServersDataSource) Schema(_ context.Context, _ datasource.SchemaRequest, resp *datasource.SchemaResponse) {
+	resp.Schema = schema.Schema{
+		MarkdownDescription: "List every local MCP server in the tenant (`ferentin_mcp_local_server`): ones an " +
+			"administrator declared or added from the catalog, and ones devices reported (`managed_by = " +
+			"\"system\"`, `declared_via` null). Sorted by display name." + endpointListAdoptionNote,
+		Attributes: map[string]schema.Attribute{
+			"tenant_id": schema.StringAttribute{Optional: true,
+				MarkdownDescription: "Tenant to list. Defaults to the provider's."},
+			"servers": schema.ListNestedAttribute{
+				Computed: true,
+				NestedObject: schema.NestedAttributeObject{Attributes: withProvenance(map[string]schema.Attribute{
+					"server_id":        schema.StringAttribute{Computed: true},
+					"import_id":        schema.StringAttribute{Computed: true, MarkdownDescription: "`<tenant_id>/<server_id>`, for an `import` block."},
+					"display_name":     schema.StringAttribute{Computed: true},
+					"kind":             schema.StringAttribute{Computed: true, MarkdownDescription: "`local` or `remote`."},
+					"declared_via":     schema.StringAttribute{Computed: true, MarkdownDescription: "`template`, `catalog`, or null for a server a device reported."},
+					"status":           schema.StringAttribute{Computed: true, MarkdownDescription: "`pending`, `approved` or `blocked`."},
+					"effective_status": schema.StringAttribute{Computed: true},
+					"argv_template":    schema.ListAttribute{Computed: true, ElementType: types.StringType},
+					"packages":         schema.ListAttribute{Computed: true, ElementType: types.StringType},
+				})},
+			},
+		},
+	}
+}
+
+func (d *MCPLocalServersDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
+	var data MCPLocalServersDataSourceModel
+	resp.Diagnostics.Append(req.Config.Get(ctx, &data)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	tenantID := dpCatalogTenant(data.TenantID, d.tenantID)
+	all, err := d.sdk.MCPLocalServers().List(ctx, tenantID)
+	if err != nil {
+		addSDKError(&resp.Diagnostics, "Failed to list local MCP servers", err)
+		return
+	}
+	data.Servers = make([]MCPLocalServerListItem, 0, len(all))
+	for i := range all {
+		m := localServerToModel(tenantID, &all[i])
+		data.Servers = append(data.Servers, MCPLocalServerListItem{
+			ServerID: m.ServerID, ImportID: m.ID, DisplayName: m.DisplayName, Kind: m.Kind,
+			DeclaredVia: m.DeclaredVia, Status: m.Status, EffectiveStatus: m.EffectiveStatus,
+			ArgvTemplate: m.ArgvTemplate, Packages: m.Packages,
+			ManagedBy: m.ManagedBy, LastModifiedBy: m.LastModifiedBy,
+		})
+	}
+	sort.SliceStable(data.Servers, func(i, j int) bool {
+		a, b := data.Servers[i], data.Servers[j]
+		if a.DisplayName.ValueString() != b.DisplayName.ValueString() {
+			return a.DisplayName.ValueString() < b.DisplayName.ValueString()
+		}
+		return a.ServerID.ValueString() < b.ServerID.ValueString()
 	})
 	resp.Diagnostics.Append(resp.State.Set(ctx, &data)...)
 }

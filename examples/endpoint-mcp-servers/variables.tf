@@ -96,3 +96,20 @@ variable "default_destination_action" {
     error_message = "default_destination_action must be allow or block."
   }
 }
+
+variable "approved_local_servers" {
+  type = map(object({
+    display_name = string
+    # The command line the approval covers, as the client's config spells it.
+    # `*` matches exactly one argument. Shipped verbatim to every device: put
+    # `*` where anything private would go.
+    argv_template = list(string)
+  }))
+  description = "Local (stdio) MCP servers approved tenant-wide, keyed by a short name."
+  default = {
+    okta = {
+      display_name  = "Okta MCP"
+      argv_template = ["uv", "run", "--directory", "*", "okta-mcp-server"]
+    }
+  }
+}

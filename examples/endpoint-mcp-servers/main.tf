@@ -8,7 +8,9 @@
 #   2x  steer  sanctioned remote servers → the tenant's MCP gateway route
 #   30  block  known-bad local (stdio) packages
 #
-# MCP server configs no rule matches get the posture's `unapproved_mcp_action`.
+# Local servers your developers run are approved with ferentin_mcp_local_server,
+# which keeps them governed through `ferentin mcp local`. MCP server configs no
+# rule matches and nothing approves get the posture's `unapproved_mcp_action`.
 #
 # `terraform apply` STAGES the change. Devices pick it up only after someone
 # activates the pending changes in the admin console.
@@ -67,6 +69,16 @@ resource "ferentin_endpoint_mcp_rule" "block_local_packages" {
   match_kind   = "package"
   match_values = var.blocked_local_packages
   action       = "block"
+}
+
+# Approved local (stdio) servers, by the command line each approval covers.
+# `*` matches exactly one argument. Approving keeps the server governed; an
+# endpoint `allow` rule would run it outside Ferentin instead.
+resource "ferentin_mcp_local_server" "approved" {
+  for_each = var.approved_local_servers
+
+  display_name  = each.value.display_name
+  argv_template = each.value.argv_template
 }
 
 # The tenant-default posture row, which every device resolves through. Only one
