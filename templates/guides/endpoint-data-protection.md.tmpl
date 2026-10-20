@@ -1,0 +1,200 @@
+---
+page_title: "Keep PII and card data out of coding agents"
+subcategory: "Guides"
+description: |-
+  Detect SSNs, government IDs and payment card numbers in coding agents' prompts, tool calls and tool output on managed devices, log the matches first, then block them.
+---
+
+# Keep PII and card data out of coding agents
+
+Find Social Security numbers, passport and driver's license numbers, card numbers and bank details in what a coding agent is given, runs and reads on a managed device. Log every match first, then block the ones that matter. The policy is one [`ferentin_data_protection_policy`](../resources/data_protection_policy.md), evaluated on the device rather than at the gateway.
+
+The configuration is the [`endpoint-data-protection`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-data-protection) example. [Block risky tool calls from coding agents](../guides/endpoint-tool-calls.md) stops commands and tools by name; this guide stops the data inside them, whichever command or tool carries it.
+
+## What you build
+
+One policy with the `US_PII` and `FINANCIAL` detector profiles, on three device scopes:
+
+| Scope | What the device scans | Before |
+| --- | --- | --- |
+| `apply_to_prompt_input` | What a developer submits to the agent | the model sees it |
+| `apply_to_tool_input` | Shell commands, fetched URLs and request bodies, file writes, MCP tool arguments | the call runs |
+| `apply_to_tool_output` | What a tool returns, such as a query result or a file it read | the model sees it |
+
+| Detectors | Effect |
+| --- | --- |
+| `US_SSN`, `US_PASSPORT`, `US_DRIVERS_LICENSE`, `CREDIT_CARD`, `CVV`, `US_BANK_ROUTING`, `IBAN` | `log`, then `block` |
+| The rest of the two profiles: email, phone, date of birth, `US_EIN`, `SWIFT_CODE` | `log` |
+| `IN_IFSC`, `CRYPTO_WALLET_ETH`, `CRYPTO_WALLET_BTC` | off |
+
+## Before you start
+
+- Devices enrolled and running the Ferentin endpoint agent, with its hook in place for the coding agents your developers use. What each scope needs:
+
+  | Scope | Enforced on |
+  | --- | --- |
+  | Tool calls | Claude Code, Codex, Cursor (agent 1.2.65) and GitHub Copilot (agent 1.2.72). MCP tool arguments are scanned on Claude Code and Cursor from agent 1.2.72 |
+  | Prompts | Claude Code (agent 1.2.63) and Cursor (agent 1.2.65) |
+  | Tool output | Claude Code (agent 1.2.63) |
+
+  A device on an older agent receives no data protection lists. The console's **Data Protection → Fleet enforcement** tab shows, per agent and scope, how many devices enforce each list.
+- Data Protection licensed for the tenant.
+- A provider configured for the tenant, with `policy:rw`. See the [provider overview](../index.md).
+
+## 1. Choose what to detect
+
+```terraform
+locals {
+  enforced_detectors = [
+    "US_SSN",
+    "US_PASSPORT",
+    "US_DRIVERS_LICENSE",
+    "CREDIT_CARD",
+    "CVV",
+    "US_BANK_ROUTING",
+    "IBAN",
+  ]
+}
+
+data "ferentin_data_protection_detector" "enforced" {
+  for_each = toset(local.enforced_detectors)
+  id       = each.key
+}
+
+resource "ferentin_data_protection_policy" "endpoint_pii_pci" {
+  name             = "endpoint-pii-pci"
+  enabled_profiles = ["US_PII", "FINANCIAL"]
+
+  disabled_detectors = {
+    "IN_IFSC"           = true
+    "CRYPTO_WALLET_ETH" = true
+    "CRYPTO_WALLET_BTC" = true
+  }
+  # ...
+}
+```
+
+A profile is a named set of detectors from the platform's catalog, and it grows with the catalog. `disabled_detectors` takes out the ones you do not want: here, Indian bank codes and crypto wallet addresses, which match often in code and rarely matter to a US PII and PCI policy. List the catalog with the [`ferentin_data_protection_profiles`](../data-sources/data_protection_profiles.md) and [`ferentin_data_protection_detectors`](../data-sources/data_protection_detectors.md) data sources.
+
+The [`ferentin_data_protection_detector`](../data-sources/data_protection_detector.md) lookups are a guard: a mistyped or retired detector ID fails the plan with *Data protection detector not found*, instead of saving a policy that never matches it.
+
+-> `US_ITIN` is in `US_PII` but runs at the gateway only. Its validator has no check digit, so devices drop it rather than guess, and the console marks it **Gateway only**. The example leaves it out of the enforced list so the list does not read as endpoint coverage it does not have.
+
+## 2. Set the effects
+
+```terraform
+resource "ferentin_data_protection_policy" "endpoint_pii_pci" {
+  # ...
+  effects        = { for id, d in data.ferentin_data_protection_detector.enforced : id => var.enforcement }
+  default_effect = "log"
+
+  blocked_message = "Blocked by Ferentin: this looks like PII or payment card data, such as an SSN or a card number. Use synthetic test data instead."
+}
+```
+
+`effects` sets the enforced detectors to `var.enforcement`; every other detector in the profiles takes `default_effect`. Email addresses, phone numbers and dates of birth are in every codebase, so they are logged, not blocked.
+
+A device cannot do everything the gateway can, so it applies some effects differently:
+
+| Authored | Prompts | Tool calls | Tool output |
+| --- | --- | --- | --- |
+| `block` | Blocks the prompt | Denies the call | Replaces the field that contains the match with the block message |
+| `redact` | Blocks the prompt | Denies the call | Masks the match |
+| `tokenize` | Blocks the prompt | Denies the call | Masks the match |
+| `log` | Records the match | Records the match | Records the match |
+
+No hook can rewrite what a developer typed, and the endpoint agent never rewrites a command an agent is about to run, so on prompts and tool calls `redact` and `tokenize` stop the action exactly as `block` does. The example's `enforcement` variable therefore takes only `log` or `block`: anything else would read as a softer effect than the one devices apply. The read-only `endpoint_effect_mapping` attribute shows what the platform maps for each scope the policy opts into.
+
+`blocked_message` is what the developer sees in the agent when a prompt or call is blocked, and what replaces blocked tool output. Up to 1,024 characters. Devices strip control and invisible Unicode characters from it before showing it.
+
+## 3. Scope it to the device
+
+```terraform
+resource "ferentin_data_protection_policy" "endpoint_pii_pci" {
+  # ...
+  apply_to_llm_input  = false
+  apply_to_llm_output = false
+
+  apply_to_prompt_input = true
+  apply_to_tool_input   = true
+  apply_to_tool_output  = true
+
+  device_group_ids = []
+}
+```
+
+~> `apply_to_llm_input` and `apply_to_llm_output` default to `true`. Leave them out and the same policy also scans LLM traffic at the gateway, where `block` rejects the whole request. Set them to `false` for an endpoint-only policy, or put the gateway part in a policy of its own.
+
+`device_group_ids` empty means **every enrolled device**. To start with a few, reference [`ferentin_device_group`](../resources/device_group.md)`.<name>.group_id`.
+
+!> **Do not add `criteria` to an endpoint policy.** Criteria are evaluated at the gateway only. Devices cannot yet tell which user is at the keyboard, so a policy with criteria is delivered to them as withheld and enforces **nothing** there. Narrow it by device group instead.
+
+**Tool output is best effort.** It protects the model's context, not the action: the tool has already run. If the agent's hook deadline passes first, the original output reaches the model. `tool_output_unscanned_action = "withhold"` replaces output the device knows it could not scan, which is too large or out of scan time, with a notice; the default, `pass`, lets it through and counts it.
+
+## 4. Log first
+
+```sh
+terraform init
+terraform apply
+```
+
+Activate, then let it run. **Activity → Endpoint → Data protection** in the admin console lists every match on managed devices, by detector, and whether it was stopped. Every match is logged at this stage, so nothing is stopped yet. Look for detectors that fire on test fixtures, sample data or generated IDs, and decide for each one: take it out with `disabled_detectors`, leave it at `log`, or accept the block.
+
+To see what a policy catches before it reaches any device, open it in the console and use **Try on sample text**, with **Check as** set to one of the device scopes.
+
+## 5. Then block
+
+```sh
+terraform apply -var enforcement=block
+```
+
+To block on a few devices before the fleet, add a pilot group to the same apply:
+
+```sh
+terraform apply -var enforcement=block -var 'device_group_ids=["<group-id>"]'
+```
+
+Devices outside the listed groups then receive no part of this policy, so they stop logging too. Apply again with `device_group_ids=[]` to widen it.
+
+## Apply, then activate
+
+!> `terraform apply` **stages** the change. Devices pick up a new or changed data protection policy only after an operator activates the pending changes in the admin console. An activation ships every staged change in the tenant, and a data protection policy reaches both the gateways and managed devices.
+
+## Verify on a device
+
+From a managed Mac in the policy's scope, after activation with `enforcement = "block"`:
+
+1. In a scratch directory, ask Claude Code to run `echo 4111 1111 1111 1111`. That is a standard test Visa number, and it passes the card checksum. The call is denied with your block message.
+2. In a new session, submit a prompt containing the same number. It is stopped before the model answers.
+3. The daemon logs the denial, naming the detector:
+
+   ```sh
+   sudo /usr/bin/log show --last 10m --predicate 'subsystem == "com.ferentin.endpoint"' --style compact \
+     | grep -E 'event=hook_data_protection_denied'
+   ```
+
+4. The match appears under **Activity → Endpoint → Data protection**.
+
+For an SSN or another detector, take a value from the detector's own examples on the console's **Detectors** tab: some well-known sample values are deliberately rejected by the validator.
+
+The first calls after a new policy lands may pass while the device compiles its detectors, which it does once per policy.
+
+## What it does not cover
+
+- **A blocked prompt stays on the developer's disk.** Claude Code writes the prompt to its session file before the hook runs, and Cursor keeps it in its local databases. It does not reach the model.
+- **A large call is scanned in part.** The first 64 KiB of a file write, fetch or MCP call's arguments is scanned, and the rest passes. `tool_input_unscanned_action = "block"` denies an MCP call whose arguments could not be scanned whole, on Claude Code and Cursor.
+- **Codex and GitHub Copilot MCP arguments are not read**, so a card number in an MCP call from those agents passes. Their shell commands are scanned.
+- **Encoded or split values are not found.** An agent that base64-encodes a value, or builds it from pieces, gets past a pattern detector.
+- **Tool output is enforced on Claude Code only**, and Claude Code's own telemetry export still records the original output.
+
+## Sharp edges
+
+**Priority orders data protection policies**, lowest first. The example uses 50, so set it to fit the tenant's other policies.
+
+**Your plan caps how many data protection policies the tenant may hold.** The console's Data Protection page shows the count against the cap.
+
+## The complete configuration
+
+{{ tffile "examples/endpoint-data-protection/main.tf" }}
+
+The variables, with their validation, are in the example's [`variables.tf`](https://github.com/ferentin-net/terraform-provider-ferentin/blob/main/examples/endpoint-data-protection/variables.tf).

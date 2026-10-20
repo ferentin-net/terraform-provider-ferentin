@@ -132,3 +132,4 @@ Attributes with no provider default, such as `unapproved_mcp_action`, `hook_rule
 - [Approve AI apps on managed endpoints](../guides/endpoint-approved-ai.md)
 - [Govern MCP servers on managed endpoints](../guides/endpoint-mcp-servers.md)
 - [Block risky tool calls from coding agents](../guides/endpoint-tool-calls.md)
+- [Keep PII and card data out of coding agents](../guides/endpoint-data-protection.md)

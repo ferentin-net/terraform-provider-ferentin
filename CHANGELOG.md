@@ -33,6 +33,16 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **Guide and example: PII and card data on managed endpoints.**
+  [`examples/endpoint-data-protection/`](examples/endpoint-data-protection/)
+  is an endpoint-only `ferentin_data_protection_policy` with the `US_PII` and
+  `FINANCIAL` profiles on prompts, tool calls and tool output. SSN, passport,
+  driver's license, card, CVV, routing and IBAN detectors move from `log` to
+  `block` with one variable, and everything else is logged. The *Keep PII and
+  card data out of coding agents* guide covers what devices enforce
+  differently from the gateway (`redact` stops a prompt or tool call),
+  why `US_ITIN` is gateway-only, why criteria withhold the policy from
+  devices, and how to verify a block on a Mac.
 - **New resource `ferentin_mcp_local_server`**: approve or block a local
   (stdio) MCP server so managed devices run it governed, through `ferentin mcp
   local` (ferentin-platform#2126, IaC-ready in #3188). Create one from exactly

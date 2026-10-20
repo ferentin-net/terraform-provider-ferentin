@@ -153,6 +153,7 @@ Change one at a time, and activate after each apply.
 
 - [Govern MCP servers on managed endpoints](../guides/endpoint-mcp-servers.md): steer sanctioned remote MCP servers through the gateway, and block the rest.
 - [Block risky tool calls from coding agents](../guides/endpoint-tool-calls.md): count, then deny, the commands and tools agents should never run.
+- [Keep PII and card data out of coding agents](../guides/endpoint-data-protection.md): log, then block, SSNs and card numbers in what coding agents are given, run and read.
 - [Bring an existing endpoint policy under Terraform](../guides/endpoint-adopt-existing.md): import what was configured in the console, with a first apply that changes nothing.
 
 ## The complete configuration
