@@ -148,7 +148,7 @@ resource "ferentin_data_protection_policy" "a2a_pii" {
 
 ~> A group id belonging to another tenant is rejected with 404 (the platform deliberately does not distinguish "not yours" from "does not exist").
 - `disabled_detectors` (Map of Boolean) Detectors to exclude even though a profile pulls them in, keyed by detector ID (e.g. `{ "EU_VAT" = true }`).
-- `effects` (Map of String) Per-detector effect override, keyed by detector ID. One of `tokenize` / `redact` / `block` / `log`.
+- `effects` (Map of String) Per-detector effect override, keyed by detector ID. One of `tokenize` / `redact` / `block` / `log`. Each key must be a detector this policy enables (`enabled_profiles` plus `enabled_detectors`, minus `disabled_detectors`); an effect applies only to detectors its own policy enables. The API refuses any other key, including one the catalog does not know, with a `400` naming it. An update that changes `effects`, `enabled_profiles`, `enabled_detectors` or `disabled_detectors` is judged on the result, so dropping a profile while keeping an effect on one of its detectors is refused too: remove the effect, or enable the detector in this policy.
 - `enabled` (Boolean) Whether the policy is enforced. Default `true`.
 - `enabled_detectors` (Map of Boolean) Individual detectors to enable beyond the selected profiles, keyed by detector ID (e.g. `{ "DATABASE_URL" = true }`).
 - `enabled_profiles` (List of String) Detector profiles to enable, e.g. `US_PII`, `EU_PII`, `SECRETS`, `EXFILTRATION_DEFENSE`. Profile names are catalog data (see the `ferentin_data_protection_profiles` data source) and validated server-side.

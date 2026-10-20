@@ -191,7 +191,13 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 			},
 			"effects": schema.MapAttribute{
 				MarkdownDescription: "Per-detector effect override, keyed by detector ID. One of " +
-					"`tokenize` / `redact` / `block` / `log`.",
+					"`tokenize` / `redact` / `block` / `log`. Each key must be a detector this policy enables " +
+					"(`enabled_profiles` plus `enabled_detectors`, minus `disabled_detectors`); an effect " +
+					"applies only to detectors its own policy enables. The API refuses any other key, " +
+					"including one the catalog does not know, with a `400` naming it. An update that " +
+					"changes `effects`, `enabled_profiles`, `enabled_detectors` or `disabled_detectors` is " +
+					"judged on the result, so dropping a profile while keeping an effect on one of its " +
+					"detectors is refused too: remove the effect, or enable the detector in this policy.",
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
 				Validators: []validator.Map{

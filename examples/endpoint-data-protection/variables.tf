@@ -37,6 +37,12 @@ variable "disabled_detectors" {
   type        = set(string)
   description = "Detectors the profiles pull in that this policy leaves out."
   default     = ["IN_IFSC", "CRYPTO_WALLET_ETH", "CRYPTO_WALLET_BTC"]
+
+  # The platform refuses an effect on a detector the policy does not enable.
+  validation {
+    condition     = length(setintersection(var.disabled_detectors, local.enforced_detectors)) == 0
+    error_message = "disabled_detectors must not include an enforced detector: the policy sets an effect on each one, and an effect needs the detector enabled. Remove it from enforced_detectors in main.tf, or keep it enabled."
+  }
 }
 
 variable "scan_tool_output" {

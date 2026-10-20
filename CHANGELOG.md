@@ -24,6 +24,25 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   examples now declare `required_version = ">= 1.11"`, and CI runs the unit
   tests and fixture validation on 1.11 and on the latest release.
 
+- **A data protection policy's `effects` must name detectors the policy
+  enables.** An effect applies only to detectors its own policy enables
+  (`enabled_profiles` plus `enabled_detectors`, minus `disabled_detectors`),
+  so an entry like `US_SSN = "block"` on a policy whose only profile is
+  `SECRETS` was saved, shown in the plan, and enforced nothing. The platform
+  now refuses it with a `400` naming the detector, on any provider version, so
+  a config that applied before can fail at `terraform apply`. An update is
+  judged on the result when it changes `effects`, `enabled_profiles`,
+  `enabled_detectors` or `disabled_detectors`: dropping a profile while
+  keeping an effect on one of its detectors is refused. An update that changes
+  only other fields still applies. To fix, remove the stale key from
+  `effects`, or enable the detector in this policy (add its profile, or list
+  it in `enabled_detectors`, and keep it out of `disabled_detectors`). The
+  `effects` description says so, and an acceptance test covers both refusals.
+  `examples/endpoint-data-protection` now fails at plan when
+  `disabled_detectors` names one of its enforced detectors.
+  (ferentin-net/ferentin-platform#3197,
+  ferentin-net/terraform-provider-ferentin#37)
+
 - **`ferentin_endpoint_destination_rule` can widen on the first apply after
   upgrading.** If a config removed `device_group_ids` (or an app filter) in
   the past, earlier versions ignored the removal and the rule stayed narrowed.
