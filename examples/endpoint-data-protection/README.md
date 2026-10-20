@@ -14,7 +14,7 @@ guide.
 ```
 examples/endpoint-data-protection/
 ├── README.md
-├── main.tf        # detector lookups, the policy, three outputs
+├── main.tf        # detector and profile lookups, the policy, three outputs
 └── variables.tf   # enforcement, device groups, tool output, block message
 ```
 
