@@ -51,6 +51,15 @@ locals {
     "US_BANK_ROUTING",
     "IBAN",
   ]
+
+  profiles = ["US_PII", "FINANCIAL"]
+
+  # What this policy enables: its profiles' detectors, minus the disabled ones.
+  # An effect applies only to these.
+  enabled_detectors = setsubtract(
+    flatten([for p in data.ferentin_data_protection_profile.selected : p.detectors]),
+    var.disabled_detectors,
+  )
 }
 
 # Fails the plan if a detector ID is not in the catalog, instead of saving a
@@ -60,12 +69,17 @@ data "ferentin_data_protection_detector" "enforced" {
   id       = each.key
 }
 
+data "ferentin_data_protection_profile" "selected" {
+  for_each = toset(local.profiles)
+  name     = each.key
+}
+
 resource "ferentin_data_protection_policy" "endpoint_pii_pci" {
   name        = var.policy_name
   description = "SSNs, government IDs and card data in coding agents' prompts, tool calls and tool output"
   priority    = var.priority
 
-  enabled_profiles = ["US_PII", "FINANCIAL"]
+  enabled_profiles = local.profiles
 
   # FINANCIAL detectors that rarely matter to a US PII/PCI policy and match
   # often in code: Indian bank codes and crypto wallet addresses.
@@ -90,6 +104,15 @@ resource "ferentin_data_protection_policy" "endpoint_pii_pci" {
 
   # No `criteria`: a policy with criteria is withheld from devices, and
   # enforces nothing there.
+
+  lifecycle {
+    # The platform refuses an effect on a detector the policy does not enable.
+    # Fail the plan instead, naming it.
+    precondition {
+      condition     = length(setsubtract(local.enforced_detectors, local.enabled_detectors)) == 0
+      error_message = "These enforced detectors are not enabled by this policy: ${join(", ", setsubtract(local.enforced_detectors, local.enabled_detectors))}. Add the profile that has them to local.profiles, take them out of disabled_detectors, or take them out of local.enforced_detectors."
+    }
+  }
 }
 
 output "policy_id" {

@@ -38,8 +38,10 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `effects`, or enable the detector in this policy (add its profile, or list
   it in `enabled_detectors`, and keep it out of `disabled_detectors`). The
   `effects` description says so, and an acceptance test covers both refusals.
-  `examples/endpoint-data-protection` now fails at plan when
-  `disabled_detectors` names one of its enforced detectors.
+  `examples/endpoint-data-protection` fails at plan when an enforced detector
+  is not enabled by the policy (disabled, or in no selected profile), with a
+  precondition over the profiles' catalog detectors, and the *Keep PII and
+  card data out of coding agents* guide explains the rule and the check.
   (ferentin-net/ferentin-platform#3197,
   ferentin-net/terraform-provider-ferentin#37)
 
