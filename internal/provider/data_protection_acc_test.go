@@ -2,6 +2,7 @@ package provider
 
 import (
 	"fmt"
+	"regexp"
 	"testing"
 
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
@@ -111,6 +112,45 @@ resource "ferentin_data_protection_policy" "a2a" {
 				ResourceName:      "ferentin_data_protection_policy.a2a",
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// TestAccDataProtectionPolicy_effectOnDetectorNotEnabled checks the platform
+// refuses an effect on a detector the policy does not enable
+// (ferentin-platform#3197): on create, and on an update that drops the profile
+// enabling a detector the effects still name.
+func TestAccDataProtectionPolicy_effectOnDetectorNotEnabled(t *testing.T) {
+	name := "tf-acc-dp-inert-" + randomSuffix(t)
+	cfg := func(profiles, effects string) string {
+		return providerBlock() + fmt.Sprintf(`
+resource "ferentin_data_protection_policy" "inert" {
+  name             = %q
+  enabled_profiles = %s
+  default_effect   = "log"
+  effects          = %s
+}
+`, name, profiles, effects)
+	}
+	refused := regexp.MustCompile(`(?s)US_SSN.*does\s+not\s+enable`)
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{
+			{
+				// US_SSN is in US_PII, not SECRETS.
+				Config:      cfg(`["SECRETS"]`, `{ "US_SSN" = "block" }`),
+				ExpectError: refused,
+			},
+			{
+				Config: cfg(`["SECRETS", "US_PII"]`, `{ "US_SSN" = "block" }`),
+				Check: resource.TestCheckResourceAttr(
+					"ferentin_data_protection_policy.inert", "effects.US_SSN", "block"),
+			},
+			{
+				Config:      cfg(`["SECRETS"]`, `{ "US_SSN" = "block" }`),
+				ExpectError: refused,
 			},
 		},
 	})
