@@ -160,7 +160,11 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 			"enabled_profiles": schema.ListAttribute{
 				MarkdownDescription: "Detector profiles to enable, e.g. `US_PII`, `EU_PII`, `SECRETS`, " +
 					"`EXFILTRATION_DEFENSE`. Profile names are catalog data (see the " +
-					"`ferentin_data_protection_profiles` data source) and validated server-side.",
+					"`ferentin_data_protection_profiles` data source) and validated server-side. " +
+					"A profile grows with the catalog: a detector the platform adds to it runs in " +
+					"every policy that selects the profile, under `default_effect`, with no change " +
+					"in the plan. To keep one out, add it to `disabled_detectors`; to give it " +
+					"another effect, name it in `effects`.",
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
 			},
