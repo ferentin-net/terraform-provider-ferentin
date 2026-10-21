@@ -172,6 +172,8 @@ Activate, then let it run. **Activity → Endpoint → Data protection** in the 
 
 To see what a policy catches before it reaches any device, open it in the console and use **Try on sample text**, with **Check as** set to one of the device scopes.
 
+To see what the profiles would have matched in commands your devices already ran, start a draft with the same profiles in the console's **Create Policy** wizard, run its **Preview** step, and cancel. It marks a detector that matches 1 in 100 commands or more as **Noisy**. Once the policy is activated, the **Coverage** tab of **Policies → Data Protection** shows what devices look for in each scope and which agents act on it, and the **Data protection** tab of the **Agent Execution Monitor** shows hits per 1,000 tool calls by category, tool and detector.
+
 ## 5. Then block
 
 ```sh

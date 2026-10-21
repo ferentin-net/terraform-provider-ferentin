@@ -85,6 +85,8 @@ codesign -dv /Applications/ChatGPT.app 2>&1 | grep TeamIdentifier
 
 `app_bundle_ids` and `app_signing_ids` narrow by bundle and signing identifier the same way.
 
+A pin proves which signed program is running, not what code it runs. Prefer a Team ID plus `app_signing_ids` to a Team ID alone, so the vendor's other apps do not inherit the `allow`, and take care allowing an app that runs third-party code: an editor, or an Electron app with its RunAsNode fuse on such as Visual Studio Code or Cursor, passes the pin for anything it is made to run. The admin console warns about such a pin on an `allow` rule; `terraform plan` does not.
+
 ~> An empty app filter means **any app**. Leaving `app_team_ids` empty on rule 20 allows OpenAI from everything and makes rule 30 unreachable. The example's variable refuses an empty list for this reason.
 
 ## 3. Block the rest
