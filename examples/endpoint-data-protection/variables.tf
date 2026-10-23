@@ -41,7 +41,7 @@ variable "disabled_detectors" {
 
 variable "scan_tool_output" {
   type        = bool
-  description = "Also scan what tools return, before the model sees it. Best effort, and enforced on Claude Code only."
+  description = "Also scan what tools return, before the model sees it. Best effort, and enforced on Claude Code, Codex and local MCP servers that run through ferentin-mcp only."
   default     = true
 }
 
