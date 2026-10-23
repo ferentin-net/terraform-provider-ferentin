@@ -2,7 +2,7 @@ module github.com/ferentin-net/terraform-provider-ferentin
 
 go 1.27.0
 
-toolchain go1.27.2
+toolchain go1.27.3
 
 // SSL_CERT_FILE and SSL_CERT_DIR must not replace platform trust on macOS or
 // Windows. Go 1.27 made them do so by default, so a CA file and a proxy in the
