@@ -247,7 +247,7 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 					"MCP gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`, " +
 					"ending in the route of an enabled MCP server. **Required on a `steer` " +
 					"rule with `match_kind` `host` or `url_prefix`; refused on any other rule.** Must be " +
-					"`https://`. A local steer is the shim wrap and has no target.",
+					"`https://`. A local steer wraps the entry in `ferentin-mcp` and has no target.",
 				Optional: true,
 				Validators: []validator.String{
 					stringvalidator.RegexMatches(httpsOnlyURL,
@@ -416,8 +416,8 @@ func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resour
 	if hasSteerTarget && !remote {
 		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
 			fmt.Sprintf("steer_to_url is remote-only; omit it on a %q rule", kind),
-			"Only host and url_prefix rules steer to a gateway route. A local steer is the shim wrap "+
-				"and has no target to name.")
+			"Only host and url_prefix rules steer to a gateway route. A local steer wraps the entry "+
+				"in ferentin-mcp and has no target to name.")
 	}
 	if actionKnown && hasSteerTarget && act != "steer" {
 		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),

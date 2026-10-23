@@ -102,7 +102,7 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 	}
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Local MCP server approval — a locally spawned (stdio) MCP server that managed " +
-			"devices run governed, through `ferentin mcp local`, instead of refusing it under " +
+			"devices run governed, through `ferentin-mcp`, instead of refusing it under " +
 			"`unapproved_mcp_action`.\n\n" +
 			"Create one from **exactly one** of:\n\n" +
 			"* `argv_template` (with `display_name`) — the command line the approval covers, where `*` " +

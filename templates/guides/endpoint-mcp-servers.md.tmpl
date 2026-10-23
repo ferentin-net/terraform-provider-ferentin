@@ -20,12 +20,12 @@ MCP rules are evaluated **on the device**, in ascending `priority`, and the **fi
 | 10 | `block` | remote host `mcp.unvetted.example` | the server is blocked |
 | 20 | `steer` | remote host `api.githubcopilot.com` | the developer's entry is rewritten to the tenant's gateway route for the server |
 | 30 | `block` | local package `npm:@example/unvetted-mcp` | the entry becomes a refusal that explains the block |
-| — | approved | `ferentin_mcp_local_server`: `uv run --directory * okta-mcp-server` | the entry is wrapped in `ferentin mcp local` and runs governed |
+| — | approved | `ferentin_mcp_local_server`: `uv run --directory * okta-mcp-server` | the entry is wrapped in `ferentin-mcp` and runs governed |
 | — | `unapproved_mcp_action` | any other MCP server config that is not approved | `report_only`, until you choose `quarantine` or `block` |
 
 ## Before you start
 
-- Devices enrolled and running the Ferentin endpoint agent, **with the Ferentin CLI package deployed alongside it**. Every local entry the agent rewrites runs `ferentin`, so a Mac without the CLI gets entries that cannot start.
+- Devices enrolled and running the Ferentin endpoint agent **1.5.8 or later**. The agent package installs `ferentin-mcp`, and every local entry the agent rewrites runs it. Earlier agents wrapped local entries in the Ferentin CLI's `ferentin mcp local` instead, so a Mac on one of them without the CLI gets entries that cannot start. On upgrade, the agent rewrites those entries to `ferentin-mcp`.
 - For each remote server you steer: an **enabled MCP server in the tenant**, from [`ferentin_mcp_server`](../resources/mcp_server.md), [`ferentin_mcp_server_from_card`](../resources/mcp_server_from_card.md) or the admin console, and an [`ferentin_mcp_policy`](../resources/mcp_policy.md) that grants it to the people who use it. You need its `slug`.
 - A provider configured for the tenant, with the `policy:rw` scope. See the [provider overview](../index.md).
 
@@ -36,7 +36,7 @@ The endpoint agent reads every MCP client configuration on the Mac and rewrites 
 | Your decision | Remote server | Local (stdio) server |
 | --- | --- | --- |
 | `block` rule | Blocked | Replaced by a refusal entry. It explains the block and offers an appeal. |
-| `steer` rule | Rewritten to the gateway route, so every call crosses the gateway and its MCP policy | Wrapped in `ferentin mcp local`, which still refuses the server until it is approved (below) |
+| `steer` rule | Rewritten to the gateway route, so every call crosses the gateway and its MCP policy | Wrapped in `ferentin-mcp`, which still refuses the server until it is approved (below) |
 | `allow` rule | Left as written | Left as written: it runs, and **nothing sees its tool calls** |
 | No rule, not approved | `unapproved_mcp_action` | `unapproved_mcp_action` |
 
@@ -103,9 +103,9 @@ A `package` value is one exact registry-qualified id: `npm:@scope/name`, `pypi:n
 
 To let a local server run, prefer **approving** it to writing an `allow` rule:
 
-- **Approve it**, with `ferentin_mcp_local_server` or in the admin console. The agent wraps the entry in `ferentin mcp local`, so admission, tool filtering and every call are governed.
+- **Approve it**, with `ferentin_mcp_local_server` or in the admin console. The agent wraps the entry in `ferentin-mcp`, so admission, tool filtering and every call are governed.
 - **An `allow` rule** puts the entry back exactly as written. The server runs outside Ferentin and nothing sees its tool calls. A local `allow` is also tenant-wide for now: `plan` refuses `device_group_ids` or `criteria` on it, because devices do not yet carry an authenticated identity when a local server is admitted.
-- **A local `steer` rule** keeps an entry wrapped, but `ferentin mcp local` still refuses the server until it is approved. Use one for a command line too long to approve on its own: the agent reads at most 64 arguments of an entry, so name the first 60 in a steer rule, then approve the server.
+- **A local `steer` rule** keeps an entry wrapped, but `ferentin-mcp` still refuses the server until it is approved. Use one for a command line too long to approve on its own: the agent reads at most 64 arguments of an entry, so name the first 60 in a steer rule, then approve the server.
 
 ~> `local_mcp_block_enabled = true` on a posture row turns off every local MCP server in that scope, approved ones included, and `allow` rules on `package` and `argv_contains` stop having any effect. Remote servers are unaffected.
 

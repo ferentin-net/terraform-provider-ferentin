@@ -120,7 +120,7 @@ The platform normalizes some values: `host` is lowercased on every rule, `tool_b
 - `priority` (Number) Evaluation order — 1 is highest, first match wins. Default `100`.
 
 ~> **Ownership warning.** Ordering is the policy here, so do not split ownership of `priority` between Terraform and the console: the console's reorder arrows swap two rules' priorities, and Terraform would then fight it on every plan.
-- `steer_to_url` (String) Gateway route a remote `steer` rule sends the server to: this tenant's MCP gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`, ending in the route of an enabled MCP server. **Required on a `steer` rule with `match_kind` `host` or `url_prefix`; refused on any other rule.** Must be `https://`. A local steer is the shim wrap and has no target.
+- `steer_to_url` (String) Gateway route a remote `steer` rule sends the server to: this tenant's MCP gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`, ending in the route of an enabled MCP server. **Required on a `steer` rule with `match_kind` `host` or `url_prefix`; refused on any other rule.** Must be `https://`. A local steer wraps the entry in `ferentin-mcp` and has no target.
 - `tenant_id` (String)
 
 ### Read-Only

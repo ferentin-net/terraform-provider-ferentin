@@ -9,7 +9,7 @@
 #   30  block  known-bad local (stdio) packages
 #
 # Local servers your developers run are approved with ferentin_mcp_local_server,
-# which keeps them governed through `ferentin mcp local`. MCP server configs no
+# which keeps them governed through `ferentin-mcp`. MCP server configs no
 # rule matches and nothing approves get the posture's `unapproved_mcp_action`.
 #
 # `terraform apply` STAGES the change. Devices pick it up only after someone

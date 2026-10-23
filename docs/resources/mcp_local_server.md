@@ -3,7 +3,7 @@
 page_title: "ferentin_mcp_local_server Resource - Ferentin"
 subcategory: ""
 description: |-
-  Local MCP server approval — a locally spawned (stdio) MCP server that managed devices run governed, through ferentin mcp local, instead of refusing it under unapproved_mcp_action.
+  Local MCP server approval — a locally spawned (stdio) MCP server that managed devices run governed, through ferentin-mcp, instead of refusing it under unapproved_mcp_action.
   Create one from exactly one of:
   argv_template (with display_name) — the command line the approval covers, where * matches exactly one argument: ["uv", "run", "--directory", "*", "okta-mcp-server"] approves that server from any directory. Devices consult a template only for a command line that names no package.catalog_slug — a local MCP catalog entry, keyed on its package identities.
   Either way the server is approved on creation, tenant-wide. Its tools still start unvetted; local_mcp_risk_policy on ferentin_endpoint_policy_settings decides what developers get from them.
@@ -16,7 +16,7 @@ description: |-
 
 # ferentin_mcp_local_server (Resource)
 
-Local MCP server approval — a locally spawned (stdio) MCP server that managed devices run governed, through `ferentin mcp local`, instead of refusing it under `unapproved_mcp_action`.
+Local MCP server approval — a locally spawned (stdio) MCP server that managed devices run governed, through `ferentin-mcp`, instead of refusing it under `unapproved_mcp_action`.
 
 Create one from **exactly one** of:
 
