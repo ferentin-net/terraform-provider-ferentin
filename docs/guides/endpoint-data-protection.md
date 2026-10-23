@@ -35,7 +35,7 @@ One policy with the `US_PII` and `FINANCIAL` detector profiles, on three device 
   | --- | --- |
   | Tool calls | Claude Code, Codex, Cursor (agent 1.2.65) and GitHub Copilot (agent 1.2.72). MCP tool arguments are scanned on Claude Code and Cursor from agent 1.2.72 |
   | Prompts | Claude Code (agent 1.2.63) and Cursor (agent 1.2.65) |
-  | Tool output | Claude Code (agent 1.2.63) |
+  | Tool output | Claude Code (agent 1.2.63) and Codex (agent 1.5.5). From agent 1.5.8, the results of local stdio MCP servers that run through `ferentin-mcp`, whatever the client |
 
   A device on an older agent receives no data protection lists. The console's **Data Protection → Fleet enforcement** tab shows, per agent and scope, how many devices enforce each list.
 - Data Protection licensed for the tenant.
@@ -159,7 +159,7 @@ resource "ferentin_data_protection_policy" "endpoint_pii_pci" {
 
 !> **Do not add `criteria` to an endpoint policy.** Criteria are evaluated at the gateway only. Devices cannot yet tell which user is at the keyboard, so a policy with criteria is delivered to them as withheld and enforces **nothing** there. Narrow it by device group instead.
 
-**Tool output is best effort.** It protects the model's context, not the action: the tool has already run. If the agent's hook deadline passes first, the original output reaches the model. `tool_output_unscanned_action = "withhold"` replaces output the device knows it could not scan, which is too large or out of scan time, with a notice; the default, `pass`, lets it through and counts it.
+**Tool output is best effort through an agent's hook.** It protects the model's context, not the action: the tool has already run. If the agent's hook deadline passes first, the original output reaches the model. `tool_output_unscanned_action = "withhold"` replaces output the device knows it could not scan, which is too large or out of scan time, with a notice; the default, `pass`, lets it through and counts it. `ferentin-mcp` withholds an MCP result it could not scan whatever this is set to.
 
 ## 4. Log first
 
@@ -217,7 +217,7 @@ The first calls after a new policy lands may pass while the device compiles its 
 - **A large call is scanned in part.** The first 64 KiB of a file write, fetch or MCP call's arguments is scanned, and the rest passes. `tool_input_unscanned_action = "block"` denies an MCP call whose arguments could not be scanned whole, on Claude Code and Cursor.
 - **Codex and GitHub Copilot MCP arguments are not read**, so a card number in an MCP call from those agents passes. Their shell commands are scanned.
 - **Encoded or split values are not found.** An agent that base64-encodes a value, or builds it from pieces, gets past a pattern detector.
-- **Tool output is enforced on Claude Code only**, and Claude Code's own telemetry export still records the original output.
+- **Tool output is enforced on Claude Code, Codex and local MCP servers that run through `ferentin-mcp` only.** Other agents' own tools, remote MCP servers and local servers left unwrapped pass their output unchanged, and Claude Code's own telemetry export still records the original output.
 
 ## Sharp edges
 

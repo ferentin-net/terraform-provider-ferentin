@@ -254,14 +254,19 @@ func (r *DataProtectionPolicyResource) Schema(_ context.Context, _ resource.Sche
 				MarkdownDescription: "Evaluate on enrolled endpoints, against what a tool returns before the " +
 					"agent's model sees it: `block` replaces the affected text with a notice and `redact` masks " +
 					"the match. The tool has already run, so this protects the model's context, not the action. " +
-					"Enforced only on agents whose hooks can replace tool output. Default `false`.",
+					"Enforced through the hooks of Claude Code (agent 1.2.63+) and Codex (agent 1.5.5+), and " +
+					"from agent 1.5.8 on the results of local stdio MCP servers that run through `ferentin-mcp`, " +
+					"whatever the client. Not applied to other agents' own tools, remote MCP servers, or local " +
+					"ones left unwrapped. Default `false`.",
 				Optional: true, Computed: true, Default: booldefault.StaticBool(false),
 			},
 			"tool_output_unscanned_action": schema.StringAttribute{
 				MarkdownDescription: "With `apply_to_tool_output`: what a device does with tool output it knows it " +
 					"could not scan (over its size cap, or out of scan time). `pass` lets it through and counts " +
-					"it; `withhold` replaces it with a notice. Best effort: output the agent itself lets through " +
-					"(its own hook timeout) reaches the model regardless. Default `pass`.",
+					"it; `withhold` replaces it with a notice. Best effort through an agent's hook: output the " +
+					"agent itself lets through (its own hook timeout) reaches the model regardless. " +
+					"`ferentin-mcp` (agent 1.5.8+) withholds an MCP result it could not scan whatever this is " +
+					"set to, `pass` included. Default `pass`.",
 				Optional: true, Computed: true, Default: stringdefault.StaticString("pass"),
 				Validators: []validator.String{stringvalidator.OneOf("pass", "withhold")},
 			},
