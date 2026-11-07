@@ -203,10 +203,11 @@ func (r *MCPPolicyResource) Create(ctx context.Context, req resource.CreateReque
 	}
 	tenantID := r.resolveTenant(plan.TenantID)
 
+	instances := stringListToSDK(ctx, plan.ProviderInstances)
 	body := adminapi.MCPPolicyCreate{
 		Name:              plan.Name.ValueString(),
 		Priority:          int32(plan.Priority.ValueInt64()),
-		ProviderInstances: stringListToSDK(ctx, plan.ProviderInstances),
+		ProviderInstances: &instances,
 		Effect:            plan.toEffect(ctx),
 	}
 	if !plan.Priority.IsNull() && !plan.Priority.IsUnknown() {
