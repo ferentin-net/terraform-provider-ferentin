@@ -239,6 +239,11 @@ resource "ferentin_llm_provider" "test" {
 // takes SsrfProtectionService's relaxed path (admin-api never dials these URLs;
 // the customer's service-edge does), which is exactly why the interlock exists.
 // It needs an `edge_site_id`, so the fixture creates its own site.
+//
+// The provider's `default_url` is the opposite case: since the platform's
+// zero-SSRF follow-ups (ferentin-platform 66bca30d2) a provider default must be
+// a public endpoint the cloud could reach, so it names example.com. The server
+// overrides it with the private endpoint its edge site dials.
 func configMCPServer(name string) string {
 	return providerBlock() + mcpServerStack("test", name)
 }
@@ -259,7 +264,7 @@ resource "ferentin_mcp_provider" "%[1]s_provider" {
   display_name            = "%[2]s-provider"
   description             = "acctest provider backing %[2]s"
   transport               = "http"
-  default_url             = "https://mcp-acctest.ferentin.test/mcp"
+  default_url             = "https://example.com/mcp"
   allow_endpoint_override = true
 }
 
