@@ -67,7 +67,7 @@ resource "ferentin_edge_site" "test_site" {
 resource "ferentin_mcp_server_from_card" "test" {
   card_json = jsonencode({
     "$schema"   = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
-    name        = "net.ferentin.acctest/%[1]s"
+    name        = "net.ferentin.mcp/%[1]s"
     title       = "%[1]s"
     version     = "0.1.0"
     description = "Acceptance-test server card."
