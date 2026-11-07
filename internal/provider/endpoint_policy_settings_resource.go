@@ -521,18 +521,14 @@ func (r *EndpointPolicySettingsResource) Delete(ctx context.Context, req resourc
 	tenantID := r.resolveTenant(state.TenantID)
 
 	if !isUnsetString(state.DeviceGroupID) {
+		// No stale-version retry here, unlike Update. A DELETE removes the whole
+		// row, including the group's own MCP scope defaults
+		// (ferentin_mcp_scope_defaults or the console), which this resource does
+		// not model. A 412 is the only sign one of them changed since the
+		// refresh, so it is reported rather than retried past.
 		version := strconv.FormatInt(state.Version.ValueInt64(), 10)
-		prior, d := loadPlatformForms(ctx, req.Private)
-		resp.Diagnostics.Append(d...)
-		// A ferentin_mcp_scope_defaults write to this group moves the version too.
-		// Deleting the row also removes the group's own MCP scope defaults; see the
-		// resource docs.
-		_, err := retryStalePostureVersion(version,
-			func(v string) (struct{}, error) {
-				return struct{}{}, r.sdk.EndpointPolicies().DeleteGroupSettings(ctx, tenantID,
-					state.DeviceGroupID.ValueString(), v)
-			},
-			r.rereadOwned(ctx, tenantID, state, prior, settingsOwnedAttrs))
+		err := r.sdk.EndpointPolicies().DeleteGroupSettings(ctx, tenantID,
+			state.DeviceGroupID.ValueString(), version)
 		if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
 			if addPostureConflictError(&resp.Diagnostics, "Failed to delete endpoint policy settings override", err) {
 				return

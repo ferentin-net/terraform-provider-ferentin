@@ -524,3 +524,14 @@ func TestMCPScopeDefaults_ImportState(t *testing.T) {
 		}
 	}
 }
+
+// A 412 whose re-read finds the row gone must still read as ErrNotFound, or a
+// destroy of a group row deleted elsewhere fails instead of succeeding.
+func TestRetryStalePostureVersion_RereadNotFound(t *testing.T) {
+	_, err := retryStalePostureVersion("3",
+		func(string) (struct{}, error) { return struct{}{}, adminapi.ErrPreconditionFailed },
+		func() (string, []string, error) { return "", nil, adminapi.ErrNotFound })
+	if !errors.Is(err, adminapi.ErrNotFound) || !errors.Is(err, adminapi.ErrPreconditionFailed) {
+		t.Errorf("err = %v, want both ErrNotFound and ErrPreconditionFailed", err)
+	}
+}

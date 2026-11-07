@@ -42,7 +42,9 @@ func retryStalePostureVersion[T any](version string, write func(version string) 
 	var zero T
 	fresh, changed, rerr := reread()
 	if rerr != nil {
-		return zero, fmt.Errorf("%w (re-reading the posture row to check what changed failed: %v)", err, rerr)
+		// Both wrapped: a 404 on the re-read means the row is gone, and a caller
+		// that treats ErrNotFound as done (Delete) must still see it.
+		return zero, fmt.Errorf("%w (re-reading the posture row to check what changed failed: %w)", err, rerr)
 	}
 	if len(changed) > 0 {
 		return zero, &postureConflictError{fields: changed, cause: err}
