@@ -108,6 +108,15 @@ resource "ferentin_mcp_scope_defaults" "group" {
 				ImportState:       true,
 				ImportStateVerify: true,
 			},
+			{
+				// The scope defaults write after the settings (depends_on), which
+				// moves the row's version under the settings resource's state. The
+				// post-test destroy does not refresh, and the settings Delete reports
+				// a 412 rather than retrying past it (a DELETE also removes the
+				// group's scope defaults), so refresh first, as `terraform destroy`
+				// does by default.
+				RefreshState: true,
+			},
 		},
 	})
 }
