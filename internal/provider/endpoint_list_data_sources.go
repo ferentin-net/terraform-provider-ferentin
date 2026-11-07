@@ -306,7 +306,9 @@ func (d *EndpointMCPRulesDataSource) Read(ctx context.Context, req datasource.Re
 		m := endpointMCPRuleToModel(tenantID, &rules[i], &diag.Diagnostics{})
 		data.Rules = append(data.Rules, EndpointMCPRuleListItem{
 			RuleID: m.RuleID, ImportID: m.ID, Name: m.Name, Priority: m.Priority, Enabled: enabledOrDefault(m.Enabled),
-			Action: m.Action, MatchKind: m.MatchKind, MatchValues: m.StoredMatchValues,
+			// The resource authors call-time block rules only; the list also shows
+			// server rules authored elsewhere, so the action comes from the row.
+			Action: strPtrToTF(rules[i].Action), MatchKind: m.MatchKind, MatchValues: m.StoredMatchValues,
 			DeviceGroupIDs: m.DeviceGroupIDs, Enforcement: m.Enforcement,
 			ManagedBy: m.ManagedBy, LastModifiedBy: m.LastModifiedBy,
 		})

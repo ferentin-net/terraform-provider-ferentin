@@ -66,7 +66,6 @@ func TestEndpointMCPRuleToModel_RoundTrip(t *testing.T) {
 		"ID":                 {m.ID.ValueString(), fixtureTenantID + "/" + ruleID.String()},
 		"RuleID":             {m.RuleID.ValueString(), ruleID.String()},
 		"MatchKind":          {m.MatchKind.ValueString(), "tool_behavior"},
-		"Action":             {m.Action.ValueString(), "block"},
 		"CriteriaCombinator": {m.CriteriaCombinator.ValueString(), "OR"},
 		"Enforcement":        {m.Enforcement.ValueString(), "pending"},
 		"ManagedBy":          {m.ManagedBy.ValueString(), "iac"},
@@ -91,15 +90,13 @@ func TestEndpointMCPRuleToModel_RoundTrip(t *testing.T) {
 func TestEndpointMCPRuleToWrite(t *testing.T) {
 	ctx := context.Background()
 	m := EndpointMCPRuleResourceModel{
-		Name:               types.StringValue("allow-docs"),
-		Action:             types.StringValue("allow"),
-		MatchKind:          types.StringValue("host"),
-		MatchValues:        stringList("Docs.Example.com"),
+		Name:               types.StringValue("block-curl"),
+		MatchKind:          types.StringValue("command_binary"),
+		MatchValues:        stringList("Curl"),
 		Priority:           types.Int64Value(100),
 		Enabled:            types.BoolValue(true),
 		CriteriaCombinator: types.StringValue("AND"),
 		Description:        types.StringUnknown(),
-		SteerToURL:         types.StringNull(),
 		AppBundleIDs:       types.ListUnknown(types.StringType),
 		DeviceGroupIDs:     types.ListNull(types.StringType),
 	}
@@ -107,10 +104,11 @@ func TestEndpointMCPRuleToWrite(t *testing.T) {
 	if diags.HasError() || len(invalid) != 0 {
 		t.Fatalf("diags=%v invalid=%v", diags, invalid)
 	}
-	if body.Name != "allow-docs" || body.Action != "allow" || string(body.MatchKind) != "host" {
+	// Every rule this resource authors is a block.
+	if body.Name != "block-curl" || body.Action != "block" || string(body.MatchKind) != "command_binary" {
 		t.Errorf("required fields = %q/%q/%q", body.Name, body.Action, body.MatchKind)
 	}
-	if len(body.MatchValues) != 1 || body.MatchValues[0] != "Docs.Example.com" {
+	if len(body.MatchValues) != 1 || body.MatchValues[0] != "Curl" {
 		t.Errorf("MatchValues = %v, want the configured spelling", body.MatchValues)
 	}
 	// priority, enabled and criteria_combinator are kept by the platform when
@@ -197,62 +195,24 @@ func TestEndpointMCPRuleValidateConfig(t *testing.T) {
 		attrs   map[string]tftypes.Value
 		wantErr string // substring of the error summary; "" = no error
 	}{
-		{"remote allow", map[string]tftypes.Value{
-			"match_kind": str("host"), "action": str("allow"), "match_values": listOf("match_values", "a.example")}, ""},
-		{"call-time allow", map[string]tftypes.Value{
-			"match_kind": str("tool_name"), "action": str("allow"), "match_values": listOf("match_values", "run")},
-			`supports action "block" only`},
-		{"call-time block", map[string]tftypes.Value{
-			"match_kind": str("command_binary"), "action": str("block"), "match_values": listOf("match_values", "curl")}, ""},
+		{"tool name", map[string]tftypes.Value{
+			"match_kind": str("tool_name"), "match_values": listOf("match_values", "run")}, ""},
+		{"command binary narrowed by criteria", map[string]tftypes.Value{
+			"match_kind": str("command_binary"), "match_values": listOf("match_values", "curl"),
+			"criteria": criteriaGroup}, ""},
 		{"unknown behaviour", map[string]tftypes.Value{
-			"match_kind": str("tool_behavior"), "action": str("block"), "match_values": listOf("match_values", "network")},
+			"match_kind": str("tool_behavior"), "match_values": listOf("match_values", "network")},
 			"not a known tool behaviour"},
 		{"known behaviour", map[string]tftypes.Value{
-			"match_kind": str("tool_behavior"), "action": str("block"), "match_values": listOf("match_values", "file_write")}, ""},
-		{"remote steer without target", map[string]tftypes.Value{
-			"match_kind": str("host"), "action": str("steer"), "match_values": listOf("match_values", "a.example")},
-			"required on a remote"},
-		{"remote steer with target", map[string]tftypes.Value{
-			"match_kind": str("url_prefix"), "action": str("steer"), "match_values": listOf("match_values", "https://a.example/mcp"),
-			"steer_to_url": str("https://acme.mcp.example.com/github")}, ""},
-		{"local steer with target", map[string]tftypes.Value{
-			"match_kind": str("package"), "action": str("steer"), "match_values": listOf("match_values", "npm:@acme/mcp"),
-			"steer_to_url": str("https://acme.mcp.example.com/github")}, "remote-only"},
-		{"target on a block rule", map[string]tftypes.Value{
-			"match_kind": str("host"), "action": str("block"), "match_values": listOf("match_values", "a.example"),
-			"steer_to_url": str("https://acme.mcp.example.com/github")}, `only meaningful on a "steer" rule`},
-		{"local allow narrowed by groups", map[string]tftypes.Value{
-			"match_kind": str("argv_contains"), "action": str("allow"), "match_values": listOf("match_values", "--safe"),
-			"device_group_ids": listOf("device_group_ids", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")},
-			"cannot be narrowed by device_group_ids"},
-		{"local allow narrowed by criteria", map[string]tftypes.Value{
-			"match_kind": str("package"), "action": str("allow"), "match_values": listOf("match_values", "npm:@acme/mcp"),
-			"criteria": criteriaGroup}, "cannot be narrowed by criteria"},
-		{"local block narrowed by groups", map[string]tftypes.Value{
-			"match_kind": str("package"), "action": str("block"), "match_values": listOf("match_values", "npm:@evil/mcp"),
-			"device_group_ids": listOf("device_group_ids", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")}, ""},
-		{"unknown action skips action rules", map[string]tftypes.Value{
-			"match_kind": str("tool_name"), "action": tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
-			"match_values": listOf("match_values", "run")}, ""},
+			"match_kind": str("tool_behavior"), "match_values": listOf("match_values", "file_write")}, ""},
 		{"behaviour in another case", map[string]tftypes.Value{
-			"match_kind": str("tool_behavior"), "action": str("block"), "match_values": listOf("match_values", " Shell ")}, ""},
-		{"host with a scheme", map[string]tftypes.Value{
-			"match_kind": str("host"), "action": str("block"), "match_values": listOf("match_values", "https://a.example")},
-			"not a bare hostname"},
-		{"host with a port", map[string]tftypes.Value{
-			"match_kind": str("host"), "action": str("block"), "match_values": listOf("match_values", "a.example:443")},
-			"not a bare hostname"},
-		{"url_prefix may carry a scheme", map[string]tftypes.Value{
-			"match_kind": str("url_prefix"), "action": str("block"), "match_values": listOf("match_values", "https://a.example/mcp")},
-			""},
-		{"local steer without target", map[string]tftypes.Value{
-			"match_kind": str("package"), "action": str("steer"), "match_values": listOf("match_values", "npm:@acme/mcp")}, ""},
-		{"behaviour steer", map[string]tftypes.Value{
-			"match_kind": str("tool_behavior"), "action": str("steer"), "match_values": listOf("match_values", "shell")},
-			`supports action "block" only`},
-		{"remote steer with an unknown target", map[string]tftypes.Value{
-			"match_kind": str("host"), "action": str("steer"), "match_values": listOf("match_values", "a.example"),
-			"steer_to_url": tftypes.NewValue(tftypes.String, tftypes.UnknownValue)}, ""},
+			"match_kind": str("tool_behavior"), "match_values": listOf("match_values", " Shell ")}, ""},
+		{"behaviour narrowed by groups", map[string]tftypes.Value{
+			"match_kind": str("tool_behavior"), "match_values": listOf("match_values", "shell"),
+			"device_group_ids": listOf("device_group_ids", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")}, ""},
+		{"unknown kind skips value rules", map[string]tftypes.Value{
+			"match_kind":   tftypes.NewValue(tftypes.String, tftypes.UnknownValue),
+			"match_values": listOf("match_values", "network")}, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

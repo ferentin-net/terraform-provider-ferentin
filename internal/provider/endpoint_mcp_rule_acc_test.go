@@ -37,8 +37,7 @@ func TestAccEndpointMCPRule_basic(t *testing.T) {
   criteria_combinator = "OR"
 `),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(r, "match_kind", "host"),
-					resource.TestCheckResourceAttr(r, "action", "block"),
+					resource.TestCheckResourceAttr(r, "match_kind", "tool_name"),
 					resource.TestCheckResourceAttr(r, "priority", "10"),
 					resource.TestCheckResourceAttr(r, "description", "initial"),
 					resource.TestCheckResourceAttr(r, "criteria_combinator", "OR"),
@@ -110,9 +109,9 @@ func TestAccEndpointMCPRule_outOfBandEditShowsAsDrift(t *testing.T) {
 					_, err = sdk.EndpointMCPRules().Update(ctx, tenantID, ruleID,
 						strconv.FormatInt(*rule.Version, 10), adminapi.EndpointMCPRuleWrite{
 							Name:        *rule.Name,
-							Action:      *rule.Action,
+							Action:      "block",
 							MatchKind:   gen.EndpointMcpRuleRequestMatchKind(*rule.MatchKind),
-							MatchValues: []string{"mcp.out-of-band-" + suffix + ".example"},
+							MatchValues: []string{"tf_acc_out_of_band_" + suffix},
 							Priority:    rule.Priority,
 						})
 					if err != nil {
@@ -135,29 +134,29 @@ func TestAccEndpointMCPRule_outOfBandEditShowsAsDrift(t *testing.T) {
 	})
 }
 
-// TestAccEndpointMCPRule_canonicalizedAllow: the platform canonicalizes the
-// values of an allow rule. Writing a mixed-case host must not leave a perpetual
-// diff — match_values keeps the configured spelling, stored_match_values the
-// platform's. Import has no configured spelling, so it is ignored there.
-func TestAccEndpointMCPRule_canonicalizedAllow(t *testing.T) {
+// TestAccEndpointMCPRule_canonicalizedBehaviour: the platform trims and
+// lowercases a tool_behavior rule's values. Writing " Shell " must not leave a
+// perpetual diff: match_values keeps the configured spelling,
+// stored_match_values the platform's. Import has no configured spelling, so it
+// is ignored there.
+func TestAccEndpointMCPRule_canonicalizedBehaviour(t *testing.T) {
 	suffix := randomSuffix(t)
-	const r = "ferentin_endpoint_mcp_rule.allow"
+	const r = "ferentin_endpoint_mcp_rule.behaviour"
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
 				Config: providerBlock() + fmt.Sprintf(`
-resource "ferentin_endpoint_mcp_rule" "allow" {
-  name         = "tf-acc-mcp-allow-%s"
-  match_kind   = "host"
-  match_values = ["Docs.Tf-Acc.Example.COM"]
-  action       = "allow"
+resource "ferentin_endpoint_mcp_rule" "behaviour" {
+  name         = "tf-acc-mcp-behaviour-%s"
+  match_kind   = "tool_behavior"
+  match_values = [" Shell "]
 }
 `, suffix),
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr(r, "match_values.0", "Docs.Tf-Acc.Example.COM"),
-					resource.TestCheckResourceAttrSet(r, "stored_match_values.0"),
+					resource.TestCheckResourceAttr(r, "match_values.0", " Shell "),
+					resource.TestCheckResourceAttr(r, "stored_match_values.0", "shell"),
 				),
 			},
 			{
@@ -182,9 +181,8 @@ resource "ferentin_device_group" "test" {
 resource "ferentin_endpoint_mcp_rule" "test" {
   name         = "tf-acc-mcp-rule-%[1]s"
   priority     = %[2]d
-  match_kind   = "host"
-  match_values = ["mcp.tf-acc-%[1]s.example"]
-  action       = "block"
+  match_kind   = "tool_name"
+  match_values = ["tf_acc_tool_%[1]s"]
 %[3]s
 }
 `, suffix, priority, extra)

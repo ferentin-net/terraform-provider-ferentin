@@ -27,15 +27,14 @@ import (
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
 
-// Match kinds, grouped as the platform groups them (shared-core EndpointMcpRule).
-// The groups drive the cross-field rules in ValidateConfig.
+// The match kinds this resource authors: the call-time tool rules the unified
+// MCP policy cannot express (the platform's converter keeps them as endpoint
+// MCP rules, reason built_in_tool_rule). Server kinds (host, url_prefix,
+// package, argv_contains) are ferentin_mcp_policy targets now, and a steer is a
+// ferentin_mcp_route.
 var (
-	mcpRuleRemoteKinds   = []string{"host", "url_prefix"}
-	mcpRuleLocalKinds    = []string{"package", "argv_contains"}
-	mcpRuleCallTimeKinds = []string{"tool_name", "command_binary"}
-	mcpRuleBehaviorKinds = []string{"tool_behavior"}
-	mcpRuleAllKinds      = []string{"host", "url_prefix", "package", "argv_contains",
-		"tool_name", "command_binary", "tool_behavior"}
+	mcpRuleKinds       = []string{"tool_name", "command_binary", "tool_behavior"}
+	mcpRuleServerKinds = []string{"host", "url_prefix", "package", "argv_contains"}
 
 	// mcpRuleToolBehaviors is the closed vocabulary of a tool_behavior rule's
 	// match_values (EndpointToolBehavior.ALL).
@@ -50,26 +49,27 @@ const (
 )
 
 // EndpointMCPRuleResource is the `ferentin_endpoint_mcp_rule` Terraform
-// resource — allow / block / steer for local and remote MCP servers and tool
-// calls on managed devices (platform#2166).
+// resource: call-time tool rules on managed devices (platform#2166). Each rule
+// blocks a tool call by tool name, command binary or tool behaviour.
+//
+// With the unified MCP policy (ferentin-platform#3256) the resource authors only
+// what that model cannot express. Server rules moved: a block or allow is a
+// ferentin_mcp_policy with targets, and a steer a ferentin_mcp_route.
 //
 // Same shape as ferentin_endpoint_destination_rule: ordinary CRUD, first match
 // wins by ascending priority, version + provenance for If-Match and drift.
-// Call-time `block` rules are enforced or only counted according to the
-// posture's hook_rule_enforcement (ferentin_endpoint_policy_settings).
+// Rules are enforced or only counted according to the posture's
+// hook_rule_enforcement (ferentin_endpoint_policy_settings).
 //
 // Two platform behaviours shape the model:
 //
-//   - The PUT replaces description, steer_to_url, app_bundle_ids,
-//     device_group_ids and criteria, but KEEPS priority, enabled and
-//     criteria_combinator when omitted. All three carry a schema Default, so
-//     they are always sent and removing one from config converges.
-//   - match_values are normalized on write: host values are lowercased on every
-//     rule, tool_behavior values trimmed and lowercased, url_prefix values
-//     canonicalized where possible (a block keeps the spelling only when
-//     canonicalizing fails), and allow / steer values fully canonicalized.
-//     State keeps the configured spelling in match_values and the server's
-//     in stored_match_values; see reconcileMatchValues.
+//   - The PUT replaces description, app_bundle_ids, device_group_ids and
+//     criteria, but KEEPS priority, enabled and criteria_combinator when
+//     omitted. All three carry a schema Default, so they are always sent and
+//     removing one from config converges.
+//   - match_values are normalized on write (tool_behavior values trimmed and
+//     lowercased). State keeps the configured spelling in match_values and the
+//     server's in stored_match_values; see reconcileMatchValues.
 type EndpointMCPRuleResource struct {
 	sdk      *adminapi.SDKClient
 	tenantID string
@@ -87,9 +87,6 @@ type EndpointMCPRuleResourceModel struct {
 	MatchKind         types.String `tfsdk:"match_kind"`
 	MatchValues       types.List   `tfsdk:"match_values"`
 	StoredMatchValues types.List   `tfsdk:"stored_match_values"`
-
-	Action     types.String `tfsdk:"action"`
-	SteerToURL types.String `tfsdk:"steer_to_url"`
 
 	AppBundleIDs       types.List            `tfsdk:"app_bundle_ids"`
 	DeviceGroupIDs     types.List            `tfsdk:"device_group_ids"`
@@ -142,17 +139,19 @@ func (r *EndpointMCPRuleResource) Configure(_ context.Context, req resource.Conf
 
 func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Endpoint MCP rule — allow / block / steer for MCP servers and tool calls on " +
-			"managed devices. Rules are evaluated on-device, **first match wins** by ascending `priority`.\n\n" +
+		MarkdownDescription: "Endpoint MCP rule: blocks a tool call on managed devices. Rules are " +
+			"evaluated on-device, **first match wins** by ascending `priority`.\n\n" +
 			"What a rule matches depends on `match_kind`:\n\n" +
-			"* **remote MCP servers** — `host`, `url_prefix`\n" +
-			"* **local (stdio) MCP servers** — `package`, `argv_contains`\n" +
-			"* **tool calls**, decided at call time — `tool_name`, `command_binary`\n" +
-			"* **tool behaviours** — `tool_behavior` (`shell`, `file_read`, `file_write`), expanded into " +
-			"call-time rules for every AI tool that can express them\n\n" +
-			"Call-time and behaviour rules support `block` only. Whether a call-time `block` denies the " +
-			"call or only counts it is set per scope by `hook_rule_enforcement` on " +
-			"`ferentin_endpoint_policy_settings`.\n\n" +
+			"* `tool_name`: an MCP tool by name\n" +
+			"* `command_binary`: the binary a shell tool call runs\n" +
+			"* `tool_behavior`: `shell`, `file_read` or `file_write`, expanded into a rule for every AI " +
+			"tool's built-in tools that can express it\n\n" +
+			"Whether a rule denies the call or only counts it is set per scope by `hook_rule_enforcement` " +
+			"on `ferentin_endpoint_policy_settings`.\n\n" +
+			"~> **MCP server rules moved to `ferentin_mcp_policy`.** Allowing or blocking an MCP server " +
+			"(`host`, `url_prefix`, `package`, `argv_contains`) is an MCP policy with `targets`, and steering " +
+			"one is a `ferentin_mcp_route`. This resource no longer authors them; see the upgrade notes in " +
+			"the changelog.\n\n" +
 			"## Import\n\n" +
 			"```\n" +
 			"terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>\n" +
@@ -206,21 +205,17 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 			},
 
 			"match_kind": schema.StringAttribute{
-				MarkdownDescription: "What `match_values` name: `host`, `url_prefix` (remote MCP servers), " +
-					"`package`, `argv_contains` (local MCP servers), `tool_name`, `command_binary` (tool " +
-					"calls), or `tool_behavior`.",
+				MarkdownDescription: "What `match_values` name: `tool_name`, `command_binary` or " +
+					"`tool_behavior`.",
 				Required:   true,
-				Validators: []validator.String{stringvalidator.OneOf(mcpRuleAllKinds...)},
+				Validators: []validator.String{stringvalidator.OneOf(mcpRuleKinds...)},
 			},
 			"match_values": schema.ListAttribute{
-				MarkdownDescription: "Values to match, interpreted per `match_kind`. 1-64 entries.\n\n" +
-					"* `host` — bare hostnames (no scheme, port or path)\n" +
-					"* `package` — one registry-qualified id per entry\n" +
-					"* `tool_behavior` — `shell`, `file_read` or `file_write`\n\n" +
-					"The platform normalizes some values: `host` is lowercased on every rule, " +
-					"`tool_behavior` trimmed and lowercased, `url_prefix` canonicalized where possible, and " +
-					"`allow` / `steer` values fully canonicalized. Terraform keeps your spelling here and " +
-					"the platform's in `stored_match_values`, so normalization does not show as drift.",
+				MarkdownDescription: "Values to match, interpreted per `match_kind`. 1-64 entries. A " +
+					"`tool_behavior` rule takes `shell`, `file_read` or `file_write`.\n\n" +
+					"The platform normalizes some values (`tool_behavior` is trimmed and lowercased). " +
+					"Terraform keeps your spelling here and the platform's in `stored_match_values`, so " +
+					"normalization does not show as drift.",
 				Required:    true,
 				ElementType: types.StringType,
 				Validators: []validator.List{
@@ -236,25 +231,6 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 				ElementType: types.StringType,
 			},
 
-			"action": schema.StringAttribute{
-				MarkdownDescription: "`allow`, `block` or `steer`. Call-time kinds (`tool_name`, " +
-					"`command_binary`) and `tool_behavior` support `block` only.",
-				Required:   true,
-				Validators: []validator.String{stringvalidator.OneOf("allow", "block", "steer")},
-			},
-			"steer_to_url": schema.StringAttribute{
-				MarkdownDescription: "Gateway route a remote `steer` rule sends the server to: this tenant's " +
-					"MCP gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`, " +
-					"ending in the route of an enabled MCP server. **Required on a `steer` " +
-					"rule with `match_kind` `host` or `url_prefix`; refused on any other rule.** Must be " +
-					"`https://`. A local steer wraps the entry in `ferentin-mcp` and has no target.",
-				Optional: true,
-				Validators: []validator.String{
-					stringvalidator.RegexMatches(httpsOnlyURL,
-						"must be an https:// URL — http:// would downgrade steered MCP sessions to cleartext"),
-				},
-			},
-
 			"app_bundle_ids": schema.ListAttribute{
 				MarkdownDescription: "Which MCP **client** the rule governs (Claude Desktop, Cursor, …) by " +
 					"macOS bundle identifier, e.g. `com.anthropic.claudefordesktop`. Never which server. " +
@@ -265,11 +241,7 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 			"device_group_ids": schema.ListAttribute{
 				MarkdownDescription: "Device groups this rule applies to — reference " +
 					"`ferentin_device_group.<name>.group_id`. Empty or unset = **every device in the " +
-					"tenant**.\n\n" +
-					"~> Refused on a local `allow` rule (`package` / `argv_contains`): devices do not yet " +
-					"carry an authenticated identity when a local server is admitted, so the narrowing " +
-					"would be ignored and the allow would apply tenant-wide. Narrowing a `block` fails " +
-					"safe and is accepted.",
+					"tenant**.",
 				Optional: true, ElementType: types.StringType,
 			},
 			"criteria_combinator": schema.StringAttribute{
@@ -285,8 +257,7 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 					"Groups combine via `criteria_combinator`; no criteria means the rule applies to " +
 					"every user it otherwise targets.\n\n" +
 					"~> **Removing criteria widens the rule**, and the provider warns at plan when an " +
-					"apply would. Criteria are refused on a local `allow` rule, for the same reason as " +
-					"`device_group_ids`.",
+					"apply would.",
 				TypeDescription: "Criteria type. `claims` (the default) matches the signed-in user's " +
 					"identity claims. Stored opaquely by the platform, so nothing is defaulted " +
 					"server-side.",
@@ -347,106 +318,38 @@ func (r *EndpointMCPRuleResource) Schema(_ context.Context, _ resource.SchemaReq
 	}
 }
 
-// ValidateConfig moves the platform's cross-field rules to plan time, kept in
+// ValidateConfig moves the platform's value rules to plan time, kept in
 // lockstep with EndpointMcpRuleAdminService's validation: if the server relaxes
 // a rule, relax it here. Unknown values are skipped.
 //
 // Attributes are read individually, not through the model, because criteria is
 // a Go slice there and cannot hold an unknown (see the destination-rule note).
 func (r *EndpointMCPRuleResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
-	var matchKind, action, steerToURL types.String
-	var matchValues, deviceGroupIDs, criteria types.List
+	var matchKind types.String
+	var matchValues types.List
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("match_kind"), &matchKind)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("action"), &action)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("steer_to_url"), &steerToURL)...)
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("match_values"), &matchValues)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("device_group_ids"), &deviceGroupIDs)...)
-	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("criteria"), &criteria)...)
 	if resp.Diagnostics.HasError() || matchKind.IsUnknown() || matchKind.IsNull() {
 		return
 	}
-	kind := matchKind.ValueString()
-	act := action.ValueString()
-	actionKnown := !action.IsUnknown() && !action.IsNull()
-
-	if actionKnown && act != "block" && (slices.Contains(mcpRuleCallTimeKinds, kind) || slices.Contains(mcpRuleBehaviorKinds, kind)) {
-		resp.Diagnostics.AddAttributeError(path.Root("action"),
-			fmt.Sprintf("A %q rule supports action \"block\" only", kind),
-			"Only `block` is supported for call-time (`tool_name`, `command_binary`) and "+
-				"`tool_behavior` rules.")
+	if matchKind.ValueString() != "tool_behavior" || matchValues.IsUnknown() || matchValues.IsNull() {
+		return
 	}
-
-	if kind == "tool_behavior" && !matchValues.IsUnknown() && !matchValues.IsNull() {
-		for _, v := range matchValues.Elements() {
-			s, ok := v.(types.String)
-			if !ok || s.IsUnknown() || s.IsNull() {
-				continue
-			}
-			// The platform trims and lowercases before checking
-			// (EndpointToolBehavior.canonicalize), so "Shell" is accepted there and
-			// must be here; reconcileMatchValues keeps the configured spelling.
-			if !slices.Contains(mcpRuleToolBehaviors, strings.ToLower(strings.TrimSpace(s.ValueString()))) {
-				resp.Diagnostics.AddAttributeError(path.Root("match_values"),
-					fmt.Sprintf("%q is not a known tool behaviour", s.ValueString()),
-					"A tool_behavior rule matches one of: "+strings.Join(mcpRuleToolBehaviors, ", ")+".")
-			}
+	for _, v := range matchValues.Elements() {
+		s, ok := v.(types.String)
+		if !ok || s.IsUnknown() || s.IsNull() {
+			continue
 		}
-	}
-
-	// A host value is a bare hostname. The platform refuses a scheme, port, path,
-	// query or userinfo with 400 (EndpointMcpRuleAdminService.canonicalizeValue);
-	// by apply time other resources in the run may already exist.
-	if kind == "host" && !matchValues.IsUnknown() && !matchValues.IsNull() {
-		for _, v := range matchValues.Elements() {
-			s, ok := v.(types.String)
-			if !ok || s.IsUnknown() || s.IsNull() {
-				continue
-			}
-			if strings.ContainsAny(s.ValueString(), "/?#@:") {
-				resp.Diagnostics.AddAttributeError(path.Root("match_values"),
-					fmt.Sprintf("%q is not a bare hostname", s.ValueString()),
-					"A host value has no scheme, port, path, query or userinfo. Use match_kind "+
-						"\"url_prefix\" to match a URL.")
-			}
-		}
-	}
-
-	hasSteerTarget := !steerToURL.IsUnknown() && !isUnsetString(steerToURL)
-	remote := slices.Contains(mcpRuleRemoteKinds, kind)
-	if hasSteerTarget && !remote {
-		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
-			fmt.Sprintf("steer_to_url is remote-only; omit it on a %q rule", kind),
-			"Only host and url_prefix rules steer to a gateway route. A local steer wraps the entry "+
-				"in ferentin-mcp and has no target to name.")
-	}
-	if actionKnown && hasSteerTarget && act != "steer" {
-		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
-			fmt.Sprintf("steer_to_url is only meaningful on a \"steer\" rule; omit it on an %q rule", act),
-			"A steer target on an allow or block rule contradicts the rule's own action.")
-	}
-	if actionKnown && act == "steer" && remote && !steerToURL.IsUnknown() && isUnsetString(steerToURL) {
-		resp.Diagnostics.AddAttributeError(path.Root("steer_to_url"),
-			"steer_to_url is required on a remote \"steer\" rule",
-			"Point it at this tenant's MCP gateway URL ending in the route of an enabled MCP server.")
-	}
-
-	if actionKnown && act == "allow" && slices.Contains(mcpRuleLocalKinds, kind) {
-		if !deviceGroupIDs.IsUnknown() && len(deviceGroupIDs.Elements()) > 0 {
-			resp.Diagnostics.AddAttributeError(path.Root("device_group_ids"),
-				"A local \"allow\" rule cannot be narrowed by device_group_ids yet",
-				localAllowNarrowingDetail)
-		}
-		if !criteria.IsUnknown() && len(criteria.Elements()) > 0 {
-			resp.Diagnostics.AddAttributeError(path.Root("criteria"),
-				"A local \"allow\" rule cannot be narrowed by criteria yet",
-				localAllowNarrowingDetail)
+		// The platform trims and lowercases before checking
+		// (EndpointToolBehavior.canonicalize), so "Shell" is accepted there and
+		// must be here; reconcileMatchValues keeps the configured spelling.
+		if !slices.Contains(mcpRuleToolBehaviors, strings.ToLower(strings.TrimSpace(s.ValueString()))) {
+			resp.Diagnostics.AddAttributeError(path.Root("match_values"),
+				fmt.Sprintf("%q is not a known tool behaviour", s.ValueString()),
+				"A tool_behavior rule matches one of: "+strings.Join(mcpRuleToolBehaviors, ", ")+".")
 		}
 	}
 }
-
-const localAllowNarrowingDetail = "Devices do not carry an authenticated identity when a local MCP " +
-	"server is admitted, so the narrowing would be ignored and the allow would apply to every device " +
-	"in the tenant. Author the allow tenant-wide, or use \"block\": narrowing a deny fails safe."
 
 func (r *EndpointMCPRuleResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan EndpointMCPRuleResourceModel
@@ -494,6 +397,7 @@ func (r *EndpointMCPRuleResource) Read(ctx context.Context, req resource.ReadReq
 		return
 	}
 	refreshed := endpointMCPRuleToModel(tenantID, rule, &resp.Diagnostics)
+	warnOnMovedRule(&resp.Diagnostics, rule)
 	refreshed.MatchValues = reconcileMatchValues(state, refreshed)
 	refreshed.keepEmptyForms(state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
@@ -560,7 +464,8 @@ func (r *EndpointMCPRuleResource) resolveTenant(perResource types.String) string
 	return r.tenantID
 }
 
-// toWrite builds the request. The PUT replaces every field except priority,
+// toWrite builds the request. Every rule this resource authors is a block. The
+// PUT replaces every field except priority,
 // enabled and criteria_combinator, which carry schema Defaults and are therefore
 // always known, so the whole rule is restated on every write. The second return
 // value carries device_group_ids entries that are not UUIDs; callers must fail
@@ -569,7 +474,7 @@ func (m *EndpointMCPRuleResourceModel) toWrite(ctx context.Context) (adminapi.En
 	var diags diag.Diagnostics
 	body := adminapi.EndpointMCPRuleWrite{
 		Name:      m.Name.ValueString(),
-		Action:    m.Action.ValueString(),
+		Action:    "block",
 		MatchKind: gen.EndpointMcpRuleRequestMatchKind(m.MatchKind.ValueString()),
 	}
 	var values *[]string
@@ -580,7 +485,6 @@ func (m *EndpointMCPRuleResourceModel) toWrite(ctx context.Context) (adminapi.En
 	setStringPtr(m.Description, &body.Description)
 	setInt32Ptr(m.Priority, &body.Priority)
 	setBoolPtr(m.Enabled, &body.Enabled)
-	setStringPtr(m.SteerToURL, &body.SteerToUrl)
 	setStringPtr(m.CriteriaCombinator, &body.CriteriaCombinator)
 	setStringListPtr(ctx, m.AppBundleIDs, &body.AppBundleIds)
 	invalidGroups := setUUIDListPtr(ctx, m.DeviceGroupIDs, &body.DeviceGroupIds)
@@ -630,8 +534,6 @@ func endpointMCPRuleToModel(tenantID string, rule *adminapi.EndpointMCPRule, dia
 	m.MatchKind = strPtrToTF(rule.MatchKind)
 	m.StoredMatchValues = stringSliceToList(rule.MatchValues)
 	m.MatchValues = m.StoredMatchValues
-	m.Action = strPtrToTF(rule.Action)
-	m.SteerToURL = strPtrToTF(rule.SteerToUrl)
 	m.AppBundleIDs = emptyListAsNull(stringSliceToList(rule.AppBundleIds))
 	m.DeviceGroupIDs = emptyListAsNull(uuidSliceToList(rule.DeviceGroupIds))
 	m.CriteriaCombinator = strPtrToTF(rule.CriteriaCombinator)
@@ -664,4 +566,20 @@ func (m *EndpointMCPRuleResourceModel) keepEmptyForms(prior EndpointMCPRuleResou
 	m.Description = keepEmptyString(prior.Description, m.Description)
 	m.AppBundleIDs = keepEmptyList(prior.AppBundleIDs, m.AppBundleIDs)
 	m.DeviceGroupIDs = keepEmptyList(prior.DeviceGroupIDs, m.DeviceGroupIDs)
+}
+
+// warnOnMovedRule warns when the rule in state is one this resource no longer
+// authors: an MCP server rule, or a call-time rule whose action is not block
+// (written before this resource narrowed, or imported). A warning, not an
+// error, so a config that drops the resource can still destroy it.
+func warnOnMovedRule(diags *diag.Diagnostics, rule *adminapi.EndpointMCPRule) {
+	kind, action := derefStr(rule.MatchKind), derefStr(rule.Action)
+	if !slices.Contains(mcpRuleServerKinds, kind) && (action == "" || action == "block") {
+		return
+	}
+	diags.AddWarning("This endpoint MCP rule is managed elsewhere now",
+		fmt.Sprintf("Rule %q is a %q rule with action %q. ferentin_endpoint_mcp_rule authors call-time "+
+			"block rules only: an MCP server allow or block is a ferentin_mcp_policy with targets, and a "+
+			"steer is a ferentin_mcp_route. Write the replacement, then remove this resource from the "+
+			"config so the next apply deletes the rule.", derefStr(rule.Name), kind, action))
 }
