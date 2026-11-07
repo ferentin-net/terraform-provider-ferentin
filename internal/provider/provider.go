@@ -558,6 +558,7 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewEndpointAgentApprovalResource,
 		NewMCPLocalServerResource,
 		NewEndpointPolicySettingsResource,
+		NewEndpointSandboxResource,
 	}
 }
 

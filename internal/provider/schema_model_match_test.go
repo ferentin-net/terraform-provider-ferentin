@@ -23,6 +23,7 @@ func TestSchemaMatchesModel(t *testing.T) {
 		"endpoint_destination_rule": {NewEndpointDestinationRuleResource(), &EndpointDestinationRuleResourceModel{}},
 		"endpoint_mcp_rule":         {NewEndpointMCPRuleResource(), &EndpointMCPRuleResourceModel{}},
 		"data_protection_policy":    {NewDataProtectionPolicyResource(), &DataProtectionPolicyResourceModel{}},
+		"endpoint_sandbox":          {NewEndpointSandboxResource(), &EndpointSandboxResourceModel{}},
 		"device_group":              {NewDeviceGroupResource(), &DeviceGroupResourceModel{}},
 		"mcp_route":                 {NewMCPRouteResource(), &MCPRouteResourceModel{}},
 	} {
