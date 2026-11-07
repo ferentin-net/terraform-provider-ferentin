@@ -122,7 +122,8 @@ func TestEndpointSandboxCreate_RefusesExistingPolicy(t *testing.T) {
 			puts++
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"configured":true,"version":3,"lastModifiedBy":"console"}`))
+		_, _ = w.Write([]byte(`{"configured":true,"version":3,"lastModifiedBy":"console",
+			"tools":{"codex":{"enabled":true,"reach":"enforced"}}}`))
 	})
 	s := sandboxSchema(t)
 	plan := tfsdk.Plan{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
@@ -138,6 +139,37 @@ func TestEndpointSandboxCreate_RefusesExistingPolicy(t *testing.T) {
 	}
 	if puts != 0 {
 		t.Errorf("sent %d PUTs; the saved policy must be left alone", puts)
+	}
+}
+
+// A destroy leaves a saved policy that enables nothing. Create must adopt that
+// shape under its version, or the resource could never be created again (a
+// replace, a tenant_id change, or destroy then apply).
+func TestEndpointSandboxCreate_AdoptsInertPolicy(t *testing.T) {
+	var putIfMatch string
+	sdk := sandboxSDK(t, func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodPut {
+			putIfMatch = r.Header.Get("If-Match")
+			_, _ = w.Write([]byte(`{"configured":true,"version":8,"includeDerivedDomains":true,
+				"tools":{"codex":{"enabled":true,"reach":"enforced"}}}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"configured":true,"version":7,"includeDerivedDomains":true,
+			"tools":{"codex":{"enabled":false,"reach":"enforced"},"cursor":{"enabled":false,"reach":"default_only"}}}`))
+	})
+	s := sandboxSchema(t)
+	plan := tfsdk.Plan{Schema: s, Raw: endpointRuleValue(t, s, map[string]tftypes.Value{
+		"tools": sbTools(t, s, map[string][2]bool{"codex": {true, false}}, true),
+	})}
+	resp := &resource.CreateResponse{State: tfsdk.State{Schema: s, Raw: plan.Raw}}
+	(&EndpointSandboxResource{sdk: sdk, tenantID: fixtureTenantID}).Create(context.Background(),
+		resource.CreateRequest{Plan: plan}, resp)
+	if resp.Diagnostics.HasError() {
+		t.Fatalf("Create: %v", resp.Diagnostics)
+	}
+	if putIfMatch != `W/"7"` {
+		t.Errorf("If-Match = %q, want the inert policy's version", putIfMatch)
 	}
 }
 

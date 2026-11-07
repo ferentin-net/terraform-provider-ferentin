@@ -358,7 +358,8 @@ func (r *EndpointSandboxResource) Create(ctx context.Context, req resource.Creat
 		addSDKError(&resp.Diagnostics, "Failed to read the endpoint sandbox policy", err)
 		return
 	}
-	if existing.Configured != nil && *existing.Configured {
+	adopt := existing.Configured != nil && *existing.Configured && sandboxIsInert(existing)
+	if existing.Configured != nil && *existing.Configured && !adopt {
 		by := "unknown"
 		if existing.LastModifiedBy != nil {
 			by = string(*existing.LastModifiedBy)
@@ -376,8 +377,13 @@ func (r *EndpointSandboxResource) Create(ctx context.Context, req resource.Creat
 		return
 	}
 	// No If-Match on the first write: the platform answers an If-Match against a
-	// tenant that never saved a policy with 412.
-	got, err := r.sdk.EndpointSandbox().Put(ctx, tenantID, "", body)
+	// tenant that never saved a policy with 412. Adopting the inert policy a
+	// destroy left behind is guarded by its version instead.
+	version := ""
+	if adopt {
+		version = int64PtrString(existing.Version)
+	}
+	got, err := r.sdk.EndpointSandbox().Put(ctx, tenantID, version, body)
 	if err != nil {
 		addSDKError(&resp.Diagnostics, "Failed to save the endpoint sandbox policy", err)
 		return
@@ -428,6 +434,36 @@ func (r *EndpointSandboxResource) Update(ctx context.Context, req resource.Updat
 	}
 	refreshed := sandboxToModel(tenantID, got, plan, &resp.Diagnostics)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &refreshed)...)
+}
+
+// sandboxIsInert reports whether a saved policy is the shape Delete writes: no
+// tool enabled, no domains, no folders, no description. Create adopts it rather
+// than refusing, or a destroy (and every replacement, including a tenant_id
+// change) would leave a policy only an import could take back. Anything else
+// was authored, and Create still refuses to overwrite it.
+func sandboxIsInert(p *adminapi.EndpointSandboxPolicy) bool {
+	if p.Tools != nil {
+		for _, t := range *p.Tools {
+			if (t.Enabled != nil && *t.Enabled) || (t.AllowUnsandboxed != nil && *t.AllowUnsandboxed) {
+				return false
+			}
+		}
+	}
+	if p.AllowedDomains != nil && len(*p.AllowedDomains) > 0 {
+		return false
+	}
+	if p.Description != nil && *p.Description != "" {
+		return false
+	}
+	if p.IncludeDerivedDomains != nil && !*p.IncludeDerivedDomains {
+		return false
+	}
+	if f := p.Filesystem; f != nil {
+		if (f.Writable != nil && len(*f.Writable) > 0) || (f.Denied != nil && len(*f.Denied) > 0) {
+			return false
+		}
+	}
+	return true
 }
 
 // Delete saves a policy that enables no tool. There is no DELETE endpoint, and
