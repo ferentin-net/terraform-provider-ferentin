@@ -623,12 +623,17 @@ func (r *MCPPolicyResource) Create(ctx context.Context, req resource.CreateReque
 		ValidateArguments:  w.validateArguments,
 		Effect:             w.effect,
 		ProviderInstances:  w.instances,
-		Targets:            w.targets,
 		Mode:               (*gen.McpPolicyCreateRequestMode)(w.mode),
 		AppliesAt:          (*gen.McpPolicyCreateRequestAppliesAt)(w.appliesAt),
 		CriteriaCombinator: (*gen.McpPolicyCreateRequestCriteriaCombinator)(w.criteriaCombinator),
 	}
-	// Nothing to clear on a create: leave the empty forms off the body.
+	// Nothing to clear on a create: leave the empty forms off the body. targets
+	// above all: the platform refuses ANY targets field, [] included, without
+	// policy:rw (McpPolicyController.targetsAuthority), so sending [] would lock
+	// an mcp:policies:rw principal out of gateway-only policies.
+	if len(*w.targets) > 0 {
+		body.Targets = w.targets
+	}
 	if *w.description != "" {
 		body.Description = w.description
 	}
@@ -697,7 +702,7 @@ func (r *MCPPolicyResource) Update(ctx context.Context, req resource.UpdateReque
 		ValidateArguments:  w.validateArguments,
 		Effect:             &w.effect,
 		ProviderInstances:  w.instances,
-		Targets:            w.targets,
+		Targets:            updateTargets(w.targets, state),
 		Criteria:           w.criteria,
 		Unless:             w.unless,
 		Mode:               (*gen.McpPolicyUpdateRequestMode)(w.mode),
@@ -746,6 +751,22 @@ func (r *MCPPolicyResource) resolveTenant(perResource types.String) string {
 		return perResource.ValueString()
 	}
 	return r.tenantID
+}
+
+// updateTargets is the targets field of an update: the planned targets when
+// there are any, [] to clear the stored ones, and nil (keep, which is none)
+// when the policy names none either way. The platform refuses a targets field,
+// [] included, without policy:rw (McpPolicyController.storedTargetsAuthority),
+// so a gateway-only policy must not carry one.
+func updateTargets(planned *[]gen.McpPolicyTarget, state MCPPolicyResourceModel) *[]gen.McpPolicyTarget {
+	if len(*planned) > 0 {
+		return planned
+	}
+	if len(state.Targets) > 0 || (!state.StoredTargets.IsNull() && !state.StoredTargets.IsUnknown() &&
+		len(state.StoredTargets.Elements()) > 0) {
+		return planned
+	}
+	return nil
 }
 
 // mcpPolicyWrite holds the request fields Create and Update share, each in the

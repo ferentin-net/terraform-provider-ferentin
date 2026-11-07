@@ -304,3 +304,25 @@ func TestMCPPolicyValidateConfig(t *testing.T) {
 		})
 	}
 }
+
+// The platform refuses any targets field, [] included, without policy:rw. An
+// update of a policy that names no targets, before or after, must leave the
+// field off; one that clears stored targets must send [].
+func TestMCPPolicyUpdateTargets(t *testing.T) {
+	kind := gen.McpPolicyTargetKind("host")
+	empty := []gen.McpPolicyTarget{}
+	some := []gen.McpPolicyTarget{{Kind: &kind, Values: &[]string{"mcp.example.com"}}}
+	none := MCPPolicyResourceModel{StoredTargets: types.ListValueMust(mcpPolicyTargetObjectType, nil)}
+	stored := MCPPolicyResourceModel{}
+	stored.Targets, stored.StoredTargets = mcpPolicyTargetsFromSDK(&some)
+
+	if got := updateTargets(&empty, none); got != nil {
+		t.Errorf("gateway-only policy: targets = %v, want the field omitted", *got)
+	}
+	if got := updateTargets(&empty, stored); got == nil || len(*got) != 0 {
+		t.Errorf("clearing stored targets: got %v, want []", got)
+	}
+	if got := updateTargets(&some, none); got == nil || len(*got) != 1 {
+		t.Errorf("adding targets: got %v", got)
+	}
+}
