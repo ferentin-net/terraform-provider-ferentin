@@ -7,7 +7,7 @@ description: |-
 
 # Block risky tool calls from coding agents
 
-Block the tool calls a coding agent should never make on a managed device, such as running `curl` or `wget`, or using its shell tool at all. Count the matches first, then deny them, one device group at a time. The policy is call-time [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md) rules, plus a [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row for the tenant and one for a pilot [`ferentin_device_group`](../resources/device_group.md).
+Block the tool calls a coding agent should never make on a managed device, such as running `curl` or `wget`, or using its shell tool at all. Count the matches first, then deny them, one device group at a time. The policy is call-time [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md) rules, plus a [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row for the tenant and one for a pilot [`ferentin_device_group`](../resources/device_group.md). Optionally, the agent sandbox ([`ferentin_endpoint_sandbox`](../resources/endpoint_sandbox.md)) bounds what any shell command an agent runs may write and reach.
 
 The configuration is the [`endpoint-tool-call-guardrails`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-tool-call-guardrails) example. [Govern MCP servers on managed endpoints](../guides/endpoint-mcp-servers.md) covers which MCP servers may run at all; this guide covers what agents do once they run.
 
@@ -35,6 +35,8 @@ Today `enforce` denies on **Claude Code** and **Cursor**. On Cursor only shell c
 | --- | --- |
 | Tenant default | `shadow` |
 | Pilot group override | `shadow`, then `enforce` |
+
+With `manage_sandbox = true`, also the tenant's agent sandbox: Claude Code, Codex and Copilot run shell commands that reach only `sandbox_allowed_domains`, with the devices' credential folders out of reach.
 
 ## Before you start
 
@@ -126,11 +128,35 @@ terraform apply -var pilot_hook_rule_enforcement=enforce -var tenant_hook_rule_e
 
 The same readiness check applies to the whole tenant. Every apply writes every variable, so keep passing the pilot's value too, or set both in a `.tfvars` file.
 
+## 6. Sandbox what commands can reach (optional)
+
+Tool call rules decide each call by what it names. The agent sandbox bounds what any command can do once it runs: Ferentin writes it into each tool's own sandbox settings, so it holds where the hook only counts, and on calls no rule matches.
+
+```terraform
+resource "ferentin_endpoint_sandbox" "agents" {
+  count = var.manage_sandbox ? 1 : 0
+
+  tools = {
+    "claude-code" = { enabled = true }
+    "codex"       = { enabled = true }
+    "copilot"     = { enabled = true }
+  }
+
+  allowed_domains         = var.sandbox_allowed_domains
+  include_derived_domains = true
+}
+```
+
+- **Where it holds.** Claude Code, Codex and Copilot enforce it, and the developer cannot switch it off. On Cursor and Antigravity it is a default the developer can undo. `allow_unsandboxed = true` on a tool lets it retry a command outside the sandbox through the tool's own approval prompt, for Docker and the like.
+- **Network.** Commands reach only `allowed_domains` and, with `include_derived_domains`, what the tenant already allows elsewhere (unconditioned allow destination rules, approved MCP servers and the Ferentin gateway). So `curl` to an unlisted host fails inside the sandbox even while rule 10 only counts.
+- **Files.** With no `filesystem` block, devices keep their credential template, which denies `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh` and `~/Library/Keychains`. A `filesystem` block replaces it, so restate the template if you still want it.
+- **One per tenant.** Creating it replaces the tenant's whole sandbox policy, so the example leaves it off unless you set `manage_sandbox = true`, and the provider refuses to create one over a policy someone already saved: import it with `terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>`. Destroying it stops Ferentin writing the sandbox into any tool.
+
 ## What `enforce` does not cover
 
 - **Claude Code**: a managed settings source above the file tier, such as an MDM profile or server-managed settings, outranks the hook unless it is set to merge. If the hook fails or times out, Claude Code runs the tool.
 - **Cursor**: only shell commands and MCP tool calls are checked before they run.
-- **Codex, Copilot and Antigravity** are not enforced yet. Their calls are counted.
+- **Codex, Copilot and Antigravity** are not enforced yet. Their calls are counted. On Codex and Copilot the [agent sandbox](#6-sandbox-what-commands-can-reach-optional) still bounds what their commands reach.
 - A device whose breaker opens drops to report-only, and its rules stop denying until the breaker closes.
 - `hook_rule_enforcement` governs tool call rules only. MCP policies and routes behave the same in both modes.
 
@@ -167,6 +193,10 @@ The same readiness check applies to the whole tenant. Every apply writes every v
 #
 # The pilot group gets its own posture row, so it can move to `enforce` while
 # the rest of the tenant keeps counting.
+#
+# Optionally (manage_sandbox = true), the agent sandbox bounds what any shell
+# command an agent runs may write and reach, including on agents whose tool
+# calls the hook only counts.
 #
 # `terraform apply` STAGES the change. Devices pick it up only after someone
 # activates the pending changes in the admin console.
@@ -247,6 +277,38 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
   mcp_gateway_url            = local.shared_posture.mcp_gateway_url
 
   hook_rule_enforcement = var.pilot_hook_rule_enforcement
+}
+
+# The agent sandbox: Ferentin writes it into each tool's own sandbox settings,
+# so it holds even where tool call rules only count. Enforced on Claude Code,
+# Codex and Copilot (the developer cannot switch it off); a default the
+# developer can undo on Cursor and Antigravity.
+#
+# One per tenant, and it replaces the tenant's whole sandbox policy, so it is
+# opt-in. If the tenant already has one, import it instead of creating it:
+#   terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>
+resource "ferentin_endpoint_sandbox" "agents" {
+  count = var.manage_sandbox ? 1 : 0
+
+  tools = {
+    "claude-code" = { enabled = true }
+    "codex"       = { enabled = true }
+    "copilot"     = { enabled = true }
+  }
+
+  # The only domains sandboxed commands may reach, plus (with
+  # include_derived_domains) what the tenant already allows elsewhere:
+  # unconditioned allow destination rules, approved MCP servers and the
+  # Ferentin gateway. So `curl` to anywhere else fails even where rule 10 only
+  # counts.
+  allowed_domains         = var.sandbox_allowed_domains
+  include_derived_domains = true
+
+  # No filesystem block: devices keep their credential template, which denies
+  # ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh and ~/Library/Keychains. Set one to
+  # replace it, and restate the template if you still want it.
+
+  description = "Coding agents: package registries only"
 }
 
 output "enforcement" {

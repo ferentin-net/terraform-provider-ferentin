@@ -65,3 +65,15 @@ variable "mcp_gateway_url" {
     error_message = "mcp_gateway_url must be https:// — http:// downgrades every governed MCP session to cleartext."
   }
 }
+
+variable "manage_sandbox" {
+  type        = bool
+  description = "Manage the tenant's agent sandbox policy here. It is one per tenant and this replaces it whole, so it is off by default; import an existing one rather than creating it."
+  default     = false
+}
+
+variable "sandbox_allowed_domains" {
+  type        = list(string)
+  description = "Domains sandboxed agent commands may reach: a DNS name of two or more labels, optionally *.-prefixed for its subdomains."
+  default     = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "*.githubusercontent.com"]
+}
