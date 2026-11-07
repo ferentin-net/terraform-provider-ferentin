@@ -225,7 +225,7 @@ Evaluated on the device. A device whose posture is unknown counts as not complia
 ~> **Ownership warning.** Because ordering *is* the policy semantics here, do not split ownership of `priority` between Terraform and the console. The console's reorder arrows swap two rows' priorities directly; if Terraform also declares `priority`, the next `plan` shows drift and the two fight over evaluation order.
 - `steer_to_url` (String) Base URL the agent would rewrite the destination to, for destination steering, which is not available yet. **Required when `action = "steer"`, and must be `https://`** — the platform rejects `http://` because it would silently downgrade every steered flow on the fleet to cleartext.
 - `tenant_id` (String)
-- `test_rule` (Boolean) Marks the rule as a test. It is enforced like any other rule; the Agent Execution Monitor counts its decisions apart from policy. Never sent to devices. Default `false`.
+- `test_rule` (Boolean) Marks the rule as a test. It is enforced like any other rule; Endpoint analytics counts its decisions apart from policy. Never sent to devices. Default `false`.
 
 ### Read-Only
 

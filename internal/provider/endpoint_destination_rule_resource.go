@@ -312,8 +312,8 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 			},
 
 			"test_rule": schema.BoolAttribute{
-				MarkdownDescription: "Marks the rule as a test. It is enforced like any other rule; the Agent " +
-					"Execution Monitor counts its decisions apart from policy. Never sent to devices. Default " +
+				MarkdownDescription: "Marks the rule as a test. It is enforced like any other rule; Endpoint " +
+					"analytics counts its decisions apart from policy. Never sent to devices. Default " +
 					"`false`.",
 				// A Default, not Computed-only: the platform keeps the stored mark when a
 				// PUT omits it, so sending it every time is what makes removing it from

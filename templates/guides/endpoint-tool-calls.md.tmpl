@@ -83,7 +83,7 @@ resource "ferentin_endpoint_policy_settings" "default" {
 }
 ```
 
-Apply, activate, and let the rules count. Each rule's drawer on the console's endpoint policy page shows **Would block**, and the Agent Execution Monitor ranks the commands. Change a rule until what it would block is what you meant to block.
+Apply, activate, and let the rules count. Each rule's drawer on the console's endpoint policy page shows **Would block**, and the **Commands** tab of **Analytics → Endpoint** ranks the commands. Change a rule until what it would block is what you meant to block.
 
 ## 4. Deny on the pilot group
 
