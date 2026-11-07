@@ -983,13 +983,6 @@ const notStoredRecovery = "The rest of the row was written. Before re-applying, 
 	"resource tainted, and replacing it deletes the override, so the group briefly falls back to " +
 	"the tenant default."
 
-func equalStringPtr(a, b *string) bool {
-	if a == nil || b == nil {
-		return a == nil && b == nil
-	}
-	return *a == *b
-}
-
 // distinct returns vals de-duplicated, order kept.
 func distinct(vals []string) []string {
 	seen := map[string]bool{}

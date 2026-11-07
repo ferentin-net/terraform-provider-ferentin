@@ -9,24 +9,12 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
-	"github.com/hashicorp/terraform-plugin-framework/resource"
-	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi/gen"
 )
-
-func endpointSettingsSchema(t *testing.T) rschema.Schema {
-	t.Helper()
-	resp := &resource.SchemaResponse{}
-	(&EndpointPolicySettingsResource{}).Schema(context.Background(), resource.SchemaRequest{}, resp)
-	if resp.Diagnostics.HasError() {
-		t.Fatalf("schema: %v", resp.Diagnostics)
-	}
-	return resp.Schema
-}
 
 // The 409 a MOVE to `enforce` gets is about fleet readiness, not a name clash,
 // so it must not be reported with addSDKError's "already in use" text. A row
