@@ -8,6 +8,44 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### BREAKING CHANGES
+- **One MCP policy for remote and local MCP servers.** The platform's MCP
+  policy now governs local servers started on managed devices as well as
+  remote ones reached through the gateway (ferentin-net/ferentin-platform#3256,
+  ADR 0029), and the provider follows it. No compatibility shims: configs
+  that used the old shapes fail at plan and need the edits below.
+  - **`ferentin_endpoint_mcp_rule` authors call-time tool rules only.**
+    `match_kind` takes `tool_name`, `command_binary` or `tool_behavior`, and
+    `action` and `steer_to_url` are gone (every rule is a block). These are
+    the rules the unified model cannot express; the platform keeps them as
+    endpoint MCP rules. Server rules move:
+
+    | Was (`ferentin_endpoint_mcp_rule`) | Now |
+    | --- | --- |
+    | `block` on `host` / `url_prefix` / `package` / `argv_contains` | `ferentin_mcp_policy` with `effect.type = "deny"` and `targets` |
+    | `allow` on `host` / `url_prefix` / `package` | `ferentin_mcp_policy` with `effect.type = "allow"` and `targets` (`applies_at` defaults to `admit`) |
+    | `steer` | `ferentin_mcp_route` |
+    | `app_bundle_ids` | an `app_bundle_id` target |
+
+    Write the replacement, then remove the old resource from config so the
+    apply deletes the rule. Refreshing a server rule in state warns and names
+    the replacement rather than failing, so the old resource can still be
+    destroyed. The platform's own `convert-endpoint-rules` skips IaC-managed
+    rules, so Terraform users convert in HCL.
+  - **`ferentin_endpoint_policy_settings` loses `unapproved_mcp_action`,
+    `local_mcp_risk_policy` and `local_mcp_approval_config`.** They are
+    `server_approval`, `tool_vetting_risk_policy` and
+    `tool_vetting_approval_config` on the new `ferentin_mcp_scope_defaults`,
+    which writes the same posture row. Move the values there; removing them
+    from the settings resource leaves the stored values in place, so nothing
+    changes on devices in between. `ferentin_endpoint_policy_settings_scopes`
+    no longer reports `unapproved_mcp_action`.
+  - **`ferentin_mcp_policy`'s `description` and `provider_instances` are no
+    longer Computed**, and every update restates `criteria`, `targets`,
+    `unless` and `description`. Removing one from config now clears it on
+    the platform; earlier versions left the stored value in place. Read the
+    first plan after upgrading. `priority` defaults to `100` and must be
+    1-1000.
+
 - **Plain `http://` endpoints are refused.** A profile or managed `endpoint`,
   the provider's `endpoint`, and a client_credentials `auth_url` must use
   `https://`; `http://` is accepted only on `127.0.0.1`, `[::1]` or
@@ -54,6 +92,41 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   (ferentin-net/terraform-provider-ferentin#18)
 
 ### Added
+- **`ferentin_mcp_policy` is the unified MCP policy.** New arguments:
+  `targets` (what the policy selects on a device: `host`, `url_prefix`,
+  `package`, `argv_template`, `argv_hash`, `argv_contains`, `class`,
+  `app_bundle_id`), `applies_at` (`admit`, `call` or `both`, planned as the
+  platform defaults it when unset), `mode` (`enforce` or `report_only`),
+  `unless` (a deny's exception) and `criteria_combinator`. `provider_instances`
+  is optional when targets name something. Read-only `stored_targets`,
+  `settings_in_force`, `sibling_of`, `version` and the `managed_by`
+  provenance fields. The platform's canonical spelling of target values is
+  not drift. Plan-time checks mirror the platform's write check.
+- **`ferentin_mcp_route`**: sends an MCP server a device starts through
+  Ferentin. A local target is wrapped by `ferentin-mcp`; a remote one is
+  rewritten to the gateway (`steer_to_url`, or the scope's own gateway).
+- **`ferentin_mcp_scope_defaults`**: what a local MCP server or tool meets
+  when no MCP policy applies, for the tenant default or one device group.
+  It covers `server_approval`, `unattributed` (servers started outside an
+  identified AI agent), and tool vetting (`tool_vetting_mode`,
+  `tool_vetting_risk_policy`, `tool_vetting_approval_config`). Each default
+  has a mode, so it can be rehearsed with `report_only`. The resource shares
+  the posture row, and its version, with `ferentin_endpoint_policy_settings`.
+  A write that finds the row's version moved retries once when the fields it
+  owns are unchanged, so the two can live in one apply. Destroy leaves the
+  defaults in force.
+- **`ferentin_endpoint_sandbox`**: the tenant's agent sandbox policy. It sets
+  which AI tools get Ferentin's sandbox written into their settings, the
+  folders their commands may write or must not touch, and the domains they
+  may reach. Destroy stops writing the sandbox into every tool.
+- **`ferentin_endpoint_destination_rule`**: `catalog_roles` narrows an
+  `ai_provider` rule to some of the agent's catalog host roles (for example
+  the model API without the auto-updater), and `test_rule` marks a rule as a
+  test.
+- **`ferentin_mcp_server`**: write-only `acknowledge_subject_rekey`, to
+  proceed with a change that moves the server to a different issuer when the
+  platform refuses it with `signer_change_rekeys_users`.
+
 - **Guide and example: PII and card data on managed endpoints.**
   [`examples/endpoint-data-protection/`](examples/endpoint-data-protection/)
   is an endpoint-only `ferentin_data_protection_policy` with the `US_PII` and
@@ -208,6 +281,15 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- Removing `criteria`, `unless` or `description` from a `ferentin_mcp_policy`
+  now clears it on the platform. The update keeps omitted fields, and the
+  provider used to omit them.
+- `ferentin_mcp_policy` deletes with the state version as `If-Match`, so a
+  concurrent console edit is a 412 instead of a silent delete.
+- The acceptance fixture's MCP provider uses a public `default_url`. The
+  platform now refuses a private one (ferentin-net/ferentin-platform
+  66bca30d2), which failed every test built on it.
+
 - **An update no longer plans `managed_by`, `managed_by_client_id` and
   `managed_by_module` as `(known after apply)`.** The platform sets them once,
   at create, and never changes them, but nine resources re-planned them on
