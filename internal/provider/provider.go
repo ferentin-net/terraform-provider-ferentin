@@ -582,6 +582,9 @@ func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.Da
 		NewEndpointPolicySettingsScopesDataSource,
 		NewEndpointAgentApprovalsDataSource,
 		NewMCPLocalServersDataSource,
+		NewMCPPoliciesDataSource,
+		NewMCPRoutesDataSource,
+		NewMCPScopeDefaultsScopesDataSource,
 	}
 }
 

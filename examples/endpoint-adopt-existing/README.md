@@ -1,9 +1,12 @@
 # Adopt an existing endpoint policy
 
 Print an `import` block for every endpoint object Terraform does not manage
-yet: device groups, destination rules, tool call rules, posture rows,
-AI-agent decisions and local MCP servers. It reads from the tenant and writes
-nothing to it.
+yet: device groups, destination rules, tool call rules, posture rows, MCP
+scope defaults, AI-agent decisions, local MCP servers, MCP policies and MCP
+routes. It reads from the tenant and writes nothing to it.
+
+MCP scope defaults carry no provenance of their own (they live on the posture
+row), so a scope's defaults are adopted together with its posture row.
 
 Endpoint MCP rules that allow, block or steer an MCP server get no import
 block, because `ferentin_endpoint_mcp_rule` authors call-time tool rules only.
@@ -61,13 +64,15 @@ with both values, so you can check.
 ## Names
 
 Each import is named after the object: lowercased, non-alphanumerics folded to
-`_`, with a kind prefix (`g_`, `d_`, `m_`, `p_`, `l_`) and the first 8 characters of
+`_`, with a kind prefix (`g_`, `d_`, `m_`, `p_`, `s_`, `l_`, `c_`, `r_`) and the first 8 characters of
 its ID, so two similar names cannot collide. An agent decision is named after
 its catalog slug (`a_claude_code`), which is already unique. The tenant-default posture row is
-`ferentin_endpoint_policy_settings.default`. Rename them in the owning
+`ferentin_endpoint_policy_settings.default`, and its MCP scope defaults
+`ferentin_mcp_scope_defaults.default`. Rename them in the owning
 configuration before its first apply; afterwards a rename needs a `moved`
 block.
 
 ## Required scopes
 
-`policy:rw` and `devices:groups:rw`, to read rules, posture and groups.
+`policy:rw` and `devices:groups:rw`, to read rules, posture, MCP policies,
+routes, scope defaults and groups.

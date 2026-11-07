@@ -2,7 +2,7 @@
 page_title: "Bring an existing endpoint policy under Terraform"
 subcategory: "Guides"
 description: |-
-  Import device groups, destination rules, tool call rules, posture rows, AI-agent decisions and local MCP servers configured in the admin console, so the first apply changes nothing on the fleet.
+  Import device groups, destination rules, tool call rules, posture rows, MCP scope defaults, AI-agent decisions, local MCP servers, MCP policies and MCP routes configured in the admin console, so the first apply changes nothing on the fleet.
 ---
 
 # Bring an existing endpoint policy under Terraform
@@ -17,7 +17,7 @@ Importing only reads from the platform. Nothing changes on the tenant, and nothi
 
 ## 1. List what exists, as import blocks
 
-The [`endpoint-adopt-existing`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-adopt-existing) example reads the six list data sources, [`ferentin_device_groups`](../data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](../data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](../data-sources/endpoint_mcp_rules.md), [`ferentin_endpoint_policy_settings_scopes`](../data-sources/endpoint_policy_settings_scopes.md), [`ferentin_endpoint_agent_approvals`](../data-sources/endpoint_agent_approvals.md) and [`ferentin_mcp_local_servers`](../data-sources/mcp_local_servers.md), and prints an `import` block for each object to adopt:
+The [`endpoint-adopt-existing`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-adopt-existing) example reads the nine list data sources, [`ferentin_device_groups`](../data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](../data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](../data-sources/endpoint_mcp_rules.md), [`ferentin_endpoint_policy_settings_scopes`](../data-sources/endpoint_policy_settings_scopes.md), [`ferentin_mcp_scope_defaults_scopes`](../data-sources/mcp_scope_defaults_scopes.md), [`ferentin_endpoint_agent_approvals`](../data-sources/endpoint_agent_approvals.md), [`ferentin_mcp_local_servers`](../data-sources/mcp_local_servers.md), [`ferentin_mcp_policies`](../data-sources/mcp_policies.md) and [`ferentin_mcp_routes`](../data-sources/mcp_routes.md), and prints an `import` block for each object to adopt:
 
 ```sh
 cd endpoint-adopt-existing
@@ -63,7 +63,7 @@ Every list item also carries `import_id`, so you can write the blocks by hand in
 | [`ferentin_endpoint_agent_approval`](../resources/endpoint_agent_approval.md) | `<tenant_id>/<catalog_slug>` |
 | [`ferentin_mcp_local_server`](../resources/mcp_local_server.md) | `<tenant_id>/<server_id>` |
 
-The example writes no blocks for MCP policies, routes or scope defaults: there is no list data source for them. Take their IDs from the admin console. An endpoint MCP rule that allows, blocks or steers an MCP server cannot be imported into `ferentin_endpoint_mcp_rule`, which authors tool call rules only; write it as an MCP policy with `targets` or an MCP route, then delete the rule.
+MCP scope defaults carry no provenance of their own, because they live on the posture row, so the example adopts a scope's defaults together with its posture row. MCP policies include `report_only` ones and the `<name> · local` rehearsal siblings the platform split off; adopt a sibling, or merge it back in the console first. An endpoint MCP rule that allows, blocks or steers an MCP server cannot be imported into `ferentin_endpoint_mcp_rule`, which authors tool call rules only; write it as an MCP policy with `targets` or an MCP route, then delete the rule.
 
 -> Terraform does not generate configuration for an `import` block that uses `for_each`, which is why the example prints one block per object rather than importing from the data sources directly.
 
