@@ -3,13 +3,13 @@
 page_title: "ferentin_endpoint_policy_settings_scopes Data Source - Ferentin"
 subcategory: ""
 description: |-
-  List every endpoint posture row in the tenant — one ferentin_endpoint_policy_settings per scope: the tenant default first, then each device group that has its own override. A device group with no override has no row here; it resolves through the tenant default.
+  List every endpoint posture row in the tenant — one ferentin_endpoint_policy_settings per scope: the tenant default first, then each device group that has its own override. A device group with no override has no row here; it resolves through the tenant default. Each import_id also imports that scope's ferentin_mcp_scope_defaults, which carries the MCP scope defaults these rows no longer list.
   Every item carries import_id, the ID its resource's import block takes, and managed_by, who created it (console, iac, …). Filter on managed_by = "console" to find what Terraform does not manage yet.
 ---
 
 # ferentin_endpoint_policy_settings_scopes (Data Source)
 
-List every endpoint posture row in the tenant — one `ferentin_endpoint_policy_settings` per scope: the tenant default first, then each device group that has its own override. A device group with no override has no row here; it resolves through the tenant default.
+List every endpoint posture row in the tenant — one `ferentin_endpoint_policy_settings` per scope: the tenant default first, then each device group that has its own override. A device group with no override has no row here; it resolves through the tenant default. Each `import_id` also imports that scope's `ferentin_mcp_scope_defaults`, which carries the MCP scope defaults these rows no longer list.
 
 Every item carries `import_id`, the ID its resource's `import` block takes, and `managed_by`, who created it (`console`, `iac`, …). Filter on `managed_by = "console"` to find what Terraform does not manage yet.
 
@@ -48,4 +48,3 @@ Read-Only:
 - `import_id` (String) `<tenant_id>` for the tenant default, `<tenant_id>/<device_group_id>` for an override.
 - `last_modified_by` (String) Who wrote it last. Divergence from `managed_by` means it changed hands.
 - `managed_by` (String) Who created it: `console`, `iac`, `cli`, `system` or `unknown`. Never changes.
-- `unapproved_mcp_action` (String)

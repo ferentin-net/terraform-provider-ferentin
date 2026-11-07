@@ -1,6 +1,6 @@
 # Endpoint policy for a managed fleet
 
-Device groups + on-device destination rules + MCP rules + posture, staged from
+Device groups + on-device destination rules + MCP policy + posture, staged from
 **observe** to **enforce** with a single variable. This is the endpoint half of
 [`../complete/`](../complete/) on its own, with the rollout mechanics spelled
 out.
@@ -36,15 +36,14 @@ examples/endpoint-fleet/
    Specific-and-restrictive sits above broad-and-permissive, because the first
    match ends evaluation.
 
-3. **[`ferentin_endpoint_mcp_rule`](../../docs/resources/endpoint_mcp_rule.md)**
-   — allow / block for MCP servers and for what AI tools may do, a second
-   first-match-wins ladder:
+3. **[`ferentin_mcp_policy`](../../docs/resources/mcp_policy.md)** and
+   **[`ferentin_endpoint_mcp_rule`](../../docs/resources/endpoint_mcp_rule.md)**
+   — deny MCP servers by device target, and block what AI tools may do:
 
-   | Priority | Action | Rule | Scope |
+   | Resource | Effect | Selects | Scope |
    | --- | --- | --- | --- |
-   | 10 | `block` | Unvetted remote MCP hosts (`host`) | fleet-wide |
-   | 20 | `block` | Known-bad local MCP packages (`package`) | fleet-wide |
-   | 30 | `block` | Shell from AI tools (`tool_behavior`) | contractors group |
+   | MCP policy | `deny` | Unvetted remote MCP hosts (`host`) and known-bad local packages (`package`) | fleet-wide |
+   | Tool call rule | `block` | Shell from AI tools (`tool_behavior`) | contractors group |
 
 4. **[`ferentin_endpoint_agent_approval`](../../docs/resources/endpoint_agent_approval.md)**
    — which catalogued AI agents are approved to run (`approved_agents`:
@@ -157,8 +156,9 @@ every device at `allowlist`, that blocks it. `plan` warns. To deny an agent on
 purpose, give it a `block` decision instead.
 
 **`local_mcp_block_enabled` is absolute.** On the contractors override it
-beats approvals and any `allow` rule: contractors run no local MCP servers at
-all. Turn it off for a group to let approvals and rules decide there.
+beats approvals and any MCP policy `allow`: contractors run no local MCP
+servers at all. Turn it off for a group to let approvals and policies decide
+there.
 
 **Destroying the tenant-default posture does not reset it.** The platform
 refuses to delete a row every device resolves through, so Terraform drops it
@@ -190,7 +190,8 @@ the tenant-default posture row, which cannot be cleanly destroyed afterwards.
 ```sh
 terraform import 'ferentin_device_group.this["engineering"]'          <tenant_id>/<group_id>
 terraform import ferentin_endpoint_destination_rule.block_unsanctioned <tenant_id>/<rule_id>
-terraform import ferentin_endpoint_mcp_rule.block_unvetted_remote      <tenant_id>/<rule_id>
+terraform import ferentin_mcp_policy.block_unvetted_mcp                <tenant_id>/<policy_id>
+terraform import ferentin_endpoint_mcp_rule.block_shell_contractors    <tenant_id>/<rule_id>
 terraform import 'ferentin_endpoint_agent_approval.approved["cursor"]' <tenant_id>/cursor
 terraform import ferentin_endpoint_policy_settings.default             <tenant_id>
 terraform import 'ferentin_endpoint_policy_settings.override["contractors"]' <tenant_id>/<device_group_id>

@@ -13,7 +13,7 @@ The configuration is the [`endpoint-tool-call-guardrails`](https://github.com/fe
 
 ## How tool call rules work
 
-A tool call rule is decided **at call time**, through the hook Ferentin installs in each coding agent, rather than by governing the server the call came from. Its action is always `block`; `plan` refuses anything else.
+A tool call rule is decided **at call time**, through the hook Ferentin installs in each coding agent, rather than by governing the server the call came from. Every tool call rule is a block, so the resource has no `action`. Which MCP servers may run at all is [`ferentin_mcp_policy`](../resources/mcp_policy.md)'s job.
 
 Whether a match then **denies** the call or only **counts** it is `hook_rule_enforcement` on the posture of the device's scope:
 
@@ -49,7 +49,6 @@ resource "ferentin_endpoint_mcp_rule" "block_exfil_commands" {
   priority     = 10
   match_kind   = "command_binary"
   match_values = ["curl", "wget", "nc", "scp"]
-  action       = "block"
 }
 ```
 
@@ -65,7 +64,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_pilot" {
   priority         = 20
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [ferentin_device_group.pilot.group_id]
 }
 ```
@@ -101,7 +99,6 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
   device_group_id = ferentin_device_group.pilot.group_id
 
   # Restate the tenant posture: a group row ignores the tenant default.
-  unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
   mcp_gateway_url            = "https://acme.mcp.ferentin.net/v1"
 
@@ -109,7 +106,7 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
 }
 ```
 
-~> **A group with its own posture row ignores the tenant default for every setting** (except unvetted local MCP tools, which only the tenant default sets). On a new row an attribute left out takes the platform's default, not the tenant's, and `unapproved_mcp_action` defaults to `quarantine`. The example shares the tenant's values through a `locals` block so the override differs only in `hook_rule_enforcement`.
+~> **A group with its own posture row ignores the tenant default for every setting** On a new row an attribute left out takes the platform's default, not the tenant's. The example shares the tenant's values through a `locals` block so the override differs only in `hook_rule_enforcement`.
 
 Move it with a variable:
 
@@ -135,7 +132,7 @@ The same readiness check applies to the whole tenant. Every apply writes every v
 - **Cursor**: only shell commands and MCP tool calls are checked before they run.
 - **Codex, Copilot and Antigravity** are not enforced yet. Their calls are counted.
 - A device whose breaker opens drops to report-only, and its rules stop denying until the breaker closes.
-- Only `block` rules deny. `allow` and `steer` MCP rules behave the same in both modes.
+- `hook_rule_enforcement` governs tool call rules only. MCP policies and routes behave the same in both modes.
 
 ## Apply, then activate
 
@@ -156,8 +153,8 @@ The same readiness check applies to the whole tenant. Every apply writes every v
 # never want an agent to make, count them first, then deny them, one device
 # group at a time.
 #
-# Tool call rules are decided at call time, through the agent hook, and their
-# action is always `block`. Whether a match DENIES the call or only COUNTS it
+# Tool call rules are decided at call time, through the agent hook, and every
+# one is a block. Whether a match DENIES the call or only COUNTS it
 # is `hook_rule_enforcement` on the posture of the device's scope:
 #
 #   shadow  — count what the rules would deny; the call runs (the default)
@@ -206,7 +203,6 @@ resource "ferentin_endpoint_mcp_rule" "block_exfil_commands" {
   priority     = 10
   match_kind   = "command_binary"
   match_values = var.blocked_commands
-  action       = "block"
 }
 
 # 20. The agent's whole shell tool, for the pilot group only. A behaviour is
@@ -218,7 +214,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_pilot" {
   priority         = 20
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [ferentin_device_group.pilot.group_id]
 }
 
@@ -226,9 +221,8 @@ locals {
   # A group with its own posture row ignores the tenant default for every
   # setting, so the override restates the tenant posture and differs only in
   # hook_rule_enforcement. On a new row, an attribute left out takes the
-  # platform's default (unapproved_mcp_action = quarantine), not the tenant's.
+  # platform's default, not the tenant's.
   shared_posture = {
-    unapproved_mcp_action      = var.unapproved_mcp_action
     default_destination_action = var.default_destination_action
     mcp_gateway_url            = var.mcp_gateway_url
   }
@@ -238,7 +232,6 @@ locals {
 # it: if another config already manages it, set hook_rule_enforcement there
 # instead of applying both.
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action      = local.shared_posture.unapproved_mcp_action
   default_destination_action = local.shared_posture.default_destination_action
   mcp_gateway_url            = local.shared_posture.mcp_gateway_url
 
@@ -250,7 +243,6 @@ resource "ferentin_endpoint_policy_settings" "default" {
 resource "ferentin_endpoint_policy_settings" "pilot" {
   device_group_id = ferentin_device_group.pilot.group_id
 
-  unapproved_mcp_action      = local.shared_posture.unapproved_mcp_action
   default_destination_action = local.shared_posture.default_destination_action
   mcp_gateway_url            = local.shared_posture.mcp_gateway_url
 

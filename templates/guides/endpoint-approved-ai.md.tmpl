@@ -9,7 +9,7 @@ description: |-
 
 Allow the AI providers you sanction, pin one of them to its signed desktop app, and block the rest, on every managed device in the tenant. The whole policy is four [`ferentin_endpoint_destination_rule`](../resources/endpoint_destination_rule.md) resources and the tenant-default [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row.
 
-The configuration is the [`endpoint-approved-ai`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-approved-ai) example. It uses no device groups and no MCP rules, so it is the place to start. The [`endpoint-fleet`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-fleet) example builds on it with device groups, MCP rules, posture overrides and a staged rollout.
+The configuration is the [`endpoint-approved-ai`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-approved-ai) example. It uses no device groups and no MCP policies, so it is the place to start. The [`endpoint-fleet`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-fleet) example builds on it with device groups, an MCP policy, a tool call rule, posture overrides and a staged rollout.
 
 ## What you build
 

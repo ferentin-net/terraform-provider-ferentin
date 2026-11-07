@@ -13,21 +13,26 @@ guide.
 ```
 examples/endpoint-mcp-servers/
 ├── README.md
-├── main.tf        # the MCP rule ladder, approved local servers, the tenant-default posture, two outputs
+├── main.tf        # MCP policies and routes, approved local servers, the tenant-default posture, two outputs
 └── variables.tf   # gateway URL, steered servers, blocked hosts and packages, posture
 ```
 
-## The rule ladder
+## What each server meets
 
-[`ferentin_endpoint_mcp_rule`](../../docs/resources/endpoint_mcp_rule.md)
-rules are evaluated **on the device, first match wins by ascending
-`priority`**:
+[`ferentin_mcp_policy`](../../docs/resources/mcp_policy.md) is one policy
+model for remote and local MCP servers. These policies select servers on the
+device by `targets`, and a deny is decided before any allow:
 
-| Priority | Action | Matches | Variable |
+| Policy | Effect | Targets | Variable |
 | --- | --- | --- | --- |
-| 10 | `block` | remote hosts | `blocked_remote_hosts` |
-| 2x | `steer` | remote hosts → `<mcp_gateway_url>/mcp/<server_slug>` | `steered_remote_servers` |
-| 30 | `block` | local packages | `blocked_local_packages` |
+| `block_unvetted` | `deny` | remote hosts and local packages | `blocked_remote_hosts`, `blocked_local_packages` |
+| `allow_sanctioned_remote` | `allow` | remote hosts | `steered_remote_servers` |
+
+Each sanctioned server also gets a
+[`ferentin_mcp_route`](../../docs/resources/mcp_route.md), which rewrites the
+developer's entry to `<mcp_gateway_url>/mcp/<server_slug>`. The allow lifts the
+`server_approval` default for the server; the route sends it through the
+gateway. A route never grants.
 
 Local servers in `approved_local_servers` are approved with
 [`ferentin_mcp_local_server`](../../docs/resources/mcp_local_server.md) and run
@@ -47,8 +52,7 @@ terraform apply
 ```
 
 Then **activate the pending changes in the admin console**: `apply` only
-stages them. After activation, the `rule_enforcement` output says whether the
-fleet enforces each rule; refresh to read it again.
+stages them.
 
 When the inventory looks right, tighten the fallthrough:
 
@@ -58,10 +62,12 @@ terraform apply -var server_approval=quarantine
 
 ## Sharp edges
 
-**A local `allow` runs the server outside Ferentin.** Nothing sees its tool
-calls. To let a local server run and keep it governed, approve it, as
-`approved_local_servers` does with `ferentin_mcp_local_server`. A local `steer`
-keeps an entry wrapped, but the server is still refused until it is approved.
+**An allow on a local package releases the server.** Like the endpoint MCP
+rule allow it replaces, it puts the entry back as written, so the server runs
+outside Ferentin and nothing sees its tool calls. To let a local server run and
+keep it governed, approve it, as `approved_local_servers` does with
+`ferentin_mcp_local_server`. A local route keeps an entry wrapped, but the
+server is still refused until it is approved.
 
 **One configuration owns the tenant-default posture row.** If another config
 (such as [`../endpoint-approved-ai/`](../endpoint-approved-ai/)) already
@@ -76,5 +82,5 @@ approval routing** (`tool_vetting_approval_config`) first.
 
 ## Required scopes
 
-`policy:rw` for the rules and the posture, and `mcp:servers:rw` for the local
-server approvals.
+`policy:rw` for the MCP policies (they name device targets), the routes and
+the posture, and `mcp:servers:rw` for the local server approvals.

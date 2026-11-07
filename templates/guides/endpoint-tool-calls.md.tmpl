@@ -13,7 +13,7 @@ The configuration is the [`endpoint-tool-call-guardrails`](https://github.com/fe
 
 ## How tool call rules work
 
-A tool call rule is decided **at call time**, through the hook Ferentin installs in each coding agent, rather than by governing the server the call came from. Its action is always `block`; `plan` refuses anything else.
+A tool call rule is decided **at call time**, through the hook Ferentin installs in each coding agent, rather than by governing the server the call came from. Every tool call rule is a block, so the resource has no `action`. Which MCP servers may run at all is [`ferentin_mcp_policy`](../resources/mcp_policy.md)'s job.
 
 Whether a match then **denies** the call or only **counts** it is `hook_rule_enforcement` on the posture of the device's scope:
 
@@ -49,7 +49,6 @@ resource "ferentin_endpoint_mcp_rule" "block_exfil_commands" {
   priority     = 10
   match_kind   = "command_binary"
   match_values = ["curl", "wget", "nc", "scp"]
-  action       = "block"
 }
 ```
 
@@ -65,7 +64,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_pilot" {
   priority         = 20
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [ferentin_device_group.pilot.group_id]
 }
 ```
@@ -134,7 +132,7 @@ The same readiness check applies to the whole tenant. Every apply writes every v
 - **Cursor**: only shell commands and MCP tool calls are checked before they run.
 - **Codex, Copilot and Antigravity** are not enforced yet. Their calls are counted.
 - A device whose breaker opens drops to report-only, and its rules stop denying until the breaker closes.
-- Only `block` rules deny. `allow` and `steer` MCP rules behave the same in both modes.
+- `hook_rule_enforcement` governs tool call rules only. MCP policies and routes behave the same in both modes.
 
 ## Apply, then activate
 

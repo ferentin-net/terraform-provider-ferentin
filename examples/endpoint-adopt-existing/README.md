@@ -1,9 +1,16 @@
 # Adopt an existing endpoint policy
 
 Print an `import` block for every endpoint object Terraform does not manage
-yet: device groups, destination rules, MCP rules, posture rows, AI-agent
-decisions and local MCP servers. It reads
-from the tenant and writes nothing to it.
+yet: device groups, destination rules, tool call rules, posture rows,
+AI-agent decisions and local MCP servers. It reads from the tenant and writes
+nothing to it.
+
+Endpoint MCP rules that allow, block or steer an MCP server get no import
+block, because `ferentin_endpoint_mcp_rule` authors call-time tool rules only.
+`terraform output mcp_server_rules` lists them. Write each one as a
+[`ferentin_mcp_policy`](../../docs/resources/mcp_policy.md) with `targets`
+(allow or block) or a [`ferentin_mcp_route`](../../docs/resources/mcp_route.md)
+(steer), then delete the rule.
 
 This is step 1 of the
 [Bring an existing endpoint policy under Terraform](../../docs/guides/endpoint-adopt-existing.md)

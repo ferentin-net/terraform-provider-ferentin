@@ -33,7 +33,7 @@ Start here for managed endpoints. Each guide walks through a working configurati
 | [`ferentin_mcp_provider`](resources/mcp_provider.md) | A tenant-custom MCP provider in the catalog |
 | [`ferentin_mcp_server`](resources/mcp_server.md) | A tenant MCP server: endpoint, upstream auth and routing |
 | [`ferentin_mcp_server_from_card`](resources/mcp_server_from_card.md) | An MCP provider and server stamped out from a `server-card.json` |
-| [`ferentin_mcp_policy`](resources/mcp_policy.md) | Allow and deny on MCP tools and toolsets, with rate limits |
+| [`ferentin_mcp_policy`](resources/mcp_policy.md) | Allow and deny for remote MCP servers through the gateway and local ones on managed devices: tools, toolsets, device targets, rate limits |
 | [`ferentin_data_protection_policy`](resources/data_protection_policy.md) | Data protection (DLP) on LLM, MCP, A2A and endpoint traffic |
 | [`ferentin_edge_site`](resources/edge_site.md) | A site where private service-edge instances enroll and serve traffic |
 
@@ -45,11 +45,13 @@ Lookups: [`ferentin_llm_provider`](data-sources/llm_provider.md), [`ferentin_mcp
 | --- | --- |
 | [`ferentin_device_group`](resources/device_group.md) | A device group, the targeting unit for endpoint policy |
 | [`ferentin_endpoint_destination_rule`](resources/endpoint_destination_rule.md) | Allow or block AI destinations on the device |
-| [`ferentin_endpoint_mcp_rule`](resources/endpoint_mcp_rule.md) | Allow, block or steer MCP servers, and block tool calls |
+| [`ferentin_endpoint_mcp_rule`](resources/endpoint_mcp_rule.md) | Block tool calls by tool name, command binary or tool behaviour |
 | [`ferentin_mcp_route`](resources/mcp_route.md) | Send an MCP server a device starts through Ferentin: the gateway, or the `ferentin-mcp` wrap |
 | [`ferentin_endpoint_agent_approval`](resources/endpoint_agent_approval.md) | Approve or deny one catalogued AI agent |
 | [`ferentin_mcp_local_server`](resources/mcp_local_server.md) | Approve or block a local (stdio) MCP server, so devices run it governed |
 | [`ferentin_endpoint_policy_settings`](resources/endpoint_policy_settings.md) | Posture: what happens when no rule matches, per tenant or device group |
+| [`ferentin_endpoint_sandbox`](resources/endpoint_sandbox.md) | The agent sandbox: what AI tools' commands may write, must not touch and may reach |
+| [`ferentin_mcp_scope_defaults`](resources/mcp_scope_defaults.md) | What a local MCP server or tool meets when no MCP policy applies, per tenant or device group |
 
 Lists, for finding and importing what exists: [`ferentin_device_groups`](data-sources/device_groups.md), [`ferentin_endpoint_destination_rules`](data-sources/endpoint_destination_rules.md), [`ferentin_endpoint_mcp_rules`](data-sources/endpoint_mcp_rules.md), [`ferentin_endpoint_agent_approvals`](data-sources/endpoint_agent_approvals.md), [`ferentin_mcp_local_servers`](data-sources/mcp_local_servers.md) and [`ferentin_endpoint_policy_settings_scopes`](data-sources/endpoint_policy_settings_scopes.md).
 

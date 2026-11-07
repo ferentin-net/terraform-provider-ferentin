@@ -2,8 +2,8 @@
 # never want an agent to make, count them first, then deny them, one device
 # group at a time.
 #
-# Tool call rules are decided at call time, through the agent hook, and their
-# action is always `block`. Whether a match DENIES the call or only COUNTS it
+# Tool call rules are decided at call time, through the agent hook, and every
+# one is a block. Whether a match DENIES the call or only COUNTS it
 # is `hook_rule_enforcement` on the posture of the device's scope:
 #
 #   shadow  — count what the rules would deny; the call runs (the default)
@@ -52,7 +52,6 @@ resource "ferentin_endpoint_mcp_rule" "block_exfil_commands" {
   priority     = 10
   match_kind   = "command_binary"
   match_values = var.blocked_commands
-  action       = "block"
 }
 
 # 20. The agent's whole shell tool, for the pilot group only. A behaviour is
@@ -64,7 +63,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_pilot" {
   priority         = 20
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [ferentin_device_group.pilot.group_id]
 }
 

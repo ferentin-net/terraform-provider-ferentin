@@ -3,28 +3,49 @@
 page_title: "ferentin_mcp_policy Resource - Ferentin"
 subcategory: ""
 description: |-
-  Tenant MCP policy — ABAC governance for MCP traffic (allow/deny on tools / toolsets, optional rate limiting). Nested context_guards / redaction / trustflow / logging deferred to v0.2; see §6.6 of the design doc for an example.
+  MCP policy: one policy model for remote MCP servers reached through the gateway and local MCP servers started on managed devices.
+  A policy selects servers two ways, and may use both:
+  provider_instances: MCP servers (ferentin_mcp_server.*.server_id). The gateway decides remote calls from these; devices decide a local (stdio_local) instance's calls.targets: what the policy selects on a device (a host, a package, a command line, an app). Only devices read them.
+  applies_at picks where it decides (a server starting, each tool call, or both), and mode = "report_only" records what it would have decided without deciding anything.
+  This is where an endpoint MCP rule's server rules went: a block is a deny with targets, an allow an allow with targets, and a steer is a ferentin_mcp_route. Call-time tool rules (tool_name, command_binary, tool_behavior) stay on ferentin_endpoint_mcp_rule.
+  ~> Permissions. Writing targets, or changing any policy that names them, needs policy:rw: a target is a device deny or release. mcp:policies:rw writes everything else.
   Import
-  Existing policies can be imported using <tenant_id>/<policy_id> (or <policy_id> alone when the provider's default tenant_id matches):
   
   terraform import ferentin_mcp_policy.example <tenant_id>/<policy_id>
+  
+  An import has no configured spelling of targets, so it takes the platform's canonical form; the first plan after import may show targets changing to your config's spelling, which changes nothing on the platform.
 ---
 
 # ferentin_mcp_policy (Resource)
 
-Tenant MCP policy — ABAC governance for MCP traffic (allow/deny on tools / toolsets, optional rate limiting). Nested context_guards / redaction / trustflow / logging deferred to v0.2; see §6.6 of the design doc for an example.
+MCP policy: one policy model for remote MCP servers reached through the gateway and local MCP servers started on managed devices.
+
+A policy selects servers two ways, and may use both:
+
+* **`provider_instances`**: MCP servers (`ferentin_mcp_server.*.server_id`). The gateway decides remote calls from these; devices decide a local (`stdio_local`) instance's calls.
+* **`targets`**: what the policy selects on a device (a host, a package, a command line, an app). Only devices read them.
+
+`applies_at` picks where it decides (a server starting, each tool call, or both), and `mode = "report_only"` records what it would have decided without deciding anything.
+
+This is where an endpoint MCP rule's server rules went: a `block` is a `deny` with `targets`, an `allow` an `allow` with `targets`, and a `steer` is a `ferentin_mcp_route`. Call-time tool rules (`tool_name`, `command_binary`, `tool_behavior`) stay on `ferentin_endpoint_mcp_rule`.
+
+~> **Permissions.** Writing `targets`, or changing any policy that names them, needs `policy:rw`: a target is a device deny or release. `mcp:policies:rw` writes everything else.
 
 ## Import
-
-Existing policies can be imported using `<tenant_id>/<policy_id>` (or `<policy_id>` alone when the provider's default `tenant_id` matches):
 
 ```
 terraform import ferentin_mcp_policy.example <tenant_id>/<policy_id>
 ```
 
+An import has no configured spelling of `targets`, so it takes the platform's canonical form; the first plan after import may show `targets` changing to your config's spelling, which changes nothing on the platform.
+
 ## Example Usage
 
 ```terraform
+# One MCP policy model covers remote MCP servers reached through the gateway
+# and local MCP servers started on managed devices. A policy selects servers by
+# provider instance, by device target, or both.
+
 # `provider_instances` takes MCP server UUIDs, not names. The platform stores
 # and echoes UUIDs, so a name would drift on every plan; the provider rejects a
 # non-UUID at plan time rather than letting that reach the API. In a real
@@ -34,14 +55,23 @@ variable "internal_search_server_id" {
   description = "UUID of the MCP server these policies govern."
 }
 
-# MCP policy with allow effect — engineering-only access to internal search.
+# Allow, by provider instance: engineering-only access to internal search.
 resource "ferentin_mcp_policy" "engineering_search" {
   name        = "engineering-internal-search"
   description = "Engineering users can query internal search"
   priority    = 50
-  enabled     = true
 
   provider_instances = [var.internal_search_server_id]
+
+  criteria = [{
+    operator = "AND"
+    type     = "claims"
+    conditions = [{
+      field    = "groups"
+      operator = "contains"
+      value    = jsonencode("Engineering")
+    }]
+  }]
 
   effect = {
     type                  = "allow"
@@ -51,17 +81,81 @@ resource "ferentin_mcp_policy" "engineering_search" {
   }
 }
 
-# Default-deny that catches everything else (higher priority number = lower precedence).
+# Default deny that catches everything else (a higher priority number is a
+# lower precedence).
 resource "ferentin_mcp_policy" "default_deny" {
   name     = "default-deny-internal-search"
   priority = 1000
-  enabled  = true
 
   provider_instances = [var.internal_search_server_id]
 
   effect = {
     type    = "deny"
-    message = "Access to internal search requires engineering role."
+    message = "Access to internal search requires the Engineering group."
+  }
+}
+
+# Deny, by device target: a remote host and a local package nobody may start
+# on a managed device. The host target also reaches the device network filter.
+# The Security group is exempt.
+resource "ferentin_mcp_policy" "block_unvetted" {
+  name     = "block-unvetted-mcp"
+  priority = 10
+
+  targets = [
+    { kind = "host", values = ["mcp.unvetted.example"] },
+    { kind = "package", values = ["npm:@evil/mcp-server"] },
+  ]
+
+  effect = {
+    type    = "deny"
+    message = "This MCP server has not been vetted. Ask #security for a review."
+  }
+
+  unless = {
+    groups = [{
+      operator = "AND"
+      type     = "claims"
+      conditions = [{
+        field    = "groups"
+        operator = "contains"
+        value    = jsonencode("Security")
+      }]
+    }]
+  }
+}
+
+# Allow, by device target: let one internal package start on devices. With
+# targets and no provider instance, applies_at defaults to "admit": the policy
+# lifts the server default where the server starts.
+resource "ferentin_mcp_policy" "allow_internal_package" {
+  name     = "allow-internal-mcp-package"
+  priority = 20
+
+  targets = [
+    { kind = "package", values = ["npm:@acme/internal-mcp"] },
+    # Only in this MCP client.
+    { kind = "app_bundle_id", values = ["com.anthropic.claudefordesktop"] },
+  ]
+
+  effect = {
+    type = "allow"
+  }
+}
+
+# Rehearse before enforcing: report_only records what the policy would have
+# refused on the audit trail and decides nothing.
+resource "ferentin_mcp_policy" "rehearse_block_remote" {
+  name     = "rehearse-block-remote-mcp"
+  priority = 30
+  mode     = "report_only"
+
+  targets = [
+    { kind = "class", values = ["remote"] },
+  ]
+
+  effect = {
+    type = "deny"
   }
 }
 ```
@@ -71,26 +165,54 @@ resource "ferentin_mcp_policy" "default_deny" {
 
 ### Required
 
-- `effect` (Attributes) Required effect — allow / deny + tool/toolset constraints + optional rate limit. (see [below for nested schema](#nestedatt--effect))
+- `effect` (Attributes) Required effect: allow / deny, tool and toolset constraints, and an optional rate limit. (see [below for nested schema](#nestedatt--effect))
 - `name` (String)
 
 ### Optional
 
-- `criteria` (Attributes List) ABAC criteria for matching MCP requests. Each entry combines `conditions` with a logical operator (`AND` / `OR`); multiple criteria entries are ANDed together by the platform evaluator. Common shape: match on JWT claims (`client_id`, `sub_profile`, `email`) to scope the policy to a specific agent / service-account / user group. (see [below for nested schema](#nestedatt--criteria))
+- `applies_at` (String) Where the policy decides: `admit` (a server starting on a device), `call` (each tool call) or `both`. When unset the provider plans what the platform would choose: `admit` for an `allow` with `targets` and no `provider_instances`, `both` otherwise.
+
+`admit` and `call` are accepted only when every instance in `provider_instances` is local (`stdio_local`): the gateway reads every policy as `both`. A policy at `admit` cannot list tools in its `effect`.
+- `criteria` (Attributes List) ABAC criteria for matching MCP requests. Groups combine via `criteria_combinator`. Common shapes: JWT claims (`client_id`, `groups`, `email`), `subject.agents` (`in` / `not_in` over AI platform catalog slugs) and `device.group_id`.
+
+~> An AI agent or `device.group_id` condition is decided only on devices, so it is accepted only on a policy whose `provider_instances` are all local. The gateway's token carries neither, and an absent value satisfies no condition there.
+
+~> **Removing criteria widens the policy**, and the provider warns at plan when an apply would. (see [below for nested schema](#nestedatt--criteria))
+- `criteria_combinator` (String) How the `criteria` groups combine: `AND` or `OR`. Default `OR`, the platform's.
 - `description` (String)
-- `enabled` (Boolean) Whether the policy is enforced. Default `true`.
-- `priority` (Number)
-- `provider_instances` (List of String) MCP server UUIDs (`ferentin_mcp_server.*.server_id`) this policy applies to. The platform validates each entry is a valid UUID and stores + echoes UUIDs — passing names causes perpetual drift, so a non-UUID entry is rejected at plan time.
+- `enabled` (Boolean) Whether the policy is evaluated. Default `true`.
+- `mode` (String) `enforce` (default) decides access. `report_only` evaluates the policy and records what it would have decided on the audit trail, and decides nothing: it never grants, denies or narrows. A policy created `report_only` also keeps its logging and re-auth settings out of force (`settings_in_force`); switching an enforcing policy to `report_only` keeps them.
+- `priority` (Number) Priority for conflict resolution when effects merge: 1 is highest, 1000 lowest. Default `100`.
+- `provider_instances` (List of String) MCP server UUIDs (`ferentin_mcp_server.*.server_id`) this policy applies to. May be empty when `targets` names something; a policy naming neither is refused. The platform stores UUIDs, so a non-UUID entry is rejected at plan time.
+- `targets` (Attributes List) Device targets: what the policy selects on a managed device, beside its `provider_instances`. The targets are a union: the policy applies to whatever any of them selects, and `app_bundle_id` narrows all the others to those MCP clients. At most 64.
+
+* `host`, `url_prefix`: a remote server's address
+* `package`, `argv_template`, `argv_hash`: a local server's identity
+* `argv_contains`: a token on a local server's command line (**deny only**)
+* `class`: `local`, `remote` or `unapproved` (**deny only**)
+* `app_bundle_id`: the MCP client, by macOS bundle id; narrows the other targets and cannot stand alone
+
+A policy with targets cannot be a step-up and cannot list tools or toolsets in its `effect`: only an instance narrows its tools. `host` and `url_prefix` targets also reach the device network filter as destination rules.
+
+The platform stores values in canonical spelling (hosts lowercased, URLs canonicalized). Terraform keeps your spelling here and the platform's in `stored_targets`, so normalization does not show as drift. (see [below for nested schema](#nestedatt--targets))
 - `tenant_id` (String)
-- `validate_arguments` (Boolean) When true, validate tool-call arguments against the policy schema. Default `true`.
+- `unless` (Attributes) An exception to a `deny`: the deny does not apply to a caller who matches it. Decided at token issuance, so it can use identity attributes only (no `resource.*`, time of day or day of week), and an AI agent condition is refused here until devices carry verified agent evidence. Removing the block clears the exception. (see [below for nested schema](#nestedatt--unless))
+- `validate_arguments` (Boolean) When true, validate tool-call arguments against the tool's input schema before forwarding. Default `true`.
 
 ### Read-Only
 
 - `created_at` (String)
 - `id` (String) The ID of this resource.
+- `last_modified_by` (String) Provenance of the most recent writer. Divergence from `managed_by` is the drift signal.
+- `managed_by` (String) Provenance of the original creator (`iac` for this provider). Immutable after create.
+- `managed_by_client_id` (String) OAuth2 `client_id` of the creator, from the authenticated principal.
+- `managed_by_module` (String) Module label this provider sent via `X-Ferentin-Managed-By-Module`.
 - `policy_id` (String)
+- `settings_in_force` (Boolean) Read-only. Whether the policy's settings outside access (logging, re-auth, protocol version targeting) apply while it is `report_only`. An enforcing policy's settings always apply.
+- `sibling_of` (String) Read-only. Set on a `<name> · local` rehearsal policy the platform split from the policy it names when local enforcement arrived. Null otherwise.
+- `stored_targets` (Attributes List) Read-only. `targets` as the platform stores them, in canonical spelling. A console edit shows up as a change here and in `targets` on the next plan. (see [below for nested schema](#nestedatt--stored_targets))
 - `updated_at` (String)
-- `version` (Number) Optimistic-concurrency version (platform #649). Threaded as `If-Match` on Update so a concurrent console edit is rejected with 412 instead of being silently clobbered. Read-only.
+- `version` (Number) Optimistic-concurrency version, sent as `If-Match` on update and delete so a concurrent console edit is rejected with 412 rather than overwritten.
 
 <a id="nestedatt--effect"></a>
 ### Nested Schema for `effect`
@@ -105,7 +227,7 @@ Optional:
 - `denied_tools` (List of String)
 - `deny_toolsets` (List of String)
 - `grant_toolsets` (List of String)
-- `message` (String) Optional message surfaced to the agent when the policy applies.
+- `message` (String) Message shown to the person or agent on every surface the policy refuses on.
 - `rate_limit_per_minute` (Number) Per-minute rate limit for matching traffic.
 
 
@@ -127,7 +249,7 @@ Optional:
 
 Required:
 
-- `field` (String) Field path to evaluate (e.g. `client_id`, `sub_profile`, `email`).
+- `field` (String) Field path to evaluate (e.g. `client_id`, `groups`, `subject.agents`, `device.group_id`).
 - `operator` (String) Comparison operator (`equals`, `in`, `lt`, `gt`, `ends_with`, …).
 
 Optional:
@@ -136,3 +258,64 @@ Optional:
 - `description` (String) Optional description.
 - `value` (String) JSON-encoded value to compare against. Examples: `jsonencode("service")`, `jsonencode(["a","b"])`, `jsonencode(100)`.
 - `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …). The platform defaults it to `string` when unset.
+
+
+
+<a id="nestedatt--targets"></a>
+### Nested Schema for `targets`
+
+Required:
+
+- `kind` (String) One of host, url_prefix, package, argv_template, argv_hash, argv_contains, class, app_bundle_id.
+- `values` (List of String) 1-64 values. For `argv_template`, ONE command line's tokens with `*` matching one token (several templates are several targets). For `argv_hash`, lowercase hex digests.
+
+
+<a id="nestedatt--unless"></a>
+### Nested Schema for `unless`
+
+Required:
+
+- `groups` (Attributes List) Condition groups of the exception, in the same shape as `criteria`. At least one. (see [below for nested schema](#nestedatt--unless--groups))
+
+Optional:
+
+- `combinator` (String) How the groups combine: `AND` (default) or `OR`.
+
+<a id="nestedatt--unless--groups"></a>
+### Nested Schema for `unless.groups`
+
+Required:
+
+- `conditions` (Attributes List) Conditions evaluated under the parent `operator`. At least one is required. (see [below for nested schema](#nestedatt--unless--groups--conditions))
+- `operator` (String) Logical operator joining the conditions: `AND` or `OR`.
+
+Optional:
+
+- `description` (String) Optional human-readable description.
+- `type` (String) Criteria type. Allowed: `claims`, `context`, `request`, `time`. Server default applies if unset.
+
+<a id="nestedatt--unless--groups--conditions"></a>
+### Nested Schema for `unless.groups.conditions`
+
+Required:
+
+- `field` (String) Field path to evaluate (e.g. `groups`, `department`, `subject.agents`).
+- `operator` (String) Comparison operator (`equals`, `in`, `lt`, `gt`, `ends_with`, …).
+
+Optional:
+
+- `case_sensitive` (Boolean) For string operations. Platform defaults to `true` when omitted.
+- `description` (String) Optional description.
+- `value` (String) JSON-encoded value to compare against. Examples: `jsonencode("Backend")`, `jsonencode(["a","b"])`, `jsonencode(100)`.
+- `value_type` (String) Optional type hint for the value (`string`, `int`, `list`, …). The platform defaults it to `string` when unset.
+
+
+
+
+<a id="nestedatt--stored_targets"></a>
+### Nested Schema for `stored_targets`
+
+Read-Only:
+
+- `kind` (String)
+- `values` (List of String)

@@ -2,7 +2,7 @@
 page_title: "Bring an existing endpoint policy under Terraform"
 subcategory: "Guides"
 description: |-
-  Import device groups, destination rules, MCP rules, posture rows, AI-agent decisions and local MCP servers configured in the admin console, so the first apply changes nothing on the fleet.
+  Import device groups, destination rules, tool call rules, posture rows, AI-agent decisions and local MCP servers configured in the admin console, so the first apply changes nothing on the fleet.
 ---
 
 # Bring an existing endpoint policy under Terraform
@@ -25,6 +25,7 @@ terraform init
 terraform apply                    # reads only; writes nothing to the tenant
 terraform output -raw import_blocks > ../my-endpoint-policy/imports.tf
 terraform output already_managed   # what it skipped, and why
+terraform output mcp_server_rules  # endpoint MCP rules to rewrite as MCP policies or routes
 ```
 
 ```terraform
@@ -52,11 +53,17 @@ Every list item also carries `import_id`, so you can write the blocks by hand in
 | --- | --- |
 | [`ferentin_device_group`](../resources/device_group.md) | `<tenant_id>/<group_id>` |
 | [`ferentin_endpoint_destination_rule`](../resources/endpoint_destination_rule.md) | `<tenant_id>/<rule_id>` |
-| [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md) | `<tenant_id>/<rule_id>` |
+| [`ferentin_endpoint_mcp_rule`](../resources/endpoint_mcp_rule.md), tool call rules only | `<tenant_id>/<rule_id>` |
+| [`ferentin_mcp_policy`](../resources/mcp_policy.md) | `<tenant_id>/<policy_id>` |
+| [`ferentin_mcp_route`](../resources/mcp_route.md) | `<tenant_id>/<route_id>` |
+| [`ferentin_mcp_scope_defaults`](../resources/mcp_scope_defaults.md), tenant default | `<tenant_id>` |
+| `ferentin_mcp_scope_defaults`, device group | `<tenant_id>/<device_group_id>` |
 | [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md), tenant default | `<tenant_id>` |
 | `ferentin_endpoint_policy_settings`, group override | `<tenant_id>/<device_group_id>` |
 | [`ferentin_endpoint_agent_approval`](../resources/endpoint_agent_approval.md) | `<tenant_id>/<catalog_slug>` |
 | [`ferentin_mcp_local_server`](../resources/mcp_local_server.md) | `<tenant_id>/<server_id>` |
+
+The example writes no blocks for MCP policies, routes or scope defaults: there is no list data source for them. Take their IDs from the admin console. An endpoint MCP rule that allows, blocks or steers an MCP server cannot be imported into `ferentin_endpoint_mcp_rule`, which authors tool call rules only; write it as an MCP policy with `targets` or an MCP route, then delete the rule.
 
 -> Terraform does not generate configuration for an `import` block that uses `for_each`, which is why the example prints one block per object rather than importing from the data sources directly.
 

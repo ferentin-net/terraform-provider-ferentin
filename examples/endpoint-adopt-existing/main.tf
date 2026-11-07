@@ -1,6 +1,11 @@
 # Print an `import` block for every endpoint object Terraform does not manage
-# yet: device groups, destination rules, MCP rules, posture rows, AI-agent
-# decisions and local MCP servers.
+# yet: device groups, destination rules, tool call rules, posture rows,
+# AI-agent decisions and local MCP servers.
+#
+# Endpoint MCP rules that allow, block or steer an MCP server are not imported:
+# ferentin_endpoint_mcp_rule authors call-time tool rules only. They are listed
+# in `mcp_server_rules`, to rewrite as ferentin_mcp_policy targets or a
+# ferentin_mcp_route.
 #
 #   terraform init
 #   terraform apply                       # reads only; writes nothing to the tenant
@@ -53,6 +58,11 @@ locals {
 
   adopt = toset(var.adopt_managed_by)
 
+  # Endpoint MCP rules ferentin_endpoint_mcp_rule can hold: call-time blocks.
+  tool_rule = { for r in data.ferentin_endpoint_mcp_rules.all.rules :
+    r.rule_id => contains(["tool_name", "command_binary", "tool_behavior"], r.match_kind) && r.action == "block"
+  }
+
   # Whether to adopt each object, keyed by kind and import ID (a device group
   # and its posture override share an import ID).
   #
@@ -78,7 +88,7 @@ locals {
     } if local.wanted["d:${r.import_id}"]],
     [for r in data.ferentin_endpoint_mcp_rules.all.rules : {
       to = "ferentin_endpoint_mcp_rule.m_${local.label[r.rule_id]}", id = r.import_id
-    } if local.wanted["m:${r.import_id}"]],
+    } if local.wanted["m:${r.import_id}"] && local.tool_rule[r.rule_id]],
     [for s in data.ferentin_endpoint_policy_settings_scopes.all.scopes : {
       # The tenant default is "default"; an override is named after its group.
       to = "ferentin_endpoint_policy_settings.${s.device_group_id == null ? "default" : "p_${lookup(local.label, s.device_group_id, s.device_group_id)}"}"
@@ -103,9 +113,17 @@ output "already_managed" {
   value = concat(
     [for g in data.ferentin_device_groups.all.groups : "device group ${g.name} (created by ${g.managed_by}, last written by ${g.last_modified_by})" if !local.wanted["g:${g.import_id}"]],
     [for r in data.ferentin_endpoint_destination_rules.all.rules : "destination rule ${r.name} (created by ${r.managed_by}, last written by ${r.last_modified_by})" if !local.wanted["d:${r.import_id}"]],
-    [for r in data.ferentin_endpoint_mcp_rules.all.rules : "MCP rule ${r.name} (created by ${r.managed_by}, last written by ${r.last_modified_by})" if !local.wanted["m:${r.import_id}"]],
+    [for r in data.ferentin_endpoint_mcp_rules.all.rules : "tool call rule ${r.name} (created by ${r.managed_by}, last written by ${r.last_modified_by})" if !local.wanted["m:${r.import_id}"] && local.tool_rule[r.rule_id]],
     [for s in data.ferentin_endpoint_policy_settings_scopes.all.scopes : "posture ${coalesce(s.device_group_id, "tenant default")} (created by ${s.managed_by}, last written by ${s.last_modified_by})" if !local.wanted["p:${s.import_id}"]],
     [for a in data.ferentin_endpoint_agent_approvals.all.approvals : "agent decision ${a.catalog_slug} (created by ${a.managed_by}, last written by ${a.last_modified_by})" if !local.wanted["a:${a.import_id}"]],
     [for s in data.ferentin_mcp_local_servers.all.servers : "local MCP server ${s.display_name} (created by ${s.managed_by}, last written by ${s.last_modified_by})" if !local.wanted["l:${s.import_id}"]],
   )
+}
+
+output "mcp_server_rules" {
+  description = "Endpoint MCP rules that allow, block or steer an MCP server. They get no import block: write each one as a ferentin_mcp_policy with targets (allow or block) or a ferentin_mcp_route (steer), then delete the rule."
+  value = [for r in data.ferentin_endpoint_mcp_rules.all.rules :
+    "${r.name}: ${r.action} on ${r.match_kind} [${join(", ", r.match_values)}] (${r.import_id})"
+    if !local.tool_rule[r.rule_id]
+  ]
 }

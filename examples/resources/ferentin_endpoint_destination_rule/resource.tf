@@ -32,7 +32,7 @@ resource "ferentin_endpoint_destination_rule" "block_chatgpt_for_contractors" {
 # 2. Allow engineering's Claude Desktop app to reach Anthropic. Scoped by
 #    bundle id, so a browser or script hitting the same hosts does not match.
 #    (Destination rules allow or block; `steer` is not available on them yet.
-#    Only MCP traffic is steered today, with ferentin_endpoint_mcp_rule.)
+#    Only MCP traffic is steered today, with ferentin_mcp_route.)
 resource "ferentin_endpoint_destination_rule" "allow_claude_for_engineering" {
   name     = "allow-claude-engineering"
   priority = 20

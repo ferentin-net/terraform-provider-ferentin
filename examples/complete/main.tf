@@ -264,16 +264,22 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
   action            = "block"
 }
 
-# --- Endpoint: MCP rules -------------------------------------------------
-# A second on-device ladder, for MCP servers and what AI tools may do. Here:
-# block an unvetted remote MCP server everywhere, and block shell execution by
-# AI tools for contractors (a tool_behavior rule; block only).
-resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
-  name         = "block-unvetted-remote-mcp"
-  priority     = 10
-  match_kind   = "host"
-  match_values = ["mcp.unvetted.example"]
-  action       = "block"
+# --- Endpoint: MCP servers and tool calls --------------------------------
+# The same MCP policy model as the Salesforce policy above also decides what
+# managed devices start: this one denies an unvetted remote MCP server
+# everywhere, by device target. Tool calls are endpoint MCP rules: here, block
+# shell execution by AI tools for contractors (a tool_behavior rule).
+resource "ferentin_mcp_policy" "block_unvetted_remote" {
+  name     = "block-unvetted-remote-mcp"
+  priority = 10
+
+  targets = [
+    { kind = "host", values = ["mcp.unvetted.example"] },
+  ]
+
+  effect = {
+    type = "deny"
+  }
 }
 
 resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
@@ -281,7 +287,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
   priority         = 20
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
