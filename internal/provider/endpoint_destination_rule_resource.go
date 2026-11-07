@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 
 	"github.com/hashicorp/terraform-plugin-framework-validators/int64validator"
+	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -49,6 +51,7 @@ type EndpointDestinationRuleResourceModel struct {
 
 	DestinationKind  types.String `tfsdk:"destination_kind"`
 	CatalogSlug      types.String `tfsdk:"catalog_slug"`
+	CatalogRoles     types.Set    `tfsdk:"catalog_roles"`
 	DestinationHosts types.List   `tfsdk:"destination_hosts"`
 
 	Action     types.String `tfsdk:"action"`
@@ -63,6 +66,7 @@ type EndpointDestinationRuleResourceModel struct {
 	Criteria           []PolicyCriteriaModel `tfsdk:"criteria"`
 
 	PosturePredicate *EndpointPosturePredicateModel `tfsdk:"posture_predicate"`
+	TestRule         types.Bool                     `tfsdk:"test_rule"`
 
 	RuleID    types.String `tfsdk:"rule_id"`
 	CreatedAt types.String `tfsdk:"created_at"`
@@ -133,6 +137,8 @@ func (r *EndpointDestinationRuleResource) Configure(_ context.Context, req resou
 func (r *EndpointDestinationRuleResource) ValidateConfig(ctx context.Context, req resource.ValidateConfigRequest, resp *resource.ValidateConfigResponse) {
 	var destinationKind, catalogSlug, action, steerToURL types.String
 	var destinationHosts types.List
+	var catalogRoles types.Set
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("catalog_roles"), &catalogRoles)...)
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("destination_kind"), &destinationKind)...)
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("catalog_slug"), &catalogSlug)...)
 	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("destination_hosts"), &destinationHosts)...)
@@ -151,6 +157,14 @@ func (r *EndpointDestinationRuleResource) ValidateConfig(ctx context.Context, re
 		resp.Diagnostics.AddAttributeError(path.Root("catalog_slug"),
 			"catalog_slug is required when destination_kind is \"ai_provider\"",
 			"Set catalog_slug (e.g. \"openai\"), or switch destination_kind to \"host\" and set destination_hosts.")
+	}
+	// A role on a host rule would be stored and ignored, so the platform refuses
+	// it (EndpointPolicyAdminService.catalogRolesRefusal).
+	if !destinationKind.IsUnknown() && kind != "ai_provider" && len(catalogRoles.Elements()) > 0 {
+		resp.Diagnostics.AddAttributeError(path.Root("catalog_roles"),
+			"catalog_roles applies only when destination_kind is \"ai_provider\"",
+			"Catalog host roles narrow an AI provider's catalogued hosts. Remove catalog_roles from a "+
+				"\"host\" rule, or switch it to destination_kind \"ai_provider\".")
 	}
 	if kind == "host" && isUnsetList(destinationHosts) {
 		resp.Diagnostics.AddAttributeError(path.Root("destination_hosts"),
@@ -267,6 +281,20 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 					"`destination_kind = \"ai_provider\"`.**",
 				Optional: true,
 			},
+			"catalog_roles": schema.SetAttribute{
+				MarkdownDescription: "Only with `destination_kind = \"ai_provider\"`: the catalog host roles " +
+					"the rule covers, so it applies to some of the agent's hosts rather than all of them — " +
+					"for example `[\"model_api\"]` blocks the model API but not the auto-updater. One of " +
+					"`model_api`, `model_api_personal`, `app`, `auth`, `updater`, `mcp_proxy`, `telemetry`, " +
+					"`extensions`, `indexing`, `cloud_agent`, `session_sync`. Unset or empty covers every host " +
+					"the agent's catalog entry lists.\n\n" +
+					"The platform refuses a role the agent's catalog entry lists no host for.",
+				Optional:    true,
+				ElementType: types.StringType,
+				Validators: []validator.Set{
+					setvalidator.ValueStringsAre(stringvalidator.OneOf(destinationCatalogRoles...)),
+				},
+			},
 			"destination_hosts": schema.ListAttribute{
 				MarkdownDescription: "Explicit host / suffix list. **Required when " +
 					"`destination_kind = \"host\"`.** At most 64.\n\n" +
@@ -281,6 +309,17 @@ func (r *EndpointDestinationRuleResource) Schema(_ context.Context, _ resource.S
 					"endpoint policy and keep its last-known-good one.",
 				Optional:    true,
 				ElementType: types.StringType,
+			},
+
+			"test_rule": schema.BoolAttribute{
+				MarkdownDescription: "Marks the rule as a test. It is enforced like any other rule; the Agent " +
+					"Execution Monitor counts its decisions apart from policy. Never sent to devices. Default " +
+					"`false`.",
+				// A Default, not Computed-only: the platform keeps the stored mark when a
+				// PUT omits it, so sending it every time is what makes removing it from
+				// config clear it.
+				Optional: true, Computed: true,
+				Default: booldefault.StaticBool(false),
 			},
 
 			"action": schema.StringAttribute{
@@ -563,6 +602,15 @@ func (m *EndpointDestinationRuleResourceModel) toWrite(ctx context.Context) (adm
 	setStringPtr(m.SteerToURL, &body.SteerToUrl)
 	setStringPtr(m.CriteriaCombinator, &body.CriteriaCombinator)
 	setStringListPtr(ctx, m.DestinationHosts, &body.DestinationHosts)
+	setBoolPtr(m.TestRule, &body.TestRule)
+	// Always sent: on an update the platform KEEPS the stored roles when the field
+	// is absent, so an unset catalog_roles must go out as [] for removing it from
+	// config to widen the rule back to every host. [] is accepted on any kind.
+	roles := []string{}
+	if !m.CatalogRoles.IsNull() && !m.CatalogRoles.IsUnknown() {
+		diags.Append(m.CatalogRoles.ElementsAs(ctx, &roles, false)...)
+	}
+	body.CatalogRoles = &roles
 	setStringListPtr(ctx, m.AppBundleIDs, &body.AppBundleIds)
 	setStringListPtr(ctx, m.AppSigningIDs, &body.AppSigningIds)
 	setStringListPtr(ctx, m.AppTeamIDs, &body.AppTeamIds)
@@ -616,6 +664,8 @@ func endpointRuleToModel(tenantID string, rule *adminapi.EndpointDestinationRule
 	m.Enabled = boolPtrOrDefault(rule.Enabled)
 	m.DestinationKind = strPtrToTF(rule.DestinationKind)
 	m.CatalogSlug = strPtrToTF(rule.CatalogSlug)
+	m.CatalogRoles = emptySetAsNull(rule.CatalogRoles)
+	m.TestRule = types.BoolValue(rule.TestRule != nil && *rule.TestRule)
 	m.DestinationHosts = emptyListAsNull(stringSliceToList(rule.DestinationHosts))
 	m.Action = strPtrToTF(rule.Action)
 	m.SteerToURL = strPtrToTF(rule.SteerToUrl)
@@ -775,10 +825,37 @@ func (m *EndpointDestinationRuleResourceModel) keepEmptyForms(prior EndpointDest
 	m.AppSigningIDs = keepEmptyList(prior.AppSigningIDs, m.AppSigningIDs)
 	m.AppTeamIDs = keepEmptyList(prior.AppTeamIDs, m.AppTeamIDs)
 	m.DeviceGroupIDs = keepEmptyList(prior.DeviceGroupIDs, m.DeviceGroupIDs)
+	m.CatalogRoles = keepEmptySet(prior.CatalogRoles, m.CatalogRoles)
 	// `posture_predicate = { require_compliant = false }` is the predicate's
 	// empty form: the platform stores it as no condition.
 	if p := prior.PosturePredicate; m.PosturePredicate == nil && p != nil &&
 		!p.RequireCompliant.IsNull() && !p.RequireCompliant.IsUnknown() && !p.RequireCompliant.ValueBool() {
 		m.PosturePredicate = p
 	}
+}
+
+// destinationCatalogRoles is shared-core CatalogHostRoles.ROLES, the closed
+// vocabulary of a destination rule's catalog_roles.
+var destinationCatalogRoles = []string{"model_api", "model_api_personal", "app", "auth", "updater",
+	"mcp_proxy", "telemetry", "extensions", "indexing", "cloud_agent", "session_sync"}
+
+// emptySetAsNull reads an absent or empty string list as a null set, for an
+// Optional (not Computed) set the platform returns as null when unset.
+func emptySetAsNull(p *[]string) types.Set {
+	if p == nil || len(*p) == 0 {
+		return types.SetNull(types.StringType)
+	}
+	vals := make([]attr.Value, 0, len(*p))
+	for _, v := range *p {
+		vals = append(vals, types.StringValue(v))
+	}
+	return types.SetValueMust(types.StringType, vals)
+}
+
+// keepEmptySet is keepEmptyList for sets.
+func keepEmptySet(prior, got types.Set) types.Set {
+	if got.IsNull() && !prior.IsNull() && !prior.IsUnknown() && len(prior.Elements()) == 0 {
+		return prior
+	}
+	return got
 }

@@ -124,3 +124,17 @@ resource "ferentin_endpoint_destination_rule" "allow_claude_on_compliant_devices
     require_compliant = true
   }
 }
+
+# 6. Block some of an agent's hosts, not all of them. catalog_roles narrows an
+#    ai_provider rule to the catalog host roles named: here the proxy that
+#    carries claude.ai connector MCP around the gateway, while Claude Code's
+#    model API, sign-in and updater keep working.
+resource "ferentin_endpoint_destination_rule" "block_claude_code_connector_proxy" {
+  name     = "block-claude-code-connector-proxy"
+  priority = 40
+
+  destination_kind = "ai_provider"
+  catalog_slug     = "claude-code"
+  catalog_roles    = ["mcp_proxy"]
+  action           = "block"
+}
