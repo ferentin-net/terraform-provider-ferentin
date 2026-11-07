@@ -24,6 +24,7 @@ func TestSchemaMatchesModel(t *testing.T) {
 		"endpoint_mcp_rule":         {NewEndpointMCPRuleResource(), &EndpointMCPRuleResourceModel{}},
 		"data_protection_policy":    {NewDataProtectionPolicyResource(), &DataProtectionPolicyResourceModel{}},
 		"device_group":              {NewDeviceGroupResource(), &DeviceGroupResourceModel{}},
+		"mcp_route":                 {NewMCPRouteResource(), &MCPRouteResourceModel{}},
 	} {
 		resp := &resource.SchemaResponse{}
 		tc.res.Schema(ctx, resource.SchemaRequest{}, resp)

@@ -46,6 +46,7 @@ Lookups: [`ferentin_llm_provider`](data-sources/llm_provider.md), [`ferentin_mcp
 | [`ferentin_device_group`](resources/device_group.md) | A device group, the targeting unit for endpoint policy |
 | [`ferentin_endpoint_destination_rule`](resources/endpoint_destination_rule.md) | Allow or block AI destinations on the device |
 | [`ferentin_endpoint_mcp_rule`](resources/endpoint_mcp_rule.md) | Allow, block or steer MCP servers, and block tool calls |
+| [`ferentin_mcp_route`](resources/mcp_route.md) | Send an MCP server a device starts through Ferentin: the gateway, or the `ferentin-mcp` wrap |
 | [`ferentin_endpoint_agent_approval`](resources/endpoint_agent_approval.md) | Approve or deny one catalogued AI agent |
 | [`ferentin_mcp_local_server`](resources/mcp_local_server.md) | Approve or block a local (stdio) MCP server, so devices run it governed |
 | [`ferentin_endpoint_policy_settings`](resources/endpoint_policy_settings.md) | Posture: what happens when no rule matches, per tenant or device group |

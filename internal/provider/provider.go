@@ -545,6 +545,7 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewMCPProviderResource,
 		NewMCPServerFromCardResource,
 		NewMCPPolicyResource,
+		NewMCPRouteResource,
 		NewOtelSinkResource,
 		NewOtelPolicyResource,
 		NewAIAgentResource,
