@@ -115,6 +115,13 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   A write that finds the row's version moved retries once when the fields it
   owns are unchanged, so the two can live in one apply. Destroy leaves the
   defaults in force.
+- **List data sources for the unified MCP policy**: `ferentin_mcp_policies`
+  (every MCP policy, remote and local, `report_only` and `· local` siblings
+  included, read across all pages), `ferentin_mcp_routes` and
+  `ferentin_mcp_scope_defaults_scopes` (the tenant default plus each device
+  group with its own posture row). Each item has an `import_id`, and
+  `examples/endpoint-adopt-existing` now generates import blocks from them
+  instead of sending you to the console for IDs.
 - **`ferentin_endpoint_sandbox`**: the tenant's agent sandbox policy. It sets
   which AI tools get Ferentin's sandbox written into their settings, the
   folders their commands may write or must not touch, and the domains they
@@ -286,6 +293,13 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   provider used to omit them.
 - `ferentin_mcp_policy` deletes with the state version as `If-Match`, so a
   concurrent console edit is a 412 instead of a silent delete.
+- `ferentin_mcp_policy` sends `targets` only when there are some to write or
+  clear. The platform refuses any `targets` field, `[]` included, without
+  `policy:rw`, so an `mcp:policies:rw` principal could not manage a
+  gateway-only policy.
+- `ferentin_endpoint_sandbox` can be created again after a destroy. Destroy
+  saves a policy that enables nothing, and Create now adopts that shape
+  instead of refusing it as an existing policy.
 - The acceptance fixture's MCP provider uses a public `default_url`. The
   platform now refuses a private one (ferentin-net/ferentin-platform
   66bca30d2), which failed every test built on it.
