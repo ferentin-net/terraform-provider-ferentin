@@ -297,6 +297,13 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   clear. The platform refuses any `targets` field, `[]` included, without
   `policy:rw`, so an `mcp:policies:rw` principal could not manage a
   gateway-only policy.
+- `ferentin_mcp_server_from_card` sends `priority` with the card import, so a
+  new instance is created with it in one write. Before
+  ferentin-net/ferentin-platform#3318 the platform ignored priority on both
+  the import and the follow-up server update, so it stayed at 10 and every
+  plan showed it changing. The follow-up update still sets it when the import
+  did not (a re-import that adopts an existing instance, or an older
+  platform), and it needs a platform with #3318 to stick.
 - `ferentin_endpoint_sandbox` can be created again after a destroy. Destroy
   saves a policy that enables nothing, and Create now adopts that shape
   instead of refusing it as an existing policy.

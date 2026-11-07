@@ -193,8 +193,10 @@ func (r *MCPServerFromCardResource) Schema(_ context.Context, _ resource.SchemaR
 				PlanModifiers: []planmodifier.Bool{boolplanmodifier.UseStateForUnknown()},
 			},
 			"priority": schema.Int64Attribute{
-				MarkdownDescription: "Routing priority for the instance. Defaults to the platform's behaviour.",
-				Optional:            true, Computed: true,
+				MarkdownDescription: "Routing priority for the instance: 1-1000, lower is higher priority. " +
+					"Unset, the platform's default (10). Sent with the card import, so a new instance is " +
+					"created with it; changing it later updates the instance without re-importing.",
+				Optional: true, Computed: true,
 				PlanModifiers: []planmodifier.Int64{int64planmodifier.UseStateForUnknown()},
 			},
 
@@ -261,8 +263,9 @@ func (r *MCPServerFromCardResource) Schema(_ context.Context, _ resource.SchemaR
 	}
 }
 
-// Create posts the card, then (if the user supplied operator overrides) issues
-// a follow-up mcp_server Update to apply env / enabled / priority.
+// Create posts the card, with priority as an import option, then (if the user
+// supplied operator overrides) issues a follow-up mcp_server Update to apply
+// env / enabled, and priority when the import did not apply it.
 func (r *MCPServerFromCardResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan MCPServerFromCardResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
@@ -274,6 +277,14 @@ func (r *MCPServerFromCardResource) Create(ctx context.Context, req resource.Cre
 	opts := adminapi.MCPCardImportOptions{
 		EdgeSiteID:   plan.EdgeSiteID.ValueString(),
 		InstanceName: plan.InstanceName.ValueString(),
+	}
+	// The import takes the new instance's priority (ferentin-platform#3318), so
+	// it lands in the same write. A re-import, which adopts an existing
+	// instance, ignores it, and so does an older platform; the follow-up update
+	// below covers both.
+	if !plan.Priority.IsNull() && !plan.Priority.IsUnknown() {
+		v := int32(plan.Priority.ValueInt64())
+		opts.Priority = &v
 	}
 	out, err := r.sdk.MCPProviders().ImportCard(ctx, tenantID, plan.CardJSON.ValueString(), opts)
 	if err != nil {
@@ -288,7 +299,7 @@ func (r *MCPServerFromCardResource) Create(ctx context.Context, req resource.Cre
 	// them are set in the plan. If the follow-up fails the user gets an
 	// actionable error and the resource is left in a state where the
 	// provider+instance exist but the overrides didn't land.
-	if r.needsFollowUpUpdate(plan) {
+	if r.needsFollowUpUpdate(plan, out) {
 		if err := r.applyFollowUpUpdate(ctx, tenantID, state.ServerID.ValueString(), plan); err != nil {
 			addSDKError(&resp.Diagnostics, "Server-card import succeeded but follow-up update failed", err)
 			resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
@@ -382,11 +393,18 @@ func (r *MCPServerFromCardResource) Update(ctx context.Context, req resource.Upd
 	priorityChanged := !plan.Priority.Equal(state.Priority)
 
 	reimported := false
+	var imported *adminapi.MCPServerCardImportResponse
 	next := state
 	if cardChanged || edgeSiteChanged || instanceNameChanged {
 		opts := adminapi.MCPCardImportOptions{
 			EdgeSiteID:   plan.EdgeSiteID.ValueString(),
 			InstanceName: plan.InstanceName.ValueString(),
+		}
+		// Applied only if this import creates the instance; an adopted one
+		// keeps its priority and the follow-up update sets it.
+		if !plan.Priority.IsNull() && !plan.Priority.IsUnknown() {
+			v := int32(plan.Priority.ValueInt64())
+			opts.Priority = &v
 		}
 		out, err := r.sdk.MCPProviders().ImportCard(ctx, tenantID, plan.CardJSON.ValueString(), opts)
 		if err != nil {
@@ -395,18 +413,19 @@ func (r *MCPServerFromCardResource) Update(ctx context.Context, req resource.Upd
 		}
 		next = cardImportToModel(tenantID, plan, out)
 		reimported = true
+		imported = out
 	}
 
 	// Follow-up Update fires when one of two things is true:
 	//   1. We just re-imported — the import endpoint doesn't apply env /
-	//      enabled / priority, so the resulting instance is back to platform
-	//      defaults and we need to re-stamp the overrides.
+	//      enabled, and applies priority only to an instance it creates, so
+	//      the overrides need re-stamping.
 	//   2. An override-field changed between plan and state, with overrides
 	//      set in the plan to send.
 	// Gate explicitly to avoid re-sending env / enabled / priority on every
 	// terraform apply that touched an unrelated attribute.
 	overridesDirty := bearerChanged || envChanged || enabledChanged || priorityChanged
-	if (reimported || overridesDirty) && r.needsFollowUpUpdate(plan) {
+	if (reimported || overridesDirty) && r.needsFollowUpUpdate(plan, imported) {
 		if err := r.applyFollowUpUpdate(ctx, tenantID, next.ServerID.ValueString(), plan); err != nil {
 			addSDKError(&resp.Diagnostics, "Follow-up server update failed", err)
 			resp.Diagnostics.Append(resp.State.Set(ctx, &next)...)
@@ -480,7 +499,7 @@ func (r *MCPServerFromCardResource) resolveTenant(perResource types.String) stri
 	return r.tenantID
 }
 
-func (r *MCPServerFromCardResource) needsFollowUpUpdate(plan MCPServerFromCardResourceModel) bool {
+func (r *MCPServerFromCardResource) needsFollowUpUpdate(plan MCPServerFromCardResourceModel, out *adminapi.MCPServerCardImportResponse) bool {
 	if !plan.Env.IsNull() && !plan.Env.IsUnknown() && len(plan.Env.Elements()) > 0 {
 		return true
 	}
@@ -490,8 +509,12 @@ func (r *MCPServerFromCardResource) needsFollowUpUpdate(plan MCPServerFromCardRe
 	if !plan.Enabled.IsNull() && !plan.Enabled.IsUnknown() {
 		return true
 	}
+	// Priority went with the import; follow up only if it did not stick.
 	if !plan.Priority.IsNull() && !plan.Priority.IsUnknown() {
-		return true
+		if out == nil || out.Instance == nil || out.Instance.Priority == nil ||
+			int64(*out.Instance.Priority) != plan.Priority.ValueInt64() {
+			return true
+		}
 	}
 	return false
 }
