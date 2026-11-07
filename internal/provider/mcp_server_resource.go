@@ -63,12 +63,14 @@ type MCPServerResourceModel struct {
 	EdgeSiteID           types.String `tfsdk:"edge_site_id"`
 	DeploymentMode       types.String `tfsdk:"deployment_mode"`
 	UpstreamAuthStrategy types.String `tfsdk:"upstream_auth_strategy"`
-	AuthMode             types.String `tfsdk:"auth_mode"`
-	TransportType        types.String `tfsdk:"transport_type"`
-	EnabledScopes        types.List   `tfsdk:"enabled_scopes"` // []string
-	Tags                 types.Map    `tfsdk:"tags"`           // map[string]string
-	BearerToken          types.String `tfsdk:"bearer_token"`   // sugar for env = {BEARER_TOKEN: ...}
-	Env                  types.Map    `tfsdk:"env"`            // map[string]string — bearer tokens / API keys, encrypted server-side
+	// Write-only: read from config on Update, never stored in state.
+	AcknowledgeSubjectRekey types.Bool   `tfsdk:"acknowledge_subject_rekey"`
+	AuthMode                types.String `tfsdk:"auth_mode"`
+	TransportType           types.String `tfsdk:"transport_type"`
+	EnabledScopes           types.List   `tfsdk:"enabled_scopes"` // []string
+	Tags                    types.Map    `tfsdk:"tags"`           // map[string]string
+	BearerToken             types.String `tfsdk:"bearer_token"`   // sugar for env = {BEARER_TOKEN: ...}
+	Env                     types.Map    `tfsdk:"env"`            // map[string]string — bearer tokens / API keys, encrypted server-side
 
 	// CC-federation overrides — only meaningful when
 	// upstream_auth_strategy = "cc_federated". The FK points at a
@@ -258,6 +260,20 @@ func (r *MCPServerResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"Not directly user-settable; influenced by `upstream_auth_strategy` and the provider's catalog config.",
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
+			},
+			"acknowledge_subject_rekey": schema.BoolAttribute{
+				MarkdownDescription: "Set `true` to proceed with an update that moves this server to a " +
+					"different issuer: between `ema_ferentin`, `ema_federated` (or another identity " +
+					"provider) and per-user OAuth. The upstream then sees every user under a new subject, " +
+					"so the platform refuses such a change with 409 (`signer_change_rekeys_users`) when the " +
+					"upstream has seen users through this server in the last 30 days, unless it is " +
+					"acknowledged.\n\n" +
+					"**WriteOnly** (Terraform 1.11+): sent on the update it is configured for, never stored " +
+					"in state, and ignored on create and on any update that does not change the issuer. " +
+					"Remove it once the change is applied, so a later issuer change is a deliberate " +
+					"decision again.",
+				Optional:  true,
+				WriteOnly: true,
 			},
 			"upstream_auth_strategy": schema.StringAttribute{
 				MarkdownDescription: "Strategy for authenticating to the upstream MCP server. Allowed: " +
@@ -558,6 +574,16 @@ func (r *MCPServerResource) Update(ctx context.Context, req resource.UpdateReque
 	if err != nil {
 		resp.Diagnostics.AddError("Invalid MCP server config", err.Error())
 		return
+	}
+	// Write-only, so the plan holds null: read it from config.
+	var ack types.Bool
+	resp.Diagnostics.Append(req.Config.GetAttribute(ctx, path.Root("acknowledge_subject_rekey"), &ack)...)
+	if resp.Diagnostics.HasError() {
+		return
+	}
+	if !ack.IsNull() && !ack.IsUnknown() && ack.ValueBool() {
+		t := true
+		body.AcknowledgeSubjectRekey = &t
 	}
 
 	srv, err := r.sdk.MCPServers().Update(ctx, tenantID, serverID, version, body)

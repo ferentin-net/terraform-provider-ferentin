@@ -9,7 +9,7 @@ description: |-
 
 Allow the AI providers you sanction, pin one of them to its signed desktop app, and block the rest, on every managed device in the tenant. The whole policy is four [`ferentin_endpoint_destination_rule`](../resources/endpoint_destination_rule.md) resources and the tenant-default [`ferentin_endpoint_policy_settings`](../resources/endpoint_policy_settings.md) row.
 
-The configuration is the [`endpoint-approved-ai`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-approved-ai) example. It uses no device groups and no MCP rules, so it is the place to start. The [`endpoint-fleet`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-fleet) example builds on it with device groups, MCP rules, posture overrides and a staged rollout.
+The configuration is the [`endpoint-approved-ai`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-approved-ai) example. It uses no device groups and no MCP policies, so it is the place to start. The [`endpoint-fleet`](https://github.com/ferentin-net/terraform-provider-ferentin/tree/main/examples/endpoint-fleet) example builds on it with device groups, an MCP policy, a tool call rule, posture overrides and a staged rollout.
 
 ## What you build
 
@@ -113,7 +113,7 @@ resource "ferentin_endpoint_policy_settings" "default" {
 
 With `allow`, the rules act as a deny list with pinned exceptions. With `block`, they become an **allowlist**: anything they do not allow is blocked on the device, including traffic you did not expect. Try `block` on one machine before the fleet.
 
-~> This resource is an **upsert**. On a tenant whose posture was configured in the console, `apply` adopts the existing row and writes the attributes in your config, along with the provider's defaults for attributes it leaves out: `false` for `ech_strip_enabled`, `doh_block_enabled` and `quic_block_enabled`, and an empty `mcp_gateway_url`. Read the first `plan` and copy any values you want to keep into the config. Attributes with no default, such as `unapproved_mcp_action` and `hook_rule_enforcement`, keep what the tenant has.
+~> This resource is an **upsert**. On a tenant whose posture was configured in the console, `apply` adopts the existing row and writes the attributes in your config, along with the provider's defaults for attributes it leaves out: `false` for `ech_strip_enabled`, `doh_block_enabled` and `quic_block_enabled`, and an empty `mcp_gateway_url`. Read the first `plan` and copy any values you want to keep into the config. Attributes with no default, such as `hook_rule_enforcement`, keep what the tenant has.
 
 ## 5. Apply, then activate
 

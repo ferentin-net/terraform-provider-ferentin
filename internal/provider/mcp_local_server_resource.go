@@ -103,7 +103,7 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 	resp.Schema = schema.Schema{
 		MarkdownDescription: "Local MCP server approval — a locally spawned (stdio) MCP server that managed " +
 			"devices run governed, through `ferentin-mcp`, instead of refusing it under " +
-			"`unapproved_mcp_action`.\n\n" +
+			"`server_approval` on `ferentin_mcp_scope_defaults`.\n\n" +
 			"Create one from **exactly one** of:\n\n" +
 			"* `argv_template` (with `display_name`) — the command line the approval covers, where `*` " +
 			"matches exactly one argument: `[\"uv\", \"run\", \"--directory\", \"*\", \"okta-mcp-server\"]` " +
@@ -111,7 +111,7 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"that names no package.\n" +
 			"* `catalog_slug` — a local MCP catalog entry, keyed on its package identities.\n\n" +
 			"Either way the server is approved on creation, tenant-wide. Its tools still start unvetted; " +
-			"`local_mcp_risk_policy` on `ferentin_endpoint_policy_settings` decides what developers get " +
+			"`tool_vetting_risk_policy` on `ferentin_mcp_scope_defaults` decides what developers get " +
 			"from them.\n\n" +
 			"Import manages the verdict of a server a device reported, too. Such a server cannot be " +
 			"deleted: destroying it leaves it, and its verdict, in place, with a warning.\n\n" +
@@ -162,7 +162,7 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 			},
 			"status": schema.StringAttribute{
 				MarkdownDescription: "The verdict: `approved` (devices run it, governed), `blocked`, or " +
-					"`pending` (no decision: `unapproved_mcp_action` applies). A created server starts " +
+					"`pending` (no decision: the scope's `server_approval` default applies). A created server starts " +
 					"`approved`. Leaving it out keeps the current verdict.",
 				Optional: true, Computed: true,
 				PlanModifiers: keep,
@@ -318,7 +318,7 @@ func (r *MCPLocalServerResource) ModifyPlan(ctx context.Context, req resource.Mo
 	if state.Status.ValueString() == "approved" {
 		resp.Diagnostics.AddWarning(fmt.Sprintf("Destroying the approval of local MCP server %q", name),
 			"Devices drop the approval on their next policy fetch, and the server falls back to "+
-				"unapproved_mcp_action: reported, quarantined or blocked.")
+				"its scope's server_approval default (ferentin_mcp_scope_defaults): reported, quarantined or blocked.")
 	}
 }
 

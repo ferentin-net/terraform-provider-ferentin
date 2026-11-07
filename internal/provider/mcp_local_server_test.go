@@ -164,7 +164,7 @@ func TestMCPLocalServerModifyPlan(t *testing.T) {
 	t.Run("destroying a declared approval warns", func(t *testing.T) {
 		st := tfsdk.State{Schema: s, Raw: localServerValue(t, map[string]tftypes.Value{
 			"display_name": str("Okta"), "status": str("approved"), "declared_via": str("template")})}
-		if w := run(st, nullPlan, nullPlan).Diagnostics.Warnings(); len(w) != 1 || !strings.Contains(w[0].Detail(), "unapproved_mcp_action") {
+		if w := run(st, nullPlan, nullPlan).Diagnostics.Warnings(); len(w) != 1 || !strings.Contains(w[0].Detail(), "server_approval") {
 			t.Errorf("got %v", w)
 		}
 	})

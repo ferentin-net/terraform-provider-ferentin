@@ -3,10 +3,11 @@
 page_title: "ferentin_endpoint_mcp_rule Resource - Ferentin"
 subcategory: ""
 description: |-
-  Endpoint MCP rule — allow / block / steer for MCP servers and tool calls on managed devices. Rules are evaluated on-device, first match wins by ascending priority.
+  Endpoint MCP rule: blocks a tool call on managed devices. Rules are evaluated on-device, first match wins by ascending priority.
   What a rule matches depends on match_kind:
-  remote MCP servers — host, url_prefixlocal (stdio) MCP servers — package, argv_containstool calls, decided at call time — tool_name, command_binarytool behaviours — tool_behavior (shell, file_read, file_write), expanded into call-time rules for every AI tool that can express them
-  Call-time and behaviour rules support block only. Whether a call-time block denies the call or only counts it is set per scope by hook_rule_enforcement on ferentin_endpoint_policy_settings.
+  tool_name: an MCP tool by namecommand_binary: the binary a shell tool call runstool_behavior: shell, file_read or file_write, expanded into a rule for every AI tool's built-in tools that can express it
+  Whether a rule denies the call or only counts it is set per scope by hook_rule_enforcement on ferentin_endpoint_policy_settings.
+  ~> MCP server rules moved to ferentin_mcp_policy. Allowing or blocking an MCP server (host, url_prefix, package, argv_contains) is an MCP policy with targets, and steering one is a ferentin_mcp_route. This resource no longer authors them; see the upgrade notes in the changelog.
   Import
   
   terraform import ferentin_endpoint_mcp_rule.example <tenant_id>/<rule_id>
@@ -16,16 +17,17 @@ description: |-
 
 # ferentin_endpoint_mcp_rule (Resource)
 
-Endpoint MCP rule — allow / block / steer for MCP servers and tool calls on managed devices. Rules are evaluated on-device, **first match wins** by ascending `priority`.
+Endpoint MCP rule: blocks a tool call on managed devices. Rules are evaluated on-device, **first match wins** by ascending `priority`.
 
 What a rule matches depends on `match_kind`:
 
-* **remote MCP servers** — `host`, `url_prefix`
-* **local (stdio) MCP servers** — `package`, `argv_contains`
-* **tool calls**, decided at call time — `tool_name`, `command_binary`
-* **tool behaviours** — `tool_behavior` (`shell`, `file_read`, `file_write`), expanded into call-time rules for every AI tool that can express them
+* `tool_name`: an MCP tool by name
+* `command_binary`: the binary a shell tool call runs
+* `tool_behavior`: `shell`, `file_read` or `file_write`, expanded into a rule for every AI tool's built-in tools that can express it
 
-Call-time and behaviour rules support `block` only. Whether a call-time `block` denies the call or only counts it is set per scope by `hook_rule_enforcement` on `ferentin_endpoint_policy_settings`.
+Whether a rule denies the call or only counts it is set per scope by `hook_rule_enforcement` on `ferentin_endpoint_policy_settings`.
+
+~> **MCP server rules moved to `ferentin_mcp_policy`.** Allowing or blocking an MCP server (`host`, `url_prefix`, `package`, `argv_contains`) is an MCP policy with `targets`, and steering one is a `ferentin_mcp_route`. This resource no longer authors them; see the upgrade notes in the changelog.
 
 ## Import
 
@@ -38,54 +40,50 @@ An import has no configured spelling of `match_values`, so it takes the platform
 ## Example Usage
 
 ```terraform
-# Endpoint MCP rules govern MCP servers and tool calls on managed devices.
-# They are evaluated on-device, FIRST MATCH WINS by ascending priority.
+# Endpoint MCP rules block tool calls on managed devices: by MCP tool name, by
+# the binary a shell call runs, or by tool behaviour. They are evaluated
+# on-device, FIRST MATCH WINS by ascending priority.
+#
+# Whether a rule denies the call or only counts it is set per scope by
+# hook_rule_enforcement on ferentin_endpoint_policy_settings.
+#
+# Allowing or blocking an MCP server is a ferentin_mcp_policy with targets,
+# and steering one is a ferentin_mcp_route.
 
-# The device group the scoped rules target. Declared here so the snippet stands
+# The device group the scoped rule targets. Declared here so the snippet stands
 # on its own; see ferentin_device_group for the full resource.
 resource "ferentin_device_group" "contractors" {
   name   = "contractors"
   source = "manual"
 }
 
-# Remote MCP server: block a host outright for contractors. Narrowing a block
-# by device group fails safe, so it is accepted.
-resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
-  name             = "block-unvetted-remote"
-  priority         = 10
-  match_kind       = "host"
-  match_values     = ["mcp.unvetted.example"]
-  action           = "block"
+# Tool behaviour: block shell execution from AI tools, for every vendor whose
+# built-in tools can express it.
+resource "ferentin_endpoint_mcp_rule" "block_shell" {
+  name         = "block-agent-shell"
+  priority     = 10
+  match_kind   = "tool_behavior"
+  match_values = ["shell"]
+
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
-# Local (stdio) MCP server: allow one npm package. An allow puts the entry
-# back exactly as written, so the server runs outside Ferentin and nothing sees
-# its tool calls; to keep a local server governed, approve it with
-# ferentin_mcp_local_server instead. A local allow must also be tenant-wide
-# for now: devices carry no authenticated identity when a local server is
-# admitted, so device_group_ids or criteria here are refused.
-resource "ferentin_endpoint_mcp_rule" "allow_internal_package" {
-  name         = "allow-internal-mcp-package"
+# Command binary: block shell calls that run these binaries, for everyone.
+resource "ferentin_endpoint_mcp_rule" "block_exfil_commands" {
+  name         = "block-exfil-commands"
   priority     = 20
-  match_kind   = "package"
-  match_values = ["npm:@acme/internal-mcp"]
-  action       = "allow"
-
-  # Only for this MCP client.
-  app_bundle_ids = ["com.anthropic.claudefordesktop"]
+  match_kind   = "command_binary"
+  match_values = ["curl", "scp", "nc"]
 }
 
-# Tool behaviour: block shell execution from AI tools, for every vendor that
-# can express it. Call-time and behaviour rules support "block" only, and
-# whether they deny or only count is set by hook_rule_enforcement on
-# ferentin_endpoint_policy_settings.
-resource "ferentin_endpoint_mcp_rule" "block_shell" {
-  name         = "block-agent-shell"
+# Tool name: block one MCP tool, only in this MCP client.
+resource "ferentin_endpoint_mcp_rule" "block_delete_repo" {
+  name         = "block-delete-repo"
   priority     = 30
-  match_kind   = "tool_behavior"
-  match_values = ["shell"]
-  action       = "block"
+  match_kind   = "tool_name"
+  match_values = ["delete_repository"]
+
+  app_bundle_ids = ["com.anthropic.claudefordesktop"]
 }
 ```
 
@@ -94,15 +92,10 @@ resource "ferentin_endpoint_mcp_rule" "block_shell" {
 
 ### Required
 
-- `action` (String) `allow`, `block` or `steer`. Call-time kinds (`tool_name`, `command_binary`) and `tool_behavior` support `block` only.
-- `match_kind` (String) What `match_values` name: `host`, `url_prefix` (remote MCP servers), `package`, `argv_contains` (local MCP servers), `tool_name`, `command_binary` (tool calls), or `tool_behavior`.
-- `match_values` (List of String) Values to match, interpreted per `match_kind`. 1-64 entries.
+- `match_kind` (String) What `match_values` name: `tool_name`, `command_binary` or `tool_behavior`.
+- `match_values` (List of String) Values to match, interpreted per `match_kind`. 1-64 entries. A `tool_behavior` rule takes `shell`, `file_read` or `file_write`.
 
-* `host` — bare hostnames (no scheme, port or path)
-* `package` — one registry-qualified id per entry
-* `tool_behavior` — `shell`, `file_read` or `file_write`
-
-The platform normalizes some values: `host` is lowercased on every rule, `tool_behavior` trimmed and lowercased, `url_prefix` canonicalized where possible, and `allow` / `steer` values fully canonicalized. Terraform keeps your spelling here and the platform's in `stored_match_values`, so normalization does not show as drift.
+The platform normalizes some values (`tool_behavior` is trimmed and lowercased). Terraform keeps your spelling here and the platform's in `stored_match_values`, so normalization does not show as drift.
 - `name` (String) Rule name, unique within the tenant. 1-255 characters.
 
 ### Optional
@@ -110,17 +103,14 @@ The platform normalizes some values: `host` is lowercased on every rule, `tool_b
 - `app_bundle_ids` (List of String) Which MCP **client** the rule governs (Claude Desktop, Cursor, …) by macOS bundle identifier, e.g. `com.anthropic.claudefordesktop`. Never which server. Empty or unset = any client. At most 64.
 - `criteria` (Attributes List) User/department ABAC criteria that **narrow** the rule to a population. Groups combine via `criteria_combinator`; no criteria means the rule applies to every user it otherwise targets.
 
-~> **Removing criteria widens the rule**, and the provider warns at plan when an apply would. Criteria are refused on a local `allow` rule, for the same reason as `device_group_ids`. (see [below for nested schema](#nestedatt--criteria))
+~> **Removing criteria widens the rule**, and the provider warns at plan when an apply would. (see [below for nested schema](#nestedatt--criteria))
 - `criteria_combinator` (String) How `criteria` groups combine: `AND` or `OR`. Default `AND`.
 - `description` (String)
 - `device_group_ids` (List of String) Device groups this rule applies to — reference `ferentin_device_group.<name>.group_id`. Empty or unset = **every device in the tenant**.
-
-~> Refused on a local `allow` rule (`package` / `argv_contains`): devices do not yet carry an authenticated identity when a local server is admitted, so the narrowing would be ignored and the allow would apply tenant-wide. Narrowing a `block` fails safe and is accepted.
 - `enabled` (Boolean) Whether the rule is evaluated. Default `true`.
 - `priority` (Number) Evaluation order — 1 is highest, first match wins. Default `100`.
 
 ~> **Ownership warning.** Ordering is the policy here, so do not split ownership of `priority` between Terraform and the console: the console's reorder arrows swap two rules' priorities, and Terraform would then fight it on every plan.
-- `steer_to_url` (String) Gateway route a remote `steer` rule sends the server to: this tenant's MCP gateway on the public edge, `https://<tenant-short-name>.mcp.ferentin.net/v1`, ending in the route of an enabled MCP server. **Required on a `steer` rule with `match_kind` `host` or `url_prefix`; refused on any other rule.** Must be `https://`. A local steer wraps the entry in `ferentin-mcp` and has no target.
 - `tenant_id` (String)
 
 ### Read-Only

@@ -96,7 +96,7 @@ output "client_facing_url" {
 - `enabled` (Boolean) Whether the instance is available for routing. Defaults to the platform's behaviour (typically true on first import; preserved on re-import).
 - `env` (Map of String, Sensitive) Plain-text upstream credentials. Field names match the card's `_meta.net.ferentin.curation.credential_fields[].name`. Use `bearer_token` instead for the common single-token case. Encrypted server-side at rest; sensitive — redacted in logs and plan output.
 - `instance_name` (String) Override the platform's default `<slug>-1` instance naming on first import. Ignored on subsequent re-imports (the existing instance is reused).
-- `priority` (Number) Routing priority for the instance. Defaults to the platform's behaviour.
+- `priority` (Number) Routing priority for the instance: 1-1000, lower is higher priority. Unset, the platform's default (10). Sent with the card import, so a new instance is created with it; changing it later updates the instance without re-importing.
 - `tenant_id` (String) Tenant the imported provider + server are created under. Defaults to the tenant resolved from the provider block's JWT.
 
 ### Read-Only

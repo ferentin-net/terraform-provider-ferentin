@@ -107,7 +107,7 @@ variable "blocked_hosts" {
 variable "hook_rule_enforcement" {
   type        = string
   description = <<-EOT
-    Call-time enforcement of MCP `block` rules (tool calls and tool
+    Call-time enforcement of endpoint MCP rules (tool calls and tool
     behaviours), kept separate from enforcement_stage on purpose:
 
       shadow  — count what a `block` rule would deny, deny nothing.

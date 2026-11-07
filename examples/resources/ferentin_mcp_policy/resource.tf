@@ -1,3 +1,7 @@
+# One MCP policy model covers remote MCP servers reached through the gateway
+# and local MCP servers started on managed devices. A policy selects servers by
+# provider instance, by device target, or both.
+
 # `provider_instances` takes MCP server UUIDs, not names. The platform stores
 # and echoes UUIDs, so a name would drift on every plan; the provider rejects a
 # non-UUID at plan time rather than letting that reach the API. In a real
@@ -7,14 +11,23 @@ variable "internal_search_server_id" {
   description = "UUID of the MCP server these policies govern."
 }
 
-# MCP policy with allow effect — engineering-only access to internal search.
+# Allow, by provider instance: engineering-only access to internal search.
 resource "ferentin_mcp_policy" "engineering_search" {
   name        = "engineering-internal-search"
   description = "Engineering users can query internal search"
   priority    = 50
-  enabled     = true
 
   provider_instances = [var.internal_search_server_id]
+
+  criteria = [{
+    operator = "AND"
+    type     = "claims"
+    conditions = [{
+      field    = "groups"
+      operator = "contains"
+      value    = jsonencode("Engineering")
+    }]
+  }]
 
   effect = {
     type                  = "allow"
@@ -24,16 +37,80 @@ resource "ferentin_mcp_policy" "engineering_search" {
   }
 }
 
-# Default-deny that catches everything else (higher priority number = lower precedence).
+# Default deny that catches everything else (a higher priority number is a
+# lower precedence).
 resource "ferentin_mcp_policy" "default_deny" {
   name     = "default-deny-internal-search"
   priority = 1000
-  enabled  = true
 
   provider_instances = [var.internal_search_server_id]
 
   effect = {
     type    = "deny"
-    message = "Access to internal search requires engineering role."
+    message = "Access to internal search requires the Engineering group."
+  }
+}
+
+# Deny, by device target: a remote host and a local package nobody may start
+# on a managed device. The host target also reaches the device network filter.
+# The Security group is exempt.
+resource "ferentin_mcp_policy" "block_unvetted" {
+  name     = "block-unvetted-mcp"
+  priority = 10
+
+  targets = [
+    { kind = "host", values = ["mcp.unvetted.example"] },
+    { kind = "package", values = ["npm:@evil/mcp-server"] },
+  ]
+
+  effect = {
+    type    = "deny"
+    message = "This MCP server has not been vetted. Ask #security for a review."
+  }
+
+  unless = {
+    groups = [{
+      operator = "AND"
+      type     = "claims"
+      conditions = [{
+        field    = "groups"
+        operator = "contains"
+        value    = jsonencode("Security")
+      }]
+    }]
+  }
+}
+
+# Allow, by device target: let one internal package start on devices. With
+# targets and no provider instance, applies_at defaults to "admit": the policy
+# lifts the server default where the server starts.
+resource "ferentin_mcp_policy" "allow_internal_package" {
+  name     = "allow-internal-mcp-package"
+  priority = 20
+
+  targets = [
+    { kind = "package", values = ["npm:@acme/internal-mcp"] },
+    # Only in this MCP client.
+    { kind = "app_bundle_id", values = ["com.anthropic.claudefordesktop"] },
+  ]
+
+  effect = {
+    type = "allow"
+  }
+}
+
+# Rehearse before enforcing: report_only records what the policy would have
+# refused on the audit trail and decides nothing.
+resource "ferentin_mcp_policy" "rehearse_block_remote" {
+  name     = "rehearse-block-remote-mcp"
+  priority = 30
+  mode     = "report_only"
+
+  targets = [
+    { kind = "class", values = ["remote"] },
+  ]
+
+  effect = {
+    type = "deny"
   }
 }

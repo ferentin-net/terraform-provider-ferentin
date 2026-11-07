@@ -183,6 +183,11 @@ output "todos_resource_secret_stored" {
 
 ### Optional
 
+> **NOTE**: [Write-only arguments](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments) are supported in Terraform 1.11 and later.
+
+- `acknowledge_subject_rekey` (Boolean, [Write-only](https://developer.hashicorp.com/terraform/language/resources/ephemeral#write-only-arguments)) Set `true` to proceed with an update that moves this server to a different issuer: between `ema_ferentin`, `ema_federated` (or another identity provider) and per-user OAuth. The upstream then sees every user under a new subject, so the platform refuses such a change with 409 (`signer_change_rekeys_users`) when the upstream has seen users through this server in the last 30 days, unless it is acknowledged.
+
+**WriteOnly** (Terraform 1.11+): sent on the update it is configured for, never stored in state, and ignored on create and on any update that does not change the issuer. Remove it once the change is applied, so a later issuer change is a deliberate decision again.
 - `auth_mode` (String) Whether upstream credentials are agent-bound (`agent` — one tenant-shared credential, no per-user binding) or user-bound (`user` — per-user OAuth with per-identity credential binding). Resolved at plan time: the provider auto-selects `agent` for non-interactive strategies (`static_bearer`, `custom_headers`, `cc_federated`) to satisfy the platform's mig 845 invariant; interactive strategies (`oauth2_user`, `ema_*`) leave the value null and let the platform infer. Set explicitly to override. Allowed: `agent`, `user`.
 - `bearer_token` (String, Sensitive) Bearer token to forward to the upstream MCP when `upstream_auth_strategy = "static_bearer"`. Sugar for `env = { BEARER_TOKEN = ... }` — the common case where the upstream wants a single token in the `Authorization` header. Mutually exclusive with `env`. Sensitive — redacted in logs and plan output.
 - `cc_federated_audience_override` (String) Per-server `audience` value sent at mint time. Narrows the workload OAuth client's `default_audience` for just this server. Only meaningful with `cc_federated`.

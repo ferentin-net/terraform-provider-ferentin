@@ -12,6 +12,9 @@
 # through, so Terraform just stops managing it and the fleet keeps enforcing
 # whatever was last applied. That is fail-closed on purpose. To genuinely stand
 # enforcement down, apply the permissive posture first, then destroy.
+#
+# What a local MCP server or tool meets when no MCP policy applies to it is set
+# per scope on ferentin_mcp_scope_defaults, which writes the same row.
 
 # The device groups the per-group override targets. Declared here so the snippet stands on
 # its own; see ferentin_device_group for the full resource.
@@ -23,38 +26,16 @@ resource "ferentin_device_group" "contractors" {
 # Tenant default: observe and report, enforce nothing. This is the Phase 1
 # shadow-AI-visibility posture — tightening is a deliberate act.
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
 
   # Count what MCP `block` rules would deny without denying anything.
   hook_rule_enforcement = "shadow"
-
-  # Unvetted local MCP tools, by risk rating. Tenant default only: the platform
-  # refuses this on a device-group override. Any ask_once / ask_every_call tier
-  # needs approval routing configured in the admin console first.
-  local_mcp_risk_policy = {
-    low    = "allow"
-    medium = "deny"
-    high   = "deny"
-  }
-
-  # Approval routing for step-up approvals on unvetted local MCP tools, as
-  # JSON. An ask_once / ask_every_call tier above needs this set. Clearing it
-  # is done in the admin console.
-  local_mcp_approval_config = jsonencode({
-    step_up_mode    = "approve"
-    timeout_seconds = 900
-    channels        = [{ type = "invocation_context" }]
-  })
 }
 
-# Contractors get the strict posture: quarantine unapproved MCP server configs,
-# force all AI traffic through an allowlist, and close the network side-channels
+# Contractors get the strict posture: force all AI traffic through an allowlist, and close the network side-channels
 # that hide SNI.
 resource "ferentin_endpoint_policy_settings" "contractors" {
   device_group_id = ferentin_device_group.contractors.group_id
-
-  unapproved_mcp_action = "quarantine"
 
   # Approved MCP client configs are rewritten to point here: the tenant's MCP
   # gateway on the public edge, https://<tenant-short-name>.mcp.ferentin.net/v1.

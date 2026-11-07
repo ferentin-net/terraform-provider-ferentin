@@ -44,17 +44,6 @@ variable "pilot_hook_rule_enforcement" {
   }
 }
 
-variable "unapproved_mcp_action" {
-  type        = string
-  description = "Posture both scopes share: what the agent does with an unapproved MCP server config (report_only, quarantine or block)."
-  default     = "report_only"
-
-  validation {
-    condition     = contains(["report_only", "quarantine", "block"], var.unapproved_mcp_action)
-    error_message = "unapproved_mcp_action must be report_only, quarantine or block."
-  }
-}
-
 variable "default_destination_action" {
   type        = string
   description = "Posture both scopes share: what happens to AI traffic no destination rule matches (allow or block)."

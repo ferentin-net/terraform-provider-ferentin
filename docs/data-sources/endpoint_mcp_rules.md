@@ -16,8 +16,9 @@ Every item carries `import_id`, the ID its resource's `import` block takes, and 
 ## Example Usage
 
 ```terraform
-# Every endpoint MCP rule (server, tool call and behaviour rules), in
-# evaluation order (ascending priority).
+# Every endpoint MCP rule, in evaluation order (ascending priority). This lists
+# server rules written in the console too, although ferentin_endpoint_mcp_rule
+# authors tool call and behaviour rules only.
 data "ferentin_endpoint_mcp_rules" "all" {}
 
 # Rules the fleet does not enforce as written.

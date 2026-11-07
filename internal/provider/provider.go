@@ -545,6 +545,7 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewMCPProviderResource,
 		NewMCPServerFromCardResource,
 		NewMCPPolicyResource,
+		NewMCPRouteResource,
 		NewOtelSinkResource,
 		NewOtelPolicyResource,
 		NewAIAgentResource,
@@ -557,6 +558,8 @@ func (p *FerentinProvider) Resources(_ context.Context) []func() resource.Resour
 		NewEndpointAgentApprovalResource,
 		NewMCPLocalServerResource,
 		NewEndpointPolicySettingsResource,
+		NewEndpointSandboxResource,
+		NewMCPScopeDefaultsResource,
 	}
 }
 
@@ -579,6 +582,9 @@ func (p *FerentinProvider) DataSources(_ context.Context) []func() datasource.Da
 		NewEndpointPolicySettingsScopesDataSource,
 		NewEndpointAgentApprovalsDataSource,
 		NewMCPLocalServersDataSource,
+		NewMCPPoliciesDataSource,
+		NewMCPRoutesDataSource,
+		NewMCPScopeDefaultsScopesDataSource,
 	}
 }
 

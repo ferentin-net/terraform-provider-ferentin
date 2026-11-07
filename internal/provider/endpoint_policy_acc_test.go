@@ -291,14 +291,11 @@ func TestAccEndpointPolicySettings_tenantDefault(t *testing.T) {
 			{
 				Config: `
 resource "ferentin_endpoint_policy_settings" "tenant" {
-  unapproved_mcp_action      = "quarantine"
   default_destination_action = "allow"
   quic_block_enabled         = true
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"unapproved_mcp_action", "quarantine"),
 					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
 						"quic_block_enabled", "true"),
 					// The tenant-default row has no device group; its id is the bare tenant id.
@@ -311,13 +308,12 @@ resource "ferentin_endpoint_policy_settings" "tenant" {
 				// Second apply exercises the If-Match path on an upsert.
 				Config: `
 resource "ferentin_endpoint_policy_settings" "tenant" {
-  unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
   quic_block_enabled         = false
 }
 `,
 				Check: resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-					"unapproved_mcp_action", "report_only"),
+					"quic_block_enabled", "false"),
 			},
 			{
 				ResourceName:      "ferentin_endpoint_policy_settings.tenant",
@@ -328,13 +324,13 @@ resource "ferentin_endpoint_policy_settings" "tenant" {
 	})
 }
 
-// TestAccEndpointPolicySettings_hookRuleAndRiskPolicy covers the two
-// server-defaulted, console-editable fields. The second step drops both from
-// config: the upsert keeps an omitted field and the provider does not send one
-// the config leaves out, so the values must survive. That is the property unit
+// TestAccEndpointPolicySettings_hookRule covers a server-defaulted,
+// console-editable field. The second step drops it from config: the upsert
+// keeps an omitted field and the provider does not send one the config leaves
+// out, so the value must survive. That is the property unit
 // tests cannot prove. `enforce` is not exercised: whether the platform accepts
 // it depends on the tenant's fleet (it returns 409 until devices support it).
-func TestAccEndpointPolicySettings_hookRuleAndRiskPolicy(t *testing.T) {
+func TestAccEndpointPolicySettings_hookRule(t *testing.T) {
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
@@ -342,44 +338,26 @@ func TestAccEndpointPolicySettings_hookRuleAndRiskPolicy(t *testing.T) {
 			{
 				Config: `
 resource "ferentin_endpoint_policy_settings" "tenant" {
-  unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
   hook_rule_enforcement      = "shadow"
-
-  # allow / deny only: an ask_* tier needs approval routing on the tenant.
-  local_mcp_risk_policy = {
-    low    = "allow"
-    medium = "deny"
-    high   = "deny"
-  }
 }
 `,
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"hook_rule_enforcement", "shadow"),
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"local_mcp_risk_policy.low", "allow"),
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"local_mcp_risk_policy.medium", "deny"),
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"local_mcp_risk_policy.high", "deny"),
-				),
+				Check: resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
+					"hook_rule_enforcement", "shadow"),
 			},
 			{
-				// Both omitted, another field changed so the apply really writes.
+				// Omitted, another field changed so the apply really writes.
 				Config: `
 resource "ferentin_endpoint_policy_settings" "tenant" {
-  unapproved_mcp_action      = "quarantine"
   default_destination_action = "allow"
+  quic_block_enabled         = true
 }
 `,
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"unapproved_mcp_action", "quarantine"),
+						"quic_block_enabled", "true"),
 					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
 						"hook_rule_enforcement", "shadow"),
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.tenant",
-						"local_mcp_risk_policy.medium", "deny"),
 				),
 			},
 			{
@@ -409,7 +387,6 @@ resource "ferentin_device_group" "test" {
 
 resource "ferentin_endpoint_policy_settings" "group" {
   device_group_id            = ferentin_device_group.test.group_id
-  unapproved_mcp_action      = "block"
   default_destination_action = "block"
   mcp_gateway_url            = "https://mcp.example.com"
   ech_strip_enabled          = true
@@ -421,8 +398,6 @@ resource "ferentin_endpoint_policy_settings" "group" {
 					resource.TestCheckResourceAttrPair(
 						"ferentin_endpoint_policy_settings.group", "device_group_id",
 						"ferentin_device_group.test", "group_id"),
-					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.group",
-						"unapproved_mcp_action", "block"),
 					resource.TestCheckResourceAttr("ferentin_endpoint_policy_settings.group",
 						"mcp_gateway_url", "https://mcp.example.com"),
 				),

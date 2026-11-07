@@ -3,7 +3,7 @@
 End-to-end Ferentin tenant configuration: edge site + LLM provider + LLM
 policy + MCP server + MCP policy + data protection policy + OTEL sink + OTEL
 policy + AI agent, plus the endpoint surface (device groups + on-device
-destination and MCP rules + posture) for managed laptops. Apply order is implicit from
+destination rules + MCP policy and tool call rules + posture) for managed laptops. Apply order is implicit from
 attribute references.
 
 For an endpoint-only rollout — staged from observe to enforce, with the
@@ -43,14 +43,14 @@ export FERENTIN_TENANT_ID="<your-tenant-uuid>"
 | `ferentin_llm_provider`           | Anthropic prod binding (WriteOnly api_key)             |
 | `ferentin_llm_policy`             | Internal-employees-only governance                     |
 | `ferentin_mcp_server`             | Federated Salesforce MCP, edge-routed via the site    |
-| `ferentin_mcp_policy`             | Read-only Salesforce allowlist with 120 req/min limit  |
+| `ferentin_mcp_policy`             | Read-only Salesforce allowlist with 120 req/min limit; deny an unvetted remote MCP server on devices |
 | `ferentin_data_protection_policy` | Tokenize US PII + log exfiltration URLs (DLP) on LLM, MCP and A2A traffic |
 | `ferentin_otel_sink`              | Honeycomb OTLP/HTTP destination                        |
 | `ferentin_otel_policy`            | Trace forwarding to Honeycomb                          |
 | `ferentin_ai_agent`               | Claude-platform team assistant (OIDC client)           |
 | `ferentin_device_group`             | `engineering` (MDM-sourced) + `contractors` (manual)   |
 | `ferentin_endpoint_destination_rule` | Block ChatGPT for contractors, allow Claude, deny unsanctioned hosts |
-| `ferentin_endpoint_mcp_rule` | Block an unvetted remote MCP server; block shell from AI tools for contractors |
+| `ferentin_endpoint_mcp_rule` | Block shell from AI tools for contractors |
 | `ferentin_endpoint_policy_settings` | Tenant-default observe posture (call-time MCP blocks in `shadow`) + strict contractor override |
 
 The `agent_client_secret` output is the only value you need to capture

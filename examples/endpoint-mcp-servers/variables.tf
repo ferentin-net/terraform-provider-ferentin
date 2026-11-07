@@ -6,7 +6,7 @@ variable "profile" {
 
 variable "mcp_gateway_url" {
   type        = string
-  description = "The tenant's MCP gateway on the public edge: https://<tenant-short-name>.mcp.ferentin.net/v1, with no trailing slash. Approved MCP client configs are rewritten to it, and steer rules append /mcp/<server-slug>."
+  description = "The tenant's MCP gateway on the public edge: https://<tenant-short-name>.mcp.ferentin.net/v1, with no trailing slash. Approved MCP client configs are rewritten to it, and the routes append /mcp/<server-slug>."
   default     = "https://acme.mcp.ferentin.net/v1"
 
   validation {
@@ -22,8 +22,6 @@ variable "steered_remote_servers" {
     # The slug of the enabled MCP server in this tenant the hosts are steered
     # to (ferentin_mcp_server.<name>.slug, or the registry in the console).
     server_slug = string
-    # Rung on the ladder, between the remote block (10) and the local block (30).
-    priority = number
   }))
   description = "Sanctioned remote MCP servers, keyed by a short name."
 
@@ -31,13 +29,7 @@ variable "steered_remote_servers" {
     github = {
       hosts       = ["api.githubcopilot.com"]
       server_slug = "github"
-      priority    = 20
     }
-  }
-
-  validation {
-    condition     = alltrue([for s in values(var.steered_remote_servers) : s.priority > 10 && s.priority < 30])
-    error_message = "steered_remote_servers priorities must sit between the remote block (10) and the local block (30)."
   }
 }
 
@@ -53,10 +45,10 @@ variable "blocked_local_packages" {
   default     = ["npm:@example/unvetted-mcp"]
 }
 
-variable "unapproved_mcp_action" {
+variable "server_approval" {
   type        = string
   description = <<-EOT
-    What the agent does with an MCP server config that no rule matches and
+    What the agent does with an MCP server config that no policy decides and
     that is not approved in the registry:
 
       report_only — report it, change nothing on the machine (default here)
@@ -67,12 +59,12 @@ variable "unapproved_mcp_action" {
   default     = "report_only"
 
   validation {
-    condition     = contains(["report_only", "quarantine", "block"], var.unapproved_mcp_action)
-    error_message = "unapproved_mcp_action must be report_only, quarantine or block."
+    condition     = contains(["report_only", "quarantine", "block"], var.server_approval)
+    error_message = "server_approval must be report_only, quarantine or block."
   }
 }
 
-variable "local_mcp_risk_policy" {
+variable "tool_vetting_risk_policy" {
   type = object({
     low    = string
     medium = string

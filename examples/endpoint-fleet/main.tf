@@ -5,8 +5,8 @@
 #   1. Device groups     — the targeting dimension for everything else.
 #   2. Destination rules — allow / block per AI destination, evaluated
 #                          ON-DEVICE, first match wins by ascending priority.
-#   3. MCP rules         — allow / block for MCP servers (remote and local) and
-#                          for what AI tools may do (tool behaviours).
+#   3. MCP policy        — deny MCP servers (remote and local) by device target,
+#                          and block what AI tools may do (tool behaviours).
 #   4. Agent decisions   — which catalogued AI agents (Claude Code, Cursor, …)
 #                          are approved to run, ahead of the stage that blocks
 #                          the rest.
@@ -63,21 +63,21 @@ locals {
   # destination rules exhaustive — anything unmatched is blocked.
   stage = {
     observe = {
-      unapproved_mcp_action      = "report_only"
+      server_approval            = "report_only"
       unapproved_agent_action    = "report_only"
       default_destination_action = "allow"
       rewrite_mcp_configs        = false
       harden_network             = false
     }
     steer = {
-      unapproved_mcp_action      = "report_only"
+      server_approval            = "report_only"
       unapproved_agent_action    = "report_only"
       default_destination_action = "allow"
       rewrite_mcp_configs        = true
       harden_network             = false
     }
     allowlist = {
-      unapproved_mcp_action      = "quarantine"
+      server_approval            = "quarantine"
       unapproved_agent_action    = "block"
       default_destination_action = "block"
       rewrite_mcp_configs        = true
@@ -201,51 +201,46 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
   action            = "block"
 }
 
-# --- 3. MCP rules --------------------------------------------------------
+# --- 3. MCP policy and tool call rules ----------------------------------
 #
-# A separate ladder from the destination rules, also first-match-wins:
+#    deny    unvetted remote MCP hosts and known-bad local packages (fleet-wide)
+#    block   shell from AI tools                                     (contractors)
 #
-#    10    block   unvetted remote MCP hosts        (fleet-wide)
-#    20    block   known-bad local MCP packages     (fleet-wide)
-#    30    block   shell from AI tools              (contractors)
+# The MCP policy selects servers on the device by `targets`. The platform
+# stores target values in canonical spelling (hosts lowercased); the configured
+# spelling stays in state, so that is not drift.
 #
-# The platform normalizes match values (hosts are lowercased, allow values
-# canonicalized); the configured spelling stays in state, so that is not drift.
+# A local deny replaces the entry with a refusal that explains it and offers an
+# appeal.
+#
+# Internal local servers are deliberately NOT given an `allow` here: an allow
+# puts the entry back exactly as written, so the server runs outside Ferentin
+# and nothing sees its tool calls. Approve them with ferentin_mcp_local_server,
+# or under Registries → MCP Servers → Local servers in the admin console, which
+# keeps every call governed.
+resource "ferentin_mcp_policy" "block_unvetted_mcp" {
+  name     = "block-unvetted-mcp"
+  priority = 10
 
-resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
-  name         = "block-unvetted-remote-mcp"
-  priority     = 10
-  match_kind   = "host"
-  match_values = var.blocked_mcp_hosts
-  action       = "block"
-}
+  targets = [
+    { kind = "host", values = var.blocked_mcp_hosts },
+    { kind = "package", values = var.blocked_local_mcp_packages },
+  ]
 
-# Local (stdio) packages nobody should start. A block replaces the entry with
-# a refusal that explains it and offers an appeal.
-#
-# Internal local servers are deliberately NOT given an `allow` rule here: an
-# allow puts the entry back exactly as written, so the server runs outside
-# Ferentin and nothing sees its tool calls (and a local allow is tenant-wide,
-# because devices carry no authenticated identity when one is admitted).
-# Approve them under Registries → MCP Servers → Local servers in the admin
-# console instead, which keeps every call governed.
-resource "ferentin_endpoint_mcp_rule" "block_local_packages" {
-  name         = "block-known-bad-local-mcp-packages"
-  priority     = 20
-  match_kind   = "package"
-  match_values = var.blocked_local_mcp_packages
-  action       = "block"
+  effect = {
+    type    = "deny"
+    message = "This MCP server is blocked on managed devices."
+  }
 }
 
 # Tool behaviours expand into call-time rules for every AI tool that can
-# express them, and support `block` only. Whether this denies the call or only
-# counts it is hook_rule_enforcement on the posture.
+# express them. Every tool call rule is a block; whether it denies the call or
+# only counts it is hook_rule_enforcement on the posture.
 resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
   name             = "block-agent-shell-contractors"
   priority         = 30
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [local.group_ids["contractors"]]
 }
 
@@ -286,7 +281,6 @@ resource "ferentin_endpoint_agent_approval" "approved" {
 #    same code path. To stand enforcement down, apply
 #    `enforcement_stage = "observe"` first, then destroy.
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action      = local.stage.unapproved_mcp_action
   unapproved_agent_action    = local.stage.unapproved_agent_action
   default_destination_action = local.stage.default_destination_action
 
@@ -316,7 +310,6 @@ resource "ferentin_endpoint_policy_settings" "override" {
 
   device_group_id = local.group_ids[each.key]
 
-  unapproved_mcp_action      = "quarantine"
   unapproved_agent_action    = "block"
   mcp_gateway_url            = var.mcp_gateway_url
   default_destination_action = "block"
@@ -326,11 +319,29 @@ resource "ferentin_endpoint_policy_settings" "override" {
   doh_block_enabled  = true
   quic_block_enabled = true
 
-  # No local (stdio) MCP servers at all, beating even the allow rule above,
+  # No local (stdio) MCP servers at all, beating approvals and any allow,
   # and no port-443 flows to bare public IPs. Both need the fleet on an agent
   # that implements them; an older agent keeps its last-known-good policy.
   local_mcp_block_enabled    = true
   unnamed_flow_block_enabled = true
+}
+
+# MCP scope defaults: what an unapproved local MCP server meets, per stage for
+# the tenant default and strict from day one for the strict groups. They live
+# on the same posture rows as the settings above, and destroy leaves them in
+# force too.
+resource "ferentin_mcp_scope_defaults" "default" {
+  server_approval = local.stage.server_approval
+}
+
+resource "ferentin_mcp_scope_defaults" "override" {
+  for_each = var.strict_groups
+
+  device_group_id = local.group_ids[each.key]
+  server_approval = "quarantine"
+
+  # One writer creates each group's posture row.
+  depends_on = [ferentin_endpoint_policy_settings.override]
 }
 
 # --- Outputs -------------------------------------------------------------
@@ -354,15 +365,14 @@ output "rule_ladder" {
   ])
 }
 
-output "mcp_rule_ladder" {
-  description = "MCP rules in evaluation order. First match wins, so read top down."
-  value = sort([
-    for r in [
-      ferentin_endpoint_mcp_rule.block_unvetted_remote,
-      ferentin_endpoint_mcp_rule.block_local_packages,
-      ferentin_endpoint_mcp_rule.block_shell_contractors,
-    ] : format("%04d %-6s %s", r.priority, r.action, r.name)
-  ])
+output "mcp_controls" {
+  description = "The MCP policy and tool call rule this config writes, as priority, effect and name."
+  value = [
+    format("%04d %-5s %s", ferentin_mcp_policy.block_unvetted_mcp.priority,
+    ferentin_mcp_policy.block_unvetted_mcp.effect.type, ferentin_mcp_policy.block_unvetted_mcp.name),
+    format("%04d %-5s %s", ferentin_endpoint_mcp_rule.block_shell_contractors.priority, "block",
+    ferentin_endpoint_mcp_rule.block_shell_contractors.name),
+  ]
 }
 
 output "posture_provenance" {

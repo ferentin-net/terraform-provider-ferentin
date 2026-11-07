@@ -48,8 +48,7 @@ lists the devices holding the scope back.
 
 **The pilot override restates the tenant posture.** A group with its own
 posture row ignores the tenant default for every setting, and on a new row an
-attribute left out takes the platform's default (`unapproved_mcp_action =
-quarantine`), not the tenant's. The `shared_posture` local keeps the two rows
+attribute left out takes the platform's default, not the tenant's. The `shared_posture` local keeps the two rows
 identical apart from `hook_rule_enforcement`; add any other tenant setting you
 manage to it.
 

@@ -259,7 +259,6 @@ func TestEndpointSettingsToModel_TenantDefaultVsGroupOverride(t *testing.T) {
 	// override collide in state.
 	def := &adminapi.EndpointPolicySettings{
 		Id:                       &rowID,
-		UnapprovedMcpAction:      strPtr("report_only"),
 		DefaultDestinationAction: strPtr("allow"),
 		EchStripEnabled:          boolPtr(false),
 		DohBlockEnabled:          boolPtr(false),
@@ -276,8 +275,8 @@ func TestEndpointSettingsToModel_TenantDefaultVsGroupOverride(t *testing.T) {
 	if got, want := m.ID.ValueString(), fixtureTenantID; got != want {
 		t.Errorf("ID = %q, want the bare tenant id %q", got, want)
 	}
-	if got, want := m.UnapprovedMcpAction.ValueString(), "report_only"; got != want {
-		t.Errorf("UnapprovedMcpAction = %q, want %q", got, want)
+	if got, want := m.DefaultDestinationAction.ValueString(), "allow"; got != want {
+		t.Errorf("DefaultDestinationAction = %q, want %q", got, want)
 	}
 	if got, want := m.Version.ValueInt64(), int64(2); got != want {
 		t.Errorf("Version = %d, want %d", got, want)
@@ -286,7 +285,6 @@ func TestEndpointSettingsToModel_TenantDefaultVsGroupOverride(t *testing.T) {
 	override := &adminapi.EndpointPolicySettings{
 		Id:                       &rowID,
 		DeviceGroupId:            &groupID,
-		UnapprovedMcpAction:      strPtr("block"),
 		McpGatewayUrl:            strPtr("https://mcp.example.com"),
 		DefaultDestinationAction: strPtr("block"),
 		EchStripEnabled:          boolPtr(true),
@@ -312,7 +310,6 @@ func TestEndpointSettingsToModel_TenantDefaultVsGroupOverride(t *testing.T) {
 // operator believed they had removed it.
 func TestEndpointSettingsToWrite_ClearsGatewayURLWhenUnset(t *testing.T) {
 	m := EndpointPolicySettingsResourceModel{
-		UnapprovedMcpAction:      types.StringValue("report_only"),
 		DefaultDestinationAction: types.StringValue("allow"),
 		McpGatewayURL:            types.StringNull(),
 	}
@@ -573,79 +570,33 @@ func TestEndpointRuleCriteria_WarnsOnFieldsItDoesNotModel(t *testing.T) {
 	}
 }
 
-// hook_rule_enforcement and local_mcp_risk_policy land in state from the wire
-// value, and "no policy" reads as null whether the platform omits the object or
-// sends one with no tier set.
-func TestEndpointSettingsToModel_HookRuleAndRiskPolicy(t *testing.T) {
+// hook_rule_enforcement lands in state from the wire value, and reads as null
+// when the platform omits it.
+func TestEndpointSettingsToModel_HookRule(t *testing.T) {
 	hook := gen.EndpointPolicySettingsResponseHookRuleEnforcement("enforce")
-	low := gen.LocalMcpRiskPolicyLow("allow")
-	medium := gen.LocalMcpRiskPolicyMedium("ask_once")
-	high := gen.LocalMcpRiskPolicyHigh("deny")
-	m := endpointSettingsToModel(fixtureTenantID, &adminapi.EndpointPolicySettings{
-		HookRuleEnforcement: &hook,
-		LocalMcpRiskPolicy:  &gen.LocalMcpRiskPolicy{Low: &low, Medium: &medium, High: &high},
-	})
+	m := endpointSettingsToModel(fixtureTenantID, &adminapi.EndpointPolicySettings{HookRuleEnforcement: &hook})
 	if got := m.HookRuleEnforcement.ValueString(); got != "enforce" {
 		t.Errorf("HookRuleEnforcement = %q, want enforce", got)
 	}
-	attrs := m.LocalMcpRiskPolicy.Attributes()
-	for tier, want := range map[string]string{"low": "allow", "medium": "ask_once", "high": "deny"} {
-		if got := attrs[tier].(types.String).ValueString(); got != want {
-			t.Errorf("local_mcp_risk_policy.%s = %q, want %q", tier, got, want)
-		}
-	}
-
-	for name, p := range map[string]*gen.LocalMcpRiskPolicy{"absent": nil, "no tiers": {}} {
-		m = endpointSettingsToModel(fixtureTenantID, &adminapi.EndpointPolicySettings{LocalMcpRiskPolicy: p})
-		if !m.LocalMcpRiskPolicy.IsNull() {
-			t.Errorf("%s policy: LocalMcpRiskPolicy = %v, want null", name, m.LocalMcpRiskPolicy)
-		}
-		if !m.HookRuleEnforcement.IsNull() {
-			t.Errorf("%s: HookRuleEnforcement = %v, want null when the platform omits it", name, m.HookRuleEnforcement)
-		}
+	m = endpointSettingsToModel(fixtureTenantID, &adminapi.EndpointPolicySettings{})
+	if !m.HookRuleEnforcement.IsNull() {
+		t.Errorf("HookRuleEnforcement = %v, want null when the platform omits it", m.HookRuleEnforcement)
 	}
 }
 
 // A null or unknown value is never sent: on Create that is an attribute the
 // config leaves out. The Update case, where the plan carries the state value, is
 // TestOmitUnconfigured_DropsStateCarriedValuesTheConfigDoesNotSet.
-func TestEndpointSettingsToWrite_HookRuleAndRiskPolicyOnlyWhenConfigured(t *testing.T) {
-	for name, m := range map[string]EndpointPolicySettingsResourceModel{
-		"null": {
-			HookRuleEnforcement: types.StringNull(),
-			LocalMcpRiskPolicy:  types.ObjectNull(localMcpRiskPolicyAttrTypes),
-		},
-		"unknown": {
-			HookRuleEnforcement: types.StringUnknown(),
-			LocalMcpRiskPolicy:  types.ObjectUnknown(localMcpRiskPolicyAttrTypes),
-		},
-	} {
-		body, _ := m.toWrite(context.Background())
+func TestEndpointSettingsToWrite_HookRuleOnlyWhenConfigured(t *testing.T) {
+	for name, v := range map[string]types.String{"null": types.StringNull(), "unknown": types.StringUnknown()} {
+		body, _ := (&EndpointPolicySettingsResourceModel{HookRuleEnforcement: v}).toWrite(context.Background())
 		if body.HookRuleEnforcement != nil {
 			t.Errorf("%s: HookRuleEnforcement sent as %q, want omitted", name, *body.HookRuleEnforcement)
 		}
-		if body.LocalMcpRiskPolicy != nil {
-			t.Errorf("%s: LocalMcpRiskPolicy sent as %+v, want omitted", name, *body.LocalMcpRiskPolicy)
-		}
 	}
-
-	m := EndpointPolicySettingsResourceModel{
-		HookRuleEnforcement: types.StringValue("shadow"),
-		LocalMcpRiskPolicy: types.ObjectValueMust(localMcpRiskPolicyAttrTypes, map[string]attr.Value{
-			"low":    types.StringValue("allow"),
-			"medium": types.StringValue("ask_every_call"),
-			"high":   types.StringValue("deny"),
-		}),
-	}
+	m := EndpointPolicySettingsResourceModel{HookRuleEnforcement: types.StringValue("shadow")}
 	body, _ := m.toWrite(context.Background())
 	if body.HookRuleEnforcement == nil || *body.HookRuleEnforcement != "shadow" {
 		t.Errorf("HookRuleEnforcement = %v, want shadow", body.HookRuleEnforcement)
-	}
-	p := body.LocalMcpRiskPolicy
-	if p == nil || p.Low == nil || p.Medium == nil || p.High == nil {
-		t.Fatalf("LocalMcpRiskPolicy = %+v, want all three tiers", p)
-	}
-	if *p.Low != "allow" || *p.Medium != "ask_every_call" || *p.High != "deny" {
-		t.Errorf("tiers = %s/%s/%s, want allow/ask_every_call/deny", *p.Low, *p.Medium, *p.High)
 	}
 }

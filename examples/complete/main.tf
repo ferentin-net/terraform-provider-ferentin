@@ -264,16 +264,22 @@ resource "ferentin_endpoint_destination_rule" "block_unsanctioned" {
   action            = "block"
 }
 
-# --- Endpoint: MCP rules -------------------------------------------------
-# A second on-device ladder, for MCP servers and what AI tools may do. Here:
-# block an unvetted remote MCP server everywhere, and block shell execution by
-# AI tools for contractors (a tool_behavior rule; block only).
-resource "ferentin_endpoint_mcp_rule" "block_unvetted_remote" {
-  name         = "block-unvetted-remote-mcp"
-  priority     = 10
-  match_kind   = "host"
-  match_values = ["mcp.unvetted.example"]
-  action       = "block"
+# --- Endpoint: MCP servers and tool calls --------------------------------
+# The same MCP policy model as the Salesforce policy above also decides what
+# managed devices start: this one denies an unvetted remote MCP server
+# everywhere, by device target. Tool calls are endpoint MCP rules: here, block
+# shell execution by AI tools for contractors (a tool_behavior rule).
+resource "ferentin_mcp_policy" "block_unvetted_remote" {
+  name     = "block-unvetted-remote-mcp"
+  priority = 10
+
+  targets = [
+    { kind = "host", values = ["mcp.unvetted.example"] },
+  ]
+
+  effect = {
+    type = "deny"
+  }
 }
 
 resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
@@ -281,7 +287,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
   priority         = 20
   match_kind       = "tool_behavior"
   match_values     = ["shell"]
-  action           = "block"
   device_group_ids = [ferentin_device_group.contractors.group_id]
 }
 
@@ -294,7 +299,6 @@ resource "ferentin_endpoint_mcp_rule" "block_shell_contractors" {
 # posture. Apply a permissive posture first if you mean to stand enforcement
 # down.
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action      = "report_only"
   unapproved_agent_action    = "report_only"
   default_destination_action = "allow"
 
@@ -306,12 +310,11 @@ resource "ferentin_endpoint_policy_settings" "default" {
   mcp_gateway_url = var.mcp_gateway_url
 }
 
-# Contractors get the strict posture: quarantine unapproved MCP configs, treat
-# the destination rules as an allowlist, and close the SNI side-channels.
+# Contractors get the strict posture: treat the destination rules as an
+# allowlist, and close the SNI side-channels.
 resource "ferentin_endpoint_policy_settings" "contractors" {
   device_group_id = ferentin_device_group.contractors.group_id
 
-  unapproved_mcp_action   = "quarantine"
   unapproved_agent_action = "block"
   mcp_gateway_url         = var.mcp_gateway_url
 
@@ -326,6 +329,22 @@ resource "ferentin_endpoint_policy_settings" "contractors" {
   # No local (stdio) MCP servers for contractors. Needs the fleet on an agent
   # that implements it; an older agent keeps its last-known-good policy.
   local_mcp_block_enabled = true
+}
+
+# --- Endpoint: MCP scope defaults ----------------------------------------
+# What a local MCP server meets when no MCP policy applies to it. The tenant
+# default reports; contractors quarantine unapproved MCP configs. These live on
+# the same posture rows as the settings above (destroy leaves them in force).
+resource "ferentin_mcp_scope_defaults" "default" {
+  server_approval = "report_only"
+}
+
+resource "ferentin_mcp_scope_defaults" "contractors" {
+  device_group_id = ferentin_device_group.contractors.group_id
+  server_approval = "quarantine"
+
+  # One writer creates the group's posture row.
+  depends_on = [ferentin_endpoint_policy_settings.contractors]
 }
 
 # --- Outputs (handy for downstream Terraform / CI) ----------------------
