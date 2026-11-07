@@ -16,23 +16,24 @@ import (
 // TestAccEndpointMCPRule_basic covers create, update and import of a block
 // rule, one removal per step so no removal hides behind another change:
 //
-//   - step 2 removes ONLY device_group_ids. description/app_bundle_ids/
-//     device_group_ids are Optional, not Computed, so that alone must plan a
-//     change; the check fails if the rule stayed narrowed.
-//   - step 3 removes description and criteria_combinator = "OR". The platform
+//   - step 2 removes description and criteria_combinator = "OR". The platform
 //     keeps criteria_combinator when a PUT omits it, so this converges (the
 //     framework's post-apply empty-plan check) only because its schema Default
 //     always sends it.
+//
+// device_group_ids is not exercised here: the platform refuses a call-time
+// rule whose device groups hold no active device ("nothing could carry it"),
+// and a group a test creates is empty. TestEndpointMCPRuleModifyPlan_* and
+// TestEndpointMCPRule_EmptyFormsReadAsNullUnlessConfigured cover its removal.
 func TestAccEndpointMCPRule_basic(t *testing.T) {
 	suffix := randomSuffix(t)
 	const r = "ferentin_endpoint_mcp_rule.test"
-	groups := "  device_group_ids = [ferentin_device_group.test.group_id]\n"
 	resource.Test(t, resource.TestCase{
 		PreCheck:                 func() { testAccPreCheck(t) },
 		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
 		Steps: []resource.TestStep{
 			{
-				Config: configEndpointMCPRule(suffix, 10, groups+`
+				Config: configEndpointMCPRule(suffix, 10, `
   description         = "initial"
   criteria_combinator = "OR"
 `),
@@ -41,21 +42,9 @@ func TestAccEndpointMCPRule_basic(t *testing.T) {
 					resource.TestCheckResourceAttr(r, "priority", "10"),
 					resource.TestCheckResourceAttr(r, "description", "initial"),
 					resource.TestCheckResourceAttr(r, "criteria_combinator", "OR"),
-					resource.TestCheckResourceAttr(r, "device_group_ids.#", "1"),
 					resource.TestCheckResourceAttr(r, "managed_by", "iac"),
 					resource.TestCheckResourceAttrSet(r, "version"),
 					resource.TestCheckResourceAttrSet(r, "enforcement"),
-				),
-			},
-			{
-				Config: configEndpointMCPRule(suffix, 10, `
-  description         = "initial"
-  criteria_combinator = "OR"
-`),
-				Check: resource.ComposeAggregateTestCheckFunc(
-					resource.TestCheckNoResourceAttr(r, "device_group_ids.#"),
-					resource.TestCheckResourceAttr(r, "description", "initial"),
-					resource.TestCheckResourceAttr(r, "criteria_combinator", "OR"),
 				),
 			},
 			{
@@ -169,15 +158,10 @@ resource "ferentin_endpoint_mcp_rule" "behaviour" {
 	})
 }
 
-// configEndpointMCPRule renders a block rule plus a device group it may
-// target; extra carries the optional attributes a step sets.
+// configEndpointMCPRule renders a tenant-wide block rule; extra carries the
+// optional attributes a step sets.
 func configEndpointMCPRule(suffix string, priority int, extra string) string {
 	return providerBlock() + fmt.Sprintf(`
-resource "ferentin_device_group" "test" {
-  name   = "tf-acc-dg-mcp-%[1]s"
-  source = "manual"
-}
-
 resource "ferentin_endpoint_mcp_rule" "test" {
   name         = "tf-acc-mcp-rule-%[1]s"
   priority     = %[2]d

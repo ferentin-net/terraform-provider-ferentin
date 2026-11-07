@@ -10,6 +10,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
+	"github.com/hashicorp/terraform-plugin-framework/attr"
 	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
@@ -98,7 +99,24 @@ var (
 	_ resource.ResourceWithConfigure      = (*MCPScopeDefaultsResource)(nil)
 	_ resource.ResourceWithImportState    = (*MCPScopeDefaultsResource)(nil)
 	_ resource.ResourceWithValidateConfig = (*MCPScopeDefaultsResource)(nil)
+	_ resource.ResourceWithModifyPlan     = (*MCPScopeDefaultsResource)(nil)
 )
+
+// ModifyPlan plans what a write recomputes as unknown when the plan changes
+// anything. keepOrDerivedMode can introduce the only change (a mode derived
+// from its value), and the framework marks computed attributes unknown only
+// for a change in config; see markComputedUnknownOnChange.
+func (r *MCPScopeDefaultsResource) ModifyPlan(ctx context.Context, req resource.ModifyPlanRequest, resp *resource.ModifyPlanResponse) {
+	markComputedUnknownOnChange(ctx, req, resp, map[string]attr.Value{
+		"version":                             types.Int64Unknown(),
+		"remote_entry":                        types.StringUnknown(),
+		"remote_entry_mode":                   types.StringUnknown(),
+		"source":                              types.StringUnknown(),
+		"tool_vetting_mode_source":            types.StringUnknown(),
+		"tool_vetting_risk_policy_source":     types.StringUnknown(),
+		"tool_vetting_approval_config_source": types.StringUnknown(),
+	})
+}
 
 func (r *MCPScopeDefaultsResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
 	resp.TypeName = req.ProviderTypeName + "_mcp_scope_defaults"

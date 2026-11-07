@@ -583,6 +583,14 @@ func (r *MCPPolicyResource) ModifyPlan(ctx context.Context, req resource.ModifyP
 	}
 	warnOnCriteriaRemoval(ctx, req, resp,
 		"\n\nIf you meant to keep them, add the `criteria` block back to the config.")
+	// applies_at planned above can be the only change (the console moved it and
+	// the config leaves it unset).
+	markComputedUnknownOnChange(ctx, req, resp, map[string]attr.Value{
+		"version":           types.Int64Unknown(),
+		"updated_at":        types.StringUnknown(),
+		"last_modified_by":  types.StringUnknown(),
+		"settings_in_force": types.BoolUnknown(),
+	})
 }
 
 // defaultAppliesAt mirrors McpPolicyService's create default: an allow with
