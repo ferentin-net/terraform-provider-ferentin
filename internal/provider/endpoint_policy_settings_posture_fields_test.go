@@ -27,9 +27,6 @@ func nullPostureSets(m *EndpointPolicySettingsResourceModel) {
 	m.UnnamedFlowExemptCIDRs = types.SetNull(types.StringType)
 	m.DohResolverHosts = types.SetNull(types.StringType)
 	m.DohResolverIPs = types.SetNull(types.StringType)
-	if m.LocalMcpApprovalConfig.IsNull() && m.LocalMcpApprovalConfig.ValueString() == "" {
-		m.LocalMcpApprovalConfig = jsontypes.NewNormalizedNull()
-	}
 }
 
 func TestEndpointSettings_PostureFieldsRoundTrip(t *testing.T) {
@@ -68,7 +65,6 @@ func TestEndpointSettings_PostureFieldsSentOnlyWhenConfigured(t *testing.T) {
 		UnnamedFlowExemptCIDRs:  strSet(),
 		DohResolverHosts:        strSet("DNS.Example.COM"),
 		DohResolverIPs:          strSet("192.0.2.1"),
-		LocalMcpApprovalConfig:  jsontypes.NewNormalizedNull(),
 	}
 	body, d := plan.toWrite(context.Background())
 	if d.HasError() {
@@ -88,32 +84,16 @@ func TestEndpointSettings_PostureFieldsSentOnlyWhenConfigured(t *testing.T) {
 
 	omitUnconfigured(&body, EndpointPolicySettingsResourceModel{
 		HookRuleEnforcement:     types.StringNull(),
-		LocalMcpRiskPolicy:      types.ObjectNull(localMcpRiskPolicyAttrTypes),
 		UnapprovedAgentAction:   types.StringNull(),
 		LocalMcpBlockEnabled:    types.BoolNull(),
 		UnnamedFlowBlockEnabled: types.BoolNull(),
 		UnnamedFlowExemptCIDRs:  types.SetNull(types.StringType),
 		DohResolverHosts:        types.SetNull(types.StringType),
 		DohResolverIPs:          types.SetNull(types.StringType),
-		LocalMcpApprovalConfig:  jsontypes.NewNormalizedNull(),
 	})
 	if body.UnapprovedAgentAction != nil || body.LocalMcpBlockEnabled != nil || body.UnnamedFlowBlockEnabled != nil ||
 		body.UnnamedFlowExemptCidrs != nil || body.DohResolverHosts != nil || body.DohResolverIps != nil {
 		t.Errorf("config omits all six, but some were sent: %+v", body)
-	}
-}
-
-// An approval config that cannot be decoded at apply is an error, not a field
-// silently left out of the request.
-func TestEndpointSettings_ToWriteRejectsUndecodableApprovalConfig(t *testing.T) {
-	plan := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: jsontypes.NewNormalizedValue(`{"step_up_mode":1}`)}
-	nullPostureSets(&plan)
-	body, d := plan.toWrite(context.Background())
-	if !d.HasError() {
-		t.Fatal("want an error for an undecodable approval config")
-	}
-	if body.LocalMcpApprovalConfig != nil {
-		t.Error("an undecodable config must not be sent")
 	}
 }
 
@@ -150,10 +130,10 @@ func TestReconcilePlatformForms_Sets(t *testing.T) {
 		"prior null": {normalized, types.SetNull(types.StringType), adminapi.EndpointPolicySettingsWrite{},
 			recorded([]string{"dns.example.com"}), normalized, ""},
 	} {
-		m := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: jsontypes.NewNormalizedNull()}
+		m := EndpointPolicySettingsResourceModel{}
 		nullPostureSets(&m)
 		m.DohResolverHosts = tc.server
-		prior := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: jsontypes.NewNormalizedNull()}
+		prior := EndpointPolicySettingsResourceModel{}
 		nullPostureSets(&prior)
 		prior.DohResolverHosts = tc.prior
 		forms, d := reconcilePlatformForms(&m, prior, tc.sent, tc.recorded)
@@ -185,15 +165,13 @@ func (f fakePrivateState) SetKey(_ context.Context, k string, v []byte) diag.Dia
 func TestPlatformFormsPrivateStateRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	p := fakePrivateState{}
-	cfg := `{"step_up_mode":"approve"}`
 	in := platformForms{Recorded: true, Lists: map[string][]string{"doh_resolver_hosts": {"dns.example.com"},
-		"doh_resolver_ips": nil}, ApprovalConfig: &cfg}
+		"doh_resolver_ips": nil}}
 	if d := storePlatformForms(ctx, p, in); d.HasError() {
 		t.Fatal(d)
 	}
 	out, d := loadPlatformForms(ctx, p)
-	if d.HasError() || !out.Recorded || out.Lists["doh_resolver_hosts"][0] != "dns.example.com" ||
-		out.ApprovalConfig == nil || *out.ApprovalConfig != cfg {
+	if d.HasError() || !out.Recorded || out.Lists["doh_resolver_hosts"][0] != "dns.example.com" {
 		t.Errorf("round trip = %+v, %v", out, d)
 	}
 	if _, ok := out.Lists["doh_resolver_ips"]; !ok {
@@ -243,7 +221,7 @@ func TestApprovalConfigJSONValidator(t *testing.T) {
 	} {
 		resp := &validator.StringResponse{}
 		approvalConfigJSON{}.ValidateString(context.Background(), validator.StringRequest{
-			Path: path.Root("local_mcp_approval_config"), ConfigValue: types.StringValue(tc.value),
+			Path: path.Root("tool_vetting_approval_config"), ConfigValue: types.StringValue(tc.value),
 		}, resp)
 		if tc.wantErr == "" {
 			if resp.Diagnostics.HasError() {
@@ -284,36 +262,5 @@ func TestApprovalConfigToTF_MatchesJsonencodeForm(t *testing.T) {
 	compact := jsontypes.NewNormalizedValue(`{"timeout_seconds":900,"step_up_mode":"approve"}`)
 	if eq, d := pretty.StringSemanticEquals(context.Background(), compact); d.HasError() || !eq {
 		t.Errorf("reformatted JSON must be semantically equal: %v %v", eq, d)
-	}
-}
-
-func TestReconcilePlatformForms_ApprovalConfig(t *testing.T) {
-	configured := jsontypes.NewNormalizedValue(`{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve"}`)
-	serverForm := `{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve","timeout_seconds":600}`
-	cfg, _ := decodeApprovalConfig(configured.ValueString())
-	sent := adminapi.EndpointPolicySettingsWrite{LocalMcpApprovalConfig: cfg}
-	prior := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: configured}
-	nullPostureSets(&prior)
-	run := func(server jsontypes.Normalized, sent adminapi.EndpointPolicySettingsWrite, rec platformForms) (EndpointPolicySettingsResourceModel, diag.Diagnostics) {
-		m := EndpointPolicySettingsResourceModel{LocalMcpApprovalConfig: server}
-		nullPostureSets(&m)
-		_, d := reconcilePlatformForms(&m, prior, sent, rec)
-		return m, d
-	}
-
-	if m, d := run(jsontypes.NewNormalizedValue(serverForm), sent, platformForms{}); d.HasError() || !m.LocalMcpApprovalConfig.Equal(configured) {
-		t.Errorf("sent and stored: %v %v, want the configured JSON", m.LocalMcpApprovalConfig, d)
-	}
-	if _, d := run(jsontypes.NewNormalizedNull(), sent, platformForms{}); !d.HasError() {
-		t.Error("sent but the platform has none: want an error")
-	}
-	rec := platformForms{Recorded: true, ApprovalConfig: &serverForm}
-	if m, _ := run(jsontypes.NewNormalizedValue(serverForm), adminapi.EndpointPolicySettingsWrite{}, rec); !m.LocalMcpApprovalConfig.Equal(configured) {
-		t.Errorf("unchanged: got %v, want the configured JSON", m.LocalMcpApprovalConfig)
-	}
-	other := `{"step_up_mode":"reauth"}`
-	if m, _ := run(jsontypes.NewNormalizedValue(serverForm), adminapi.EndpointPolicySettingsWrite{},
-		platformForms{Recorded: true, ApprovalConfig: &other}); m.LocalMcpApprovalConfig.ValueString() != serverForm {
-		t.Errorf("changed elsewhere: got %v, want the platform's JSON", m.LocalMcpApprovalConfig)
 	}
 }

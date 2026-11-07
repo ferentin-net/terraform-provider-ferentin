@@ -53,7 +53,7 @@ variable "blocked_local_packages" {
   default     = ["npm:@example/unvetted-mcp"]
 }
 
-variable "unapproved_mcp_action" {
+variable "server_approval" {
   type        = string
   description = <<-EOT
     What the agent does with an MCP server config that no rule matches and
@@ -67,12 +67,12 @@ variable "unapproved_mcp_action" {
   default     = "report_only"
 
   validation {
-    condition     = contains(["report_only", "quarantine", "block"], var.unapproved_mcp_action)
-    error_message = "unapproved_mcp_action must be report_only, quarantine or block."
+    condition     = contains(["report_only", "quarantine", "block"], var.server_approval)
+    error_message = "server_approval must be report_only, quarantine or block."
   }
 }
 
-variable "local_mcp_risk_policy" {
+variable "tool_vetting_risk_policy" {
   type = object({
     low    = string
     medium = string

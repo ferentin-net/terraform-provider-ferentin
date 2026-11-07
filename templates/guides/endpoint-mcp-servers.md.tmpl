@@ -21,7 +21,7 @@ MCP rules are evaluated **on the device**, in ascending `priority`, and the **fi
 | 20 | `steer` | remote host `api.githubcopilot.com` | the developer's entry is rewritten to the tenant's gateway route for the server |
 | 30 | `block` | local package `npm:@example/unvetted-mcp` | the entry becomes a refusal that explains the block |
 | — | approved | `ferentin_mcp_local_server`: `uv run --directory * okta-mcp-server` | the entry is wrapped in `ferentin-mcp` and runs governed |
-| — | `unapproved_mcp_action` | any other MCP server config that is not approved | `report_only`, until you choose `quarantine` or `block` |
+| — | `server_approval` scope default | any other MCP server config that is not approved | `report_only`, until you choose `quarantine` or `block` |
 
 ## Before you start
 
@@ -38,7 +38,7 @@ The endpoint agent reads every MCP client configuration on the Mac and rewrites 
 | `block` rule | Blocked | Replaced by a refusal entry. It explains the block and offers an appeal. |
 | `steer` rule | Rewritten to the gateway route, so every call crosses the gateway and its MCP policy | Wrapped in `ferentin-mcp`, which still refuses the server until it is approved (below) |
 | `allow` rule | Left as written | Left as written: it runs, and **nothing sees its tool calls** |
-| No rule, not approved | `unapproved_mcp_action` | `unapproved_mcp_action` |
+| No rule, not approved | `server_approval` | `server_approval` |
 
 Nothing is deleted. The agent keeps the developer's original entry in a root-owned backup and puts it back when the block is lifted or the agent is removed.
 
@@ -84,7 +84,7 @@ resource "ferentin_mcp_local_server" "okta" {
 }
 ```
 
-[`ferentin_mcp_local_server`](../resources/mcp_local_server.md) approves a local server tenant-wide. `argv_template` is the command line the approval covers, as the client's config spells it; `*` matches exactly one argument, so this one approves `okta-mcp-server` from any checkout directory. Devices consult a template only for a command line that names no package. For a packaged server in the local MCP catalog, set `catalog_slug` instead, and the approval is keyed on the entry's packages. Its tools still start unvetted: `local_mcp_risk_policy` (step 5) decides what developers get from them.
+[`ferentin_mcp_local_server`](../resources/mcp_local_server.md) approves a local server tenant-wide. `argv_template` is the command line the approval covers, as the client's config spells it; `*` matches exactly one argument, so this one approves `okta-mcp-server` from any checkout directory. Devices consult a template only for a command line that names no package. For a packaged server in the local MCP catalog, set `catalog_slug` instead, and the approval is keyed on the entry's packages. Its tools still start unvetted: `tool_vetting_risk_policy` (step 5) decides what developers get from them.
 
 ~> The template ships **verbatim** in the signed policy bundle to every managed device. Put `*` where a credential or anything private would go.
 
@@ -112,13 +112,16 @@ To let a local server run, prefer **approving** it to writing an `allow` rule:
 ## 4. Decide what happens to everything else
 
 ```terraform
+resource "ferentin_mcp_scope_defaults" "default" {
+  server_approval = "report_only"
+}
+
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action = "report_only"
-  mcp_gateway_url       = "https://acme.mcp.ferentin.net/v1"
+  mcp_gateway_url = "https://acme.mcp.ferentin.net/v1"
 }
 ```
 
-`unapproved_mcp_action` applies to an MCP server config that no rule matches and that is not approved:
+[`ferentin_mcp_scope_defaults`](../resources/mcp_scope_defaults.md) holds what a server meets when nothing applies to it, per tenant or device group. `server_approval` applies to an MCP server config that no rule matches and that is not approved:
 
 | Value | What happens |
 | --- | --- |
@@ -126,13 +129,13 @@ resource "ferentin_endpoint_policy_settings" "default" {
 | `quarantine` | The entry is moved aside so the client cannot load it, and the developer can appeal. |
 | `block` | The server does not start. |
 
-Start at `report_only` and read what the fleet reports before moving to `quarantine`.
+Start at `report_only` and read what the fleet reports before moving to `quarantine`. Or rehearse it: `server_approval = "quarantine"` with `server_approval_mode = "report_only"` records what quarantining would move aside, and changes nothing on the machine.
 
 `mcp_gateway_url` is where the agent points approved server configs. Leaving it out of the config **clears** it, and the agent stops rewriting MCP client configs.
 
 ## 5. Unvetted local tools
 
-Approving a local server does not approve its tools. Each tool stays unvetted until an admin approves or denies it, and `local_mcp_risk_policy` decides what developers get meanwhile, by the risk rating Ferentin gives each tool from its schema:
+Approving a local server does not approve its tools. Each tool stays unvetted until an admin approves or denies it, and `tool_vetting_risk_policy` on `ferentin_mcp_scope_defaults` decides what developers get meanwhile, by the risk rating Ferentin gives each tool from its schema:
 
 | Rating | Means |
 | --- | --- |
@@ -141,7 +144,7 @@ Approving a local server does not approve its tools. Each tool stays unvetted un
 | `high` | Runs commands, writes or deletes, or tries to pull model context. |
 
 ```terraform
-  local_mcp_risk_policy = {
+  tool_vetting_risk_policy = {
     low    = "allow"
     medium = "deny"
     high   = "deny"
@@ -150,7 +153,7 @@ Approving a local server does not approve its tools. Each tool stays unvetted un
 
 Each tier is `allow`, `ask_once`, `ask_every_call` or `deny`. A vetting decision outranks the rating, and `allow` applies only on servers an admin has approved.
 
-~> `local_mcp_risk_policy` is **tenant default only**: `plan` refuses it on a device-group row. An `ask_once` or `ask_every_call` tier needs approval routing first, set with `local_mcp_approval_config`; without it the platform rejects the write.
+A device group can set its own; one that sets none follows the tenant default's. An `ask_once` or `ask_every_call` tier needs approval routing first, set with `tool_vetting_approval_config` (on a device group, the tenant default's counts); without it the platform rejects the write. `tool_vetting_mode = "report_only"` rehearses the policy: every unvetted tool runs and the platform records what the policy would have answered.
 
 ## 6. Apply, then activate
 

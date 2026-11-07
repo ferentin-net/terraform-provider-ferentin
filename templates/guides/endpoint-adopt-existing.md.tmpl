@@ -113,7 +113,7 @@ If you write the configuration by hand instead of generating it, or edit what wa
 | `criteria`, `device_group_ids` or an app filter being removed, with a warning | Removing a narrowing **widens** the rule | Copy it, unless widening is what you meant. |
 | `match_values` or `destination_hosts` changing spelling only | The platform stores a normalized form; your spelling is kept in Terraform | Applying changes nothing on the platform. Use the generated spelling to avoid the no-op update. |
 
-Attributes with no provider default, such as `unapproved_mcp_action`, `hook_rule_enforcement` and `local_mcp_risk_policy`, keep the tenant's value when the config leaves them out.
+Attributes with no provider default, such as `hook_rule_enforcement`, keep the tenant's value when the config leaves them out. The MCP scope defaults (server approval, unattributed agents, tool vetting) are on [`ferentin_mcp_scope_defaults`](../resources/mcp_scope_defaults.md), which imports with the same `import_id` and keeps any default its config leaves out.
 
 ## After adoption
 

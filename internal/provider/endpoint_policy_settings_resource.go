@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/hashicorp/terraform-plugin-framework-jsontypes/jsontypes"
-	"github.com/hashicorp/terraform-plugin-framework-validators/objectvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/setvalidator"
 	"github.com/hashicorp/terraform-plugin-framework-validators/stringvalidator"
 	"github.com/hashicorp/terraform-plugin-framework/attr"
@@ -20,7 +18,6 @@ import (
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/booldefault"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/boolplanmodifier"
-	"github.com/hashicorp/terraform-plugin-framework/resource/schema/objectplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/planmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/setplanmodifier"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema/stringdefault"
@@ -39,26 +36,17 @@ import (
 // is one entry shorter than it used to be for that reason. A `Default` on an
 // Optional+Computed attribute is a silent data migration: when the mirrored value
 // changes, every config that omits the attribute plans the new value and APPLIES it
-// to rows that already exist. GH #2127 moved `unapproved_mcp_action` server-side, so
-// that attribute dropped its Default and now defers to the server via
-// Computed + UseStateForUnknown (see the schema block). Prefer that shape for
-// anything new; keep a mirrored Default only where an omitted value genuinely must
-// resolve client-side.
+// to rows that already exist. GH #2127 hit exactly that with the unapproved-MCP
+// action (since moved to ferentin_mcp_scope_defaults), which is why the
+// server-defaulted attributes here defer to the server via Computed +
+// UseStateForUnknown. Prefer that shape for anything new; keep a mirrored Default
+// only where an omitted value genuinely must resolve client-side.
 //
 // NOTE: this is NOT what Delete writes. Destroy deliberately leaves the
 // tenant-default row enforcing whatever was last applied; see Delete.
 const (
 	postureDefaultDestinationAction = "allow"
 )
-
-// localMcpRiskActions is what an unvetted local MCP tool at one risk rating gets.
-var localMcpRiskActions = []string{"allow", "ask_once", "ask_every_call", "deny"}
-
-var localMcpRiskPolicyAttrTypes = map[string]attr.Type{
-	"low":    types.StringType,
-	"medium": types.StringType,
-	"high":   types.StringType,
-}
 
 // EndpointPolicySettingsResource is the `ferentin_endpoint_policy_settings`
 // Terraform resource — endpoint posture for a tenant, or for one device group
@@ -93,21 +81,19 @@ type EndpointPolicySettingsResourceModel struct {
 
 	DeviceGroupID types.String `tfsdk:"device_group_id"`
 
-	UnapprovedMcpAction      types.String `tfsdk:"unapproved_mcp_action"`
 	McpGatewayURL            types.String `tfsdk:"mcp_gateway_url"`
 	DefaultDestinationAction types.String `tfsdk:"default_destination_action"`
 	EchStripEnabled          types.Bool   `tfsdk:"ech_strip_enabled"`
 	DohBlockEnabled          types.Bool   `tfsdk:"doh_block_enabled"`
 	QuicBlockEnabled         types.Bool   `tfsdk:"quic_block_enabled"`
 
-	// Server-defaulted and console-editable (platform#3011, GH #2986): Optional +
-	// Computed + UseStateForUnknown, no Default, so omitting either keeps what the
-	// tenant has. The upsert keeps any field the request leaves out.
+	// Server-defaulted and console-editable (platform#3011): Optional + Computed +
+	// UseStateForUnknown, no Default, so omitting it keeps what the tenant has.
+	// The upsert keeps any field the request leaves out.
 	HookRuleEnforcement types.String `tfsdk:"hook_rule_enforcement"`
-	LocalMcpRiskPolicy  types.Object `tfsdk:"local_mcp_risk_policy"`
 
 	// More server-defaulted, console-editable posture fields, same shape as the
-	// two above: Optional + Computed + UseStateForUnknown, no Default, sent only
+	// one above: Optional + Computed + UseStateForUnknown, no Default, sent only
 	// when configured. The three sets are normalized by the platform; see
 	// reconcilePlatformForms.
 	UnapprovedAgentAction   types.String `tfsdk:"unapproved_agent_action"`
@@ -116,11 +102,6 @@ type EndpointPolicySettingsResourceModel struct {
 	UnnamedFlowExemptCIDRs  types.Set    `tfsdk:"unnamed_flow_exempt_cidrs"`
 	DohResolverHosts        types.Set    `tfsdk:"doh_resolver_hosts"`
 	DohResolverIPs          types.Set    `tfsdk:"doh_resolver_ips"`
-
-	// JSON (jsonencode), not a typed attribute: the platform stores the whole
-	// ApprovalConfig as sent, so a typed subset would erase whatever it did not
-	// model. Reconciled through private state like the normalized lists.
-	LocalMcpApprovalConfig jsontypes.Normalized `tfsdk:"local_mcp_approval_config"`
 
 	SettingsID types.String `tfsdk:"settings_id"`
 	CreatedAt  types.String `tfsdk:"created_at"`
@@ -164,10 +145,14 @@ func (r *EndpointPolicySettingsResource) Configure(_ context.Context, req resour
 
 func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Endpoint posture for managed devices — the unapproved-MCP action, the MCP " +
-			"gateway target, the DNS/QUIC network flags, the default action for AI destinations with " +
-			"no matching `ferentin_endpoint_destination_rule`, call-time MCP rule enforcement, and the " +
-			"tenant's policy for unvetted local MCP tools.\n\n" +
+		MarkdownDescription: "Endpoint posture for managed devices — the MCP gateway target, the " +
+			"DNS/QUIC network flags, the default action for AI destinations with no matching " +
+			"`ferentin_endpoint_destination_rule`, call-time MCP rule enforcement, the unapproved-agent " +
+			"action and the local MCP kill switch.\n\n" +
+			"What a local MCP server or tool meets when no MCP policy applies to it (server approval, " +
+			"unattributed agents, tool vetting with its risk policy and approval routing) is set on " +
+			"[`ferentin_mcp_scope_defaults`](mcp_scope_defaults.md), which writes the same posture row; " +
+			"see that resource for how the two share it.\n\n" +
 			"Omit `device_group_id` for the **tenant default** row (which every device, including " +
 			"ungrouped ones, resolves through). Set it for a **per-group override**.\n\n" +
 			"~> **This resource is an upsert, not a create.** The platform API has no POST and no " +
@@ -217,37 +202,6 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 				},
 			},
 
-			"unapproved_mcp_action": schema.StringAttribute{
-				MarkdownDescription: "What the agent does with an MCP server config it finds on a device " +
-					"that is not approved:\n\n" +
-					"* `report_only` — report it in telemetry, change nothing on the machine\n" +
-					"* `quarantine` — move the offending config aside so the client cannot load it " +
-					"(default). The entry is preserved verbatim in a root-owned sidecar before " +
-					"removal, and is not removed if it cannot be preserved\n" +
-					"* `block` — block the server's traffic outright (requires the NetworkExtension " +
-					"content filter; without it the agent can report but not enforce)",
-				// NO schema Default, deliberately — unlike its sibling below.
-				//
-				// A `Default` on an Optional+Computed attribute is a silent data
-				// migration: a config that omits the field plans to the constant and
-				// APPLIES it. When platform#2127 moved the server default to
-				// "quarantine", that turned every IaC-managed tenant with an existing
-				// row into a plan of `report_only -> quarantine`, applied on the next
-				// run — precisely the migration changeset 1248 refused to perform,
-				// because an implicit `report_only` and a deliberate one are the same
-				// bytes and there is no way to tell them apart.
-				//
-				// Computed + UseStateForUnknown instead: omitting the attribute keeps
-				// whatever the tenant already has, and a brand-new row gets whatever
-				// default the SERVER picks. That is also the better shape generally —
-				// mirroring a server-side default into a provider constant is what
-				// created the drift in the first place, and this attribute no longer
-				// has a second definition to fall out of step with.
-				Optional:      true,
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-				Validators:    []validator.String{stringvalidator.OneOf("report_only", "quarantine", "block")},
-			},
 			"mcp_gateway_url": schema.StringAttribute{
 				MarkdownDescription: "Tenant MCP gateway base URL that approved server configs are " +
 					"rewritten to point at: the tenant's gateway on the public edge, " +
@@ -298,7 +252,7 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 					"scope runs an agent build that enforces call-time rules (see " +
 					"`hookRuleEnforcementCoverage` on the posture fleet status in the console). A row " +
 					"already on `enforce` saves normally.",
-				// Computed + UseStateForUnknown, no Default — see unapproved_mcp_action.
+				// Computed + UseStateForUnknown, no Default — see the note at the top of the file.
 				Optional:      true,
 				Computed:      true,
 				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
@@ -376,56 +330,6 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 				Validators: []validator.Set{
 					setvalidator.SizeAtMost(256),
 					setvalidator.ValueStringsAre(stringvalidator.LengthAtLeast(1)),
-				},
-			},
-			"local_mcp_approval_config": schema.StringAttribute{
-				CustomType: jsontypes.NormalizedType{},
-				MarkdownDescription: "Approval routing for step-up approvals raised by unvetted local MCP " +
-					"tools, as JSON — write it with `jsonencode({...})`. The object is the platform's " +
-					"approval config: `step_up_mode` (`reauth` / `approve`), `channels` (at least one; " +
-					"`type` is `invocation_context`, `slack`, `email`, `webhook` or `approver_dm`), and " +
-					"optionally `approver_role`, `timeout_seconds`, `escalation`, `context_fields`, " +
-					"`redacted_fields` and the risk bounds. Any `ask_*` tier in `local_mcp_risk_policy` " +
-					"needs this set.\n\n" +
-					"A key this provider version does not know fails at plan rather than being dropped " +
-					"(the platform ignores unknown keys). The platform stores the whole object as sent, " +
-					"so everything it should hold belongs in this value. A formatting difference from the " +
-					"platform's stored form is not drift (changing the formatting in config itself, say " +
-					"from a heredoc to jsonencode, still plans one no-op update). Omit to keep the current " +
-					"config. Clearing it is done in the admin console: `{}` is refused here.",
-				Optional:      true,
-				Computed:      true,
-				PlanModifiers: []planmodifier.String{stringplanmodifier.UseStateForUnknown()},
-				Validators:    []validator.String{approvalConfigJSON{}},
-			},
-			// An ObjectAttribute, not a SingleNestedAttribute. An Optional+Computed
-			// NESTED attribute left out of config does not propose its prior value,
-			// so the framework sees a change and marks every computed attribute
-			// (version, updated_at, provenance) unknown on every plan: a permanent
-			// no-op update, found running the acceptance suite. A plain object
-			// attribute keeps its prior value like any Optional+Computed attribute.
-			// The tier rules the nested schema expressed live in
-			// localMcpRiskPolicyTiers instead.
-			"local_mcp_risk_policy": schema.ObjectAttribute{
-				MarkdownDescription: "What an unvetted local MCP tool gets at each risk rating: an object " +
-					"with `low`, `medium` and `high`, each one of `allow`, `ask_once`, `ask_every_call` or " +
-					"`deny`. All three are required. Unset on the platform means the legacy behaviour (step " +
-					"up when approval routing exists, deny otherwise).\n\n" +
-					"**Tenant default only**: the decision is read from the tenant-default row alone, so the " +
-					"platform refuses it on a device-group override, and this fails at plan when " +
-					"`device_group_id` is set.\n\n" +
-					"~> Any `ask_*` tier needs approval routing (`localMcpApprovalConfig` with at least one " +
-					"channel), which this resource does not manage; set it up in the admin console first or " +
-					"the platform rejects the write.\n\n" +
-					"Removing this attribute from config leaves the stored policy in place. Clearing it is " +
-					"done in the admin console.",
-				Optional:       true,
-				Computed:       true,
-				AttributeTypes: localMcpRiskPolicyAttrTypes,
-				PlanModifiers:  []planmodifier.Object{objectplanmodifier.UseStateForUnknown()},
-				Validators: []validator.Object{
-					objectvalidator.ConflictsWith(path.MatchRoot("device_group_id")),
-					localMcpRiskPolicyTiers{},
 				},
 			},
 
@@ -554,16 +458,24 @@ func (r *EndpointPolicySettingsResource) Update(ctx context.Context, req resourc
 		return
 	}
 	omitUnconfigured(&body, config)
+	prior, d := loadPlatformForms(ctx, req.Private)
+	resp.Diagnostics.Append(d...)
 	version := strconv.FormatInt(state.Version.ValueInt64(), 10)
-	row, err := r.upsert(ctx, tenantID, state.DeviceGroupID, version, body)
+	// ferentin_mcp_scope_defaults writes the same row; see retryStalePostureVersion.
+	row, err := retryStalePostureVersion(version,
+		func(v string) (*adminapi.EndpointPolicySettings, error) {
+			return r.upsert(ctx, tenantID, state.DeviceGroupID, v, body)
+		},
+		r.rereadOwned(ctx, tenantID, state, prior, settingsSentFields(body)))
 	if err != nil {
+		if addPostureConflictError(&resp.Diagnostics, "Failed to update endpoint policy settings", err) {
+			return
+		}
 		addEndpointSettingsWriteError(&resp.Diagnostics, "Failed to update endpoint policy settings", err,
 			body, state.HookRuleEnforcement)
 		return
 	}
 	refreshed := endpointSettingsToModel(tenantID, row)
-	prior, d := loadPlatformForms(ctx, req.Private)
-	resp.Diagnostics.Append(d...)
 	// A value the request sent takes the planned (configured) value, once the
 	// response shows it was stored; one it did not send reconciles against
 	// state like a refresh. plan carries state for an omitted attribute
@@ -610,9 +522,21 @@ func (r *EndpointPolicySettingsResource) Delete(ctx context.Context, req resourc
 
 	if !isUnsetString(state.DeviceGroupID) {
 		version := strconv.FormatInt(state.Version.ValueInt64(), 10)
-		err := r.sdk.EndpointPolicies().DeleteGroupSettings(ctx, tenantID,
-			state.DeviceGroupID.ValueString(), version)
+		prior, d := loadPlatformForms(ctx, req.Private)
+		resp.Diagnostics.Append(d...)
+		// A ferentin_mcp_scope_defaults write to this group moves the version too.
+		// Deleting the row also removes the group's own MCP scope defaults; see the
+		// resource docs.
+		_, err := retryStalePostureVersion(version,
+			func(v string) (struct{}, error) {
+				return struct{}{}, r.sdk.EndpointPolicies().DeleteGroupSettings(ctx, tenantID,
+					state.DeviceGroupID.ValueString(), v)
+			},
+			r.rereadOwned(ctx, tenantID, state, prior, settingsOwnedAttrs))
 		if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
+			if addPostureConflictError(&resp.Diagnostics, "Failed to delete endpoint policy settings override", err) {
+				return
+			}
 			addSDKError(&resp.Diagnostics, "Failed to delete endpoint policy settings override", err)
 		}
 		return
@@ -625,19 +549,20 @@ func (r *EndpointPolicySettingsResource) Delete(ctx context.Context, req resourc
 		fmt.Sprintf("The platform does not allow deleting the tenant-default endpoint posture — every "+
 			"managed device, including ungrouped ones, resolves through it. Terraform has stopped "+
 			"managing the row; the fleet continues to enforce the last applied posture "+
-			"(unapproved_mcp_action = %q, default_destination_action = %q).\n\n"+
+			"(default_destination_action = %q).\n\n"+
 			"This is deliberate: resetting to the permissive defaults on destroy would silently "+
 			"de-enforce the whole fleet, and removing a resource block or dropping a module reaches "+
 			"this path just as `terraform destroy` does.\n\n"+
 			"To actually stand enforcement down, do it explicitly and then destroy:\n"+
-			"  1. Set unapproved_mcp_action = \"report_only\", unapproved_agent_action = \"report_only\", "+
+			"  1. Set unapproved_agent_action = \"report_only\", "+
 			"default_destination_action = \"allow\", "+
 			"hook_rule_enforcement = \"shadow\", clear mcp_gateway_url, and turn the network flags, "+
-			"local_mcp_block_enabled and unnamed_flow_block_enabled off. The DoH resolver lists and "+
-			"local MCP approval routing stay as they are; clear them in the console if needed.\n"+
+			"local_mcp_block_enabled and unnamed_flow_block_enabled off. The DoH resolver lists stay "+
+			"as they are; clear them in the console if needed. The MCP scope defaults are "+
+			"ferentin_mcp_scope_defaults' and are not changed by this destroy.\n"+
 			"  2. terraform apply\n"+
 			"  3. terraform destroy (or remove the resource block)",
-			state.UnapprovedMcpAction.ValueString(), state.DefaultDestinationAction.ValueString()))
+			state.DefaultDestinationAction.ValueString()))
 }
 
 func (r *EndpointPolicySettingsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -664,6 +589,94 @@ func (r *EndpointPolicySettingsResource) ImportState(ctx context.Context, req re
 	}
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("device_group_id"), groupID)...)
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), tenantID+"/"+groupID)...)
+}
+
+// settingsOwnedAttrs is every posture attribute this resource writes.
+var settingsOwnedAttrs = []string{
+	"mcp_gateway_url", "default_destination_action", "ech_strip_enabled", "doh_block_enabled",
+	"quic_block_enabled", "hook_rule_enforcement", "unapproved_agent_action", "local_mcp_block_enabled",
+	"unnamed_flow_block_enabled", "unnamed_flow_exempt_cidrs", "doh_resolver_hosts", "doh_resolver_ips",
+}
+
+// settingsSentFields names the attributes body writes.
+func settingsSentFields(body adminapi.EndpointPolicySettingsWrite) []string {
+	var out []string
+	add := func(sent bool, name string) {
+		if sent {
+			out = append(out, name)
+		}
+	}
+	add(body.McpGatewayUrl != nil, "mcp_gateway_url")
+	add(body.DefaultDestinationAction != nil, "default_destination_action")
+	add(body.EchStripEnabled != nil, "ech_strip_enabled")
+	add(body.DohBlockEnabled != nil, "doh_block_enabled")
+	add(body.QuicBlockEnabled != nil, "quic_block_enabled")
+	add(body.HookRuleEnforcement != nil, "hook_rule_enforcement")
+	add(body.UnapprovedAgentAction != nil, "unapproved_agent_action")
+	add(body.LocalMcpBlockEnabled != nil, "local_mcp_block_enabled")
+	add(body.UnnamedFlowBlockEnabled != nil, "unnamed_flow_block_enabled")
+	add(body.UnnamedFlowExemptCidrs != nil, "unnamed_flow_exempt_cidrs")
+	add(body.DohResolverHosts != nil, "doh_resolver_hosts")
+	add(body.DohResolverIps != nil, "doh_resolver_ips")
+	return out
+}
+
+// settingsAttrValue returns the model's value for one attribute in
+// settingsOwnedAttrs.
+func settingsAttrValue(m EndpointPolicySettingsResourceModel, name string) attr.Value {
+	switch name {
+	case "mcp_gateway_url":
+		return m.McpGatewayURL
+	case "default_destination_action":
+		return m.DefaultDestinationAction
+	case "ech_strip_enabled":
+		return m.EchStripEnabled
+	case "doh_block_enabled":
+		return m.DohBlockEnabled
+	case "quic_block_enabled":
+		return m.QuicBlockEnabled
+	case "hook_rule_enforcement":
+		return m.HookRuleEnforcement
+	case "unapproved_agent_action":
+		return m.UnapprovedAgentAction
+	case "local_mcp_block_enabled":
+		return m.LocalMcpBlockEnabled
+	case "unnamed_flow_block_enabled":
+		return m.UnnamedFlowBlockEnabled
+	case "unnamed_flow_exempt_cidrs":
+		return m.UnnamedFlowExemptCIDRs
+	case "doh_resolver_hosts":
+		return m.DohResolverHosts
+	case "doh_resolver_ips":
+		return m.DohResolverIPs
+	}
+	return nil
+}
+
+// settingsOwnedChanges names the attributes among names whose value in fresh
+// (the platform's row, reconciled against prior the way a refresh is) differs
+// from prior (state).
+func settingsOwnedChanges(prior, fresh EndpointPolicySettingsResourceModel, names []string) []string {
+	fields := make([]ownedField, 0, len(names))
+	for _, n := range names {
+		fields = append(fields, ownedField{name: n, prior: settingsAttrValue(prior, n), fresh: settingsAttrValue(fresh, n)})
+	}
+	return changedFields(fields)
+}
+
+// rereadOwned is retryStalePostureVersion's re-read for this resource: the
+// row's fresh version, and which of names changed since state was read.
+func (r *EndpointPolicySettingsResource) rereadOwned(ctx context.Context, tenantID string,
+	state EndpointPolicySettingsResourceModel, recorded platformForms, names []string) func() (string, []string, error) {
+	return func() (string, []string, error) {
+		row, err := r.fetch(ctx, tenantID, state.DeviceGroupID)
+		if err != nil {
+			return "", nil, err
+		}
+		fresh := endpointSettingsToModel(tenantID, row)
+		_, _ = reconcilePlatformForms(&fresh, state, adminapi.EndpointPolicySettingsWrite{}, recorded)
+		return int64PtrString(row.Version), settingsOwnedChanges(state, fresh, names), nil
+	}
 }
 
 // upsert routes to the tenant-default or the per-group endpoint. One helper so
@@ -697,7 +710,6 @@ func (r *EndpointPolicySettingsResource) resolveTenant(perResource types.String)
 func (m *EndpointPolicySettingsResourceModel) toWrite(ctx context.Context) (adminapi.EndpointPolicySettingsWrite, diag.Diagnostics) {
 	var diags diag.Diagnostics
 	body := adminapi.EndpointPolicySettingsWrite{}
-	setStringPtr(m.UnapprovedMcpAction, &body.UnapprovedMcpAction)
 	setStringPtr(m.DefaultDestinationAction, &body.DefaultDestinationAction)
 	setBoolPtr(m.EchStripEnabled, &body.EchStripEnabled)
 	setBoolPtr(m.DohBlockEnabled, &body.DohBlockEnabled)
@@ -708,7 +720,6 @@ func (m *EndpointPolicySettingsResourceModel) toWrite(ctx context.Context) (admi
 		h := gen.EndpointPolicySettingsRequestHookRuleEnforcement(m.HookRuleEnforcement.ValueString())
 		body.HookRuleEnforcement = &h
 	}
-	body.LocalMcpRiskPolicy = localMcpRiskPolicyToSDK(m.LocalMcpRiskPolicy)
 	setStringPtr(m.UnapprovedAgentAction, &body.UnapprovedAgentAction)
 	setBoolPtr(m.LocalMcpBlockEnabled, &body.LocalMcpBlockEnabled)
 	setBoolPtr(m.UnnamedFlowBlockEnabled, &body.UnnamedFlowBlockEnabled)
@@ -716,18 +727,6 @@ func (m *EndpointPolicySettingsResourceModel) toWrite(ctx context.Context) (admi
 	body.UnnamedFlowExemptCidrs = setToSDK(ctx, m.UnnamedFlowExemptCIDRs)
 	body.DohResolverHosts = setToSDK(ctx, m.DohResolverHosts)
 	body.DohResolverIps = setToSDK(ctx, m.DohResolverIPs)
-	if !m.LocalMcpApprovalConfig.IsNull() && !m.LocalMcpApprovalConfig.IsUnknown() {
-		// The validator proved it decodes at plan. A failure here is an error,
-		// never a skipped field: skipping would send nothing, and state would
-		// record a config the platform never received.
-		cfg, err := decodeApprovalConfig(m.LocalMcpApprovalConfig.ValueString())
-		if err != nil {
-			diags.AddAttributeError(path.Root("local_mcp_approval_config"),
-				"local_mcp_approval_config could not be read", err.Error())
-		} else {
-			body.LocalMcpApprovalConfig = cfg
-		}
-	}
 
 	// mcp_gateway_url is optional-not-computed, so a config that drops it must
 	// actively CLEAR the stored value. The platform's upsert preserves omitted
@@ -757,21 +756,18 @@ func endpointSettingsToModel(tenantID string, row *adminapi.EndpointPolicySettin
 	} else {
 		m.SettingsID = types.StringNull()
 	}
-	m.UnapprovedMcpAction = strPtrToTF(row.UnapprovedMcpAction)
 	m.McpGatewayURL = strPtrToTF(row.McpGatewayUrl)
 	m.DefaultDestinationAction = strPtrToTF(row.DefaultDestinationAction)
 	m.EchStripEnabled = boolPtrOrDefault(row.EchStripEnabled)
 	m.DohBlockEnabled = boolPtrOrDefault(row.DohBlockEnabled)
 	m.QuicBlockEnabled = boolPtrOrDefault(row.QuicBlockEnabled)
 	m.HookRuleEnforcement = enumPtrToTF(row.HookRuleEnforcement)
-	m.LocalMcpRiskPolicy = localMcpRiskPolicyToTF(row.LocalMcpRiskPolicy)
 	m.UnapprovedAgentAction = strPtrToTF(row.UnapprovedAgentAction)
 	m.LocalMcpBlockEnabled = boolPtrOrDefault(row.LocalMcpBlockEnabled)
 	m.UnnamedFlowBlockEnabled = boolPtrOrDefault(row.UnnamedFlowBlockEnabled)
 	m.UnnamedFlowExemptCIDRs = stringSliceToSetOrNull(row.UnnamedFlowExemptCidrs)
 	m.DohResolverHosts = stringSliceToSetOrNull(row.DohResolverHosts)
 	m.DohResolverIPs = stringSliceToSetOrNull(row.DohResolverIps)
-	m.LocalMcpApprovalConfig = approvalConfigToTF(row.LocalMcpApprovalConfig)
 	m.CreatedAt = timePtrToTF(row.CreatedAt)
 	m.UpdatedAt = timePtrToTF(row.UpdatedAt)
 
@@ -781,40 +777,6 @@ func endpointSettingsToModel(tenantID string, row *adminapi.EndpointPolicySettin
 	m.ManagedByModule = strPtrToTF(row.ManagedByModule)
 	m.LastModifiedBy = enumPtrToTF(row.LastModifiedBy)
 	return m
-}
-
-// localMcpRiskPolicyToSDK sends the policy only when it is configured. All three
-// tiers are Required in the schema, so a known object always carries all three.
-func localMcpRiskPolicyToSDK(o types.Object) *gen.LocalMcpRiskPolicy {
-	if o.IsNull() || o.IsUnknown() {
-		return nil
-	}
-	tier := func(name string) string {
-		v, ok := o.Attributes()[name].(types.String)
-		if !ok {
-			return ""
-		}
-		return v.ValueString()
-	}
-	low := gen.LocalMcpRiskPolicyLow(tier("low"))
-	medium := gen.LocalMcpRiskPolicyMedium(tier("medium"))
-	high := gen.LocalMcpRiskPolicyHigh(tier("high"))
-	return &gen.LocalMcpRiskPolicy{Low: &low, Medium: &medium, High: &high}
-}
-
-// localMcpRiskPolicyToTF reads an absent policy, or one with no tier set, as null:
-// that is what the platform stores for "no policy" (it maps {} to null). A stored
-// policy always has all three tiers, because the platform refuses a write that
-// sends fewer, so a partially set object does not arise.
-func localMcpRiskPolicyToTF(p *gen.LocalMcpRiskPolicy) types.Object {
-	if p == nil || (p.Low == nil && p.Medium == nil && p.High == nil) {
-		return types.ObjectNull(localMcpRiskPolicyAttrTypes)
-	}
-	return types.ObjectValueMust(localMcpRiskPolicyAttrTypes, map[string]attr.Value{
-		"low":    enumPtrToTF(p.Low),
-		"medium": enumPtrToTF(p.Medium),
-		"high":   enumPtrToTF(p.High),
-	})
 }
 
 // omitUnconfigured drops the server-defaulted fields the config does not set.
@@ -827,9 +789,6 @@ func localMcpRiskPolicyToTF(p *gen.LocalMcpRiskPolicy) types.Object {
 func omitUnconfigured(body *adminapi.EndpointPolicySettingsWrite, config EndpointPolicySettingsResourceModel) {
 	if config.HookRuleEnforcement.IsNull() {
 		body.HookRuleEnforcement = nil
-	}
-	if config.LocalMcpRiskPolicy.IsNull() {
-		body.LocalMcpRiskPolicy = nil
 	}
 	if config.UnapprovedAgentAction.IsNull() {
 		body.UnapprovedAgentAction = nil
@@ -848,9 +807,6 @@ func omitUnconfigured(body *adminapi.EndpointPolicySettingsWrite, config Endpoin
 	}
 	if config.DohResolverIPs.IsNull() {
 		body.DohResolverIps = nil
-	}
-	if config.LocalMcpApprovalConfig.IsNull() {
-		body.LocalMcpApprovalConfig = nil
 	}
 }
 
@@ -880,44 +836,6 @@ func addEndpointSettingsWriteError(diags *diag.Diagnostics, op string, err error
 	addSDKError(diags, op, err)
 }
 
-// localMcpRiskPolicyTiers requires all three tiers of local_mcp_risk_policy and
-// checks each against localMcpRiskActions — what Required + OneOf expressed when
-// the attribute was a nested schema. The platform refuses a policy with fewer
-// tiers (400), so this moves that to plan time.
-type localMcpRiskPolicyTiers struct{}
-
-func (localMcpRiskPolicyTiers) Description(context.Context) string {
-	return "low, medium and high are each required and one of " + strings.Join(localMcpRiskActions, ", ")
-}
-
-func (v localMcpRiskPolicyTiers) MarkdownDescription(ctx context.Context) string {
-	return v.Description(ctx)
-}
-
-func (localMcpRiskPolicyTiers) ValidateObject(_ context.Context, req validator.ObjectRequest, resp *validator.ObjectResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
-	attrs := req.ConfigValue.Attributes()
-	for _, tier := range []string{"low", "medium", "high"} {
-		v, ok := attrs[tier].(types.String)
-		if !ok || v.IsUnknown() {
-			continue
-		}
-		if v.IsNull() {
-			resp.Diagnostics.AddAttributeError(req.Path.AtName(tier),
-				fmt.Sprintf("local_mcp_risk_policy.%s is required", tier),
-				"Set all three tiers (low, medium, high); the platform refuses a policy with fewer.")
-			continue
-		}
-		if !slices.Contains(localMcpRiskActions, v.ValueString()) {
-			resp.Diagnostics.AddAttributeError(req.Path.AtName(tier),
-				fmt.Sprintf("local_mcp_risk_policy.%s must be one of %s", tier, strings.Join(localMcpRiskActions, ", ")),
-				fmt.Sprintf("Got %q.", v.ValueString()))
-		}
-	}
-}
-
 // noZeroPrefix refuses a /0 CIDR in unnamed_flow_exempt_cidrs. The platform
 // refuses it (it would exempt the whole address space, leaving the block
 // reporting enabled while blocking nothing); this moves that to plan time.
@@ -943,8 +861,7 @@ func (noZeroPrefix) ValidateString(_ context.Context, req validator.StringReques
 
 // The platform normalizes three posture sets on write: DoH hosts are trimmed,
 // lowercased and de-duplicated; DoH IPs and unnamed-flow CIDRs are
-// canonicalized (CIDR host bits masked). It also stores local_mcp_approval_config
-// as it reads it, dropping keys it does not know. State keeps the configured
+// canonicalized (CIDR host bits masked). State keeps the configured
 // values, so normalization is not drift, and the platform's own forms from the
 // last write or refresh live in private state under platformFormsKey.
 //
@@ -961,9 +878,6 @@ type platformForms struct {
 	Recorded bool `json:"recorded"`
 	// Lists holds each normalized set, sorted; a nil entry is an absent set.
 	Lists map[string][]string `json:"lists,omitempty"`
-	// ApprovalConfig is the platform's approval config as normalized JSON, nil
-	// when it holds none.
-	ApprovalConfig *string `json:"approval_config,omitempty"`
 }
 
 type privateStateGetter interface {
@@ -1061,27 +975,6 @@ func reconcilePlatformForms(m *EndpointPolicySettingsResourceModel, prior Endpoi
 			}
 		}
 	}
-
-	if !m.LocalMcpApprovalConfig.IsNull() {
-		v := m.LocalMcpApprovalConfig.ValueString()
-		forms.ApprovalConfig = &v
-	}
-	priorKnown := !prior.LocalMcpApprovalConfig.IsNull() && !prior.LocalMcpApprovalConfig.IsUnknown()
-	switch {
-	case sent.LocalMcpApprovalConfig != nil:
-		if forms.ApprovalConfig == nil {
-			diags.AddAttributeError(path.Root("local_mcp_approval_config"),
-				"The platform did not store local_mcp_approval_config",
-				"The request sent it and the platform's response has none. A platform build that "+
-					"predates this field ignores it; check the admin-api version.\n\n"+notStoredRecovery)
-		} else if priorKnown {
-			m.LocalMcpApprovalConfig = prior.LocalMcpApprovalConfig
-		}
-	case priorKnown && recorded.Recorded:
-		if equalStringPtr(recorded.ApprovalConfig, forms.ApprovalConfig) {
-			m.LocalMcpApprovalConfig = prior.LocalMcpApprovalConfig
-		}
-	}
 	return forms, diags
 }
 
@@ -1152,152 +1045,4 @@ func stringSliceToSetOrNull(p *[]string) types.Set {
 		elems = append(elems, types.StringValue(v))
 	}
 	return types.SetValueMust(types.StringType, elems)
-}
-
-// decodeApprovalConfig parses the attribute's JSON strictly into the SDK's
-// ApprovalConfig: an unknown key (a typo, or a field newer than this
-// provider's SDK) is an error, because the platform would silently drop it.
-// Keys must also match exactly: Go matches JSON keys case-insensitively, so a
-// key in the wrong case would otherwise pass.
-func decodeApprovalConfig(raw string) (*gen.ApprovalConfig, error) {
-	dec := json.NewDecoder(strings.NewReader(raw))
-	dec.DisallowUnknownFields()
-	var cfg gen.ApprovalConfig
-	if err := dec.Decode(&cfg); err != nil {
-		return nil, err
-	}
-	if dec.More() {
-		return nil, fmt.Errorf("unexpected data after the JSON object")
-	}
-	var written, canonical any
-	if err := json.Unmarshal([]byte(raw), &written); err != nil {
-		return nil, err
-	}
-	reencoded, err := json.Marshal(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal(reencoded, &canonical); err != nil {
-		return nil, err
-	}
-	if key := firstMiscasedKey(written, canonical, ""); key != "" {
-		return nil, fmt.Errorf("json: unknown field %q (keys are case-sensitive)", key)
-	}
-	return &cfg, nil
-}
-
-// firstMiscasedKey returns the path of a key in written that canonical, the
-// same value re-encoded through the SDK type, does not have under the same
-// spelling. A key re-encoding dropped because its value is empty is not
-// reported unless another spelling of it exists.
-func firstMiscasedKey(written, canonical any, at string) string {
-	switch w := written.(type) {
-	case map[string]any:
-		c, _ := canonical.(map[string]any)
-		for k, wv := range w {
-			cv, ok := c[k]
-			if !ok {
-				for ck := range c {
-					if strings.EqualFold(ck, k) {
-						return at + k
-					}
-				}
-				continue
-			}
-			if p := firstMiscasedKey(wv, cv, at+k+"."); p != "" {
-				return p
-			}
-		}
-	case []any:
-		c, _ := canonical.([]any)
-		for i, wv := range w {
-			if i < len(c) {
-				if p := firstMiscasedKey(wv, c[i], fmt.Sprintf("%s%d.", at, i)); p != "" {
-					return p
-				}
-			}
-		}
-	}
-	return ""
-}
-
-// approvalConfigToTF renders the platform's config as normalized JSON (keys
-// sorted, compact, as jsonencode writes it).
-func approvalConfigToTF(cfg *gen.ApprovalConfig) jsontypes.Normalized {
-	if cfg == nil {
-		return jsontypes.NewNormalizedNull()
-	}
-	raw, err := json.Marshal(cfg)
-	if err != nil {
-		return jsontypes.NewNormalizedNull()
-	}
-	var generic any
-	if err := json.Unmarshal(raw, &generic); err != nil {
-		return jsontypes.NewNormalizedNull()
-	}
-	normalized, err := json.Marshal(generic)
-	if err != nil {
-		return jsontypes.NewNormalizedNull()
-	}
-	return jsontypes.NewNormalizedValue(string(normalized))
-}
-
-// approvalConfigMaxChannels is the platform's limit (McpEffect.ApprovalConfig).
-const approvalConfigMaxChannels = 16
-
-// approvalConfigJSON validates local_mcp_approval_config at plan time: a JSON
-// object that decodes strictly into the SDK's ApprovalConfig, with a
-// step_up_mode and 1-16 channels (the platform refuses a channel-less config
-// on this endpoint whatever the mode), and not {} (the platform's clear,
-// which the SDK cannot send; clearing is a console action).
-type approvalConfigJSON struct{}
-
-func (approvalConfigJSON) Description(context.Context) string {
-	return "a JSON approval config with step_up_mode and 1-16 channels"
-}
-
-func (v approvalConfigJSON) MarkdownDescription(ctx context.Context) string {
-	return v.Description(ctx)
-}
-
-func (approvalConfigJSON) ValidateString(_ context.Context, req validator.StringRequest, resp *validator.StringResponse) {
-	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
-		return
-	}
-	raw := strings.TrimSpace(req.ConfigValue.ValueString())
-	var generic map[string]any
-	if err := json.Unmarshal([]byte(raw), &generic); err != nil {
-		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config is not a JSON object",
-			"Write it with jsonencode({...}). "+err.Error())
-		return
-	}
-	if len(generic) == 0 {
-		resp.Diagnostics.AddAttributeError(req.Path, "An empty approval config is refused",
-			"{} is the platform's way to clear approval routing, which this provider cannot send. "+
-				"Clear it in the admin console, or leave the attribute out to keep the current config.")
-		return
-	}
-	cfg, err := decodeApprovalConfig(raw)
-	if err != nil {
-		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config does not match the approval config",
-			err.Error()+"\n\nAn unknown key fails here rather than being dropped: the platform ignores "+
-				"keys it does not know.")
-		return
-	}
-	if cfg.StepUpMode == "" {
-		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config.step_up_mode is required",
-			"Set step_up_mode to \"approve\" or \"reauth\".")
-	} else if cfg.StepUpMode != "approve" && cfg.StepUpMode != "reauth" {
-		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config.step_up_mode is invalid",
-			fmt.Sprintf("Got %q; use \"approve\" or \"reauth\".", cfg.StepUpMode))
-	}
-	switch {
-	case cfg.Channels == nil || len(*cfg.Channels) == 0:
-		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config needs at least one channel",
-			"The platform refuses an approval config without channels on this endpoint, whatever the "+
-				"mode: it would read as set up while every unvetted local tool was denied.")
-	case len(*cfg.Channels) > approvalConfigMaxChannels:
-		resp.Diagnostics.AddAttributeError(req.Path, "local_mcp_approval_config has too many channels",
-			fmt.Sprintf("At most %d; got %d.", approvalConfigMaxChannels, len(*cfg.Channels)))
-	}
 }

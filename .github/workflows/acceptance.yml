@@ -40,8 +40,8 @@ jobs:
       #
       #   - TestAccEndpointPolicySettings_tenantDefault UPSERTS THE TENANT-DEFAULT
       #     POSTURE. On production that changes what every managed device in the
-      #     tenant enforces — it sets unapproved_mcp_action = "quarantine", which
-      #     moves real MCP client configs aside on real machines.
+      #     tenant enforces — it sets quic_block_enabled = true, which blocks
+      #     QUIC on real machines.
       #   - Destroy of that row is deliberately a NO-OP (the platform refuses to
       #     delete it). So an interrupted or failed run LEAVES production posture
       #     at whatever the test last applied. There is no cleanup path.

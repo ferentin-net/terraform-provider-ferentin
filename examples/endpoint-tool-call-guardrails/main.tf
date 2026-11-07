@@ -72,9 +72,8 @@ locals {
   # A group with its own posture row ignores the tenant default for every
   # setting, so the override restates the tenant posture and differs only in
   # hook_rule_enforcement. On a new row, an attribute left out takes the
-  # platform's default (unapproved_mcp_action = quarantine), not the tenant's.
+  # platform's default, not the tenant's.
   shared_posture = {
-    unapproved_mcp_action      = var.unapproved_mcp_action
     default_destination_action = var.default_destination_action
     mcp_gateway_url            = var.mcp_gateway_url
   }
@@ -84,7 +83,6 @@ locals {
 # it: if another config already manages it, set hook_rule_enforcement there
 # instead of applying both.
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action      = local.shared_posture.unapproved_mcp_action
   default_destination_action = local.shared_posture.default_destination_action
   mcp_gateway_url            = local.shared_posture.mcp_gateway_url
 
@@ -96,7 +94,6 @@ resource "ferentin_endpoint_policy_settings" "default" {
 resource "ferentin_endpoint_policy_settings" "pilot" {
   device_group_id = ferentin_device_group.pilot.group_id
 
-  unapproved_mcp_action      = local.shared_posture.unapproved_mcp_action
   default_destination_action = local.shared_posture.default_destination_action
   mcp_gateway_url            = local.shared_posture.mcp_gateway_url
 

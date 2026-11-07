@@ -74,7 +74,7 @@ terraform apply -var enforcement_stage=steer        # rewrite MCP configs to the
 terraform apply -var enforcement_stage=allowlist    # unmatched traffic is blocked
 ```
 
-| Stage | `unapproved_mcp_action` | `unapproved_agent_action` | `default_destination_action` | `mcp_gateway_url` | DNS/QUIC flags |
+| Stage | `server_approval` (`ferentin_mcp_scope_defaults`) | `unapproved_agent_action` | `default_destination_action` | `mcp_gateway_url` | DNS/QUIC flags |
 | --- | --- | --- | --- | --- | --- |
 | `observe` | `report_only` | `report_only` | `allow` | unset | off |
 | `steer` | `report_only` | `report_only` | `allow` | set | off |

@@ -101,7 +101,6 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
   device_group_id = ferentin_device_group.pilot.group_id
 
   # Restate the tenant posture: a group row ignores the tenant default.
-  unapproved_mcp_action      = "report_only"
   default_destination_action = "allow"
   mcp_gateway_url            = "https://acme.mcp.ferentin.net/v1"
 
@@ -109,7 +108,7 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
 }
 ```
 
-~> **A group with its own posture row ignores the tenant default for every setting** (except unvetted local MCP tools, which only the tenant default sets). On a new row an attribute left out takes the platform's default, not the tenant's, and `unapproved_mcp_action` defaults to `quarantine`. The example shares the tenant's values through a `locals` block so the override differs only in `hook_rule_enforcement`.
+~> **A group with its own posture row ignores the tenant default for every setting** On a new row an attribute left out takes the platform's default, not the tenant's. The example shares the tenant's values through a `locals` block so the override differs only in `hook_rule_enforcement`.
 
 Move it with a variable:
 

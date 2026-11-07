@@ -20,6 +20,7 @@ func TestSchemaMatchesModel(t *testing.T) {
 		model any
 	}{
 		"endpoint_policy_settings":  {NewEndpointPolicySettingsResource(), &EndpointPolicySettingsResourceModel{}},
+		"mcp_scope_defaults":        {NewMCPScopeDefaultsResource(), &MCPScopeDefaultsResourceModel{}},
 		"endpoint_destination_rule": {NewEndpointDestinationRuleResource(), &EndpointDestinationRuleResourceModel{}},
 		"endpoint_mcp_rule":         {NewEndpointMCPRuleResource(), &EndpointMCPRuleResourceModel{}},
 		"data_protection_policy":    {NewDataProtectionPolicyResource(), &DataProtectionPolicyResourceModel{}},

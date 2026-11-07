@@ -332,7 +332,6 @@ type EndpointPolicySettingsScopesDataSourceModel struct {
 type EndpointPolicySettingsScopeItem struct {
 	DeviceGroupID            types.String `tfsdk:"device_group_id"`
 	ImportID                 types.String `tfsdk:"import_id"`
-	UnapprovedMcpAction      types.String `tfsdk:"unapproved_mcp_action"`
 	DefaultDestinationAction types.String `tfsdk:"default_destination_action"`
 	HookRuleEnforcement      types.String `tfsdk:"hook_rule_enforcement"`
 	ManagedBy                types.String `tfsdk:"managed_by"`
@@ -354,7 +353,9 @@ func (d *EndpointPolicySettingsScopesDataSource) Schema(_ context.Context, _ dat
 		MarkdownDescription: "List every endpoint posture row in the tenant — one " +
 			"`ferentin_endpoint_policy_settings` per scope: the tenant default first, then each device " +
 			"group that has its own override. A device group with no override has no row here; it " +
-			"resolves through the tenant default." + endpointListAdoptionNote,
+			"resolves through the tenant default. Each `import_id` also imports that scope's " +
+			"`ferentin_mcp_scope_defaults`, which carries the MCP scope defaults these rows no longer " +
+			"list." + endpointListAdoptionNote,
 		Attributes: map[string]schema.Attribute{
 			"tenant_id": schema.StringAttribute{Optional: true,
 				MarkdownDescription: "Tenant to list. Defaults to the provider's."},
@@ -365,7 +366,6 @@ func (d *EndpointPolicySettingsScopesDataSource) Schema(_ context.Context, _ dat
 						MarkdownDescription: "The group this row overrides. Null on the tenant default."},
 					"import_id": schema.StringAttribute{Computed: true,
 						MarkdownDescription: "`<tenant_id>` for the tenant default, `<tenant_id>/<device_group_id>` for an override."},
-					"unapproved_mcp_action":      schema.StringAttribute{Computed: true},
 					"default_destination_action": schema.StringAttribute{Computed: true},
 					"hook_rule_enforcement":      schema.StringAttribute{Computed: true},
 				})},
@@ -391,9 +391,9 @@ func (d *EndpointPolicySettingsScopesDataSource) Read(ctx context.Context, req d
 		m := endpointSettingsToModel(tenantID, &rows[i])
 		data.Scopes = append(data.Scopes, EndpointPolicySettingsScopeItem{
 			DeviceGroupID: m.DeviceGroupID, ImportID: m.ID,
-			UnapprovedMcpAction: m.UnapprovedMcpAction, DefaultDestinationAction: m.DefaultDestinationAction,
-			HookRuleEnforcement: m.HookRuleEnforcement,
-			ManagedBy:           m.ManagedBy, LastModifiedBy: m.LastModifiedBy,
+			DefaultDestinationAction: m.DefaultDestinationAction,
+			HookRuleEnforcement:      m.HookRuleEnforcement,
+			ManagedBy:                m.ManagedBy, LastModifiedBy: m.LastModifiedBy,
 		})
 	}
 	// Tenant default first, then overrides by group id, so the list is stable.

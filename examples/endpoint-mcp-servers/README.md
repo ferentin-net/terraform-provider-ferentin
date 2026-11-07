@@ -31,8 +31,8 @@ rules are evaluated **on the device, first match wins by ascending
 
 Local servers in `approved_local_servers` are approved with
 [`ferentin_mcp_local_server`](../../docs/resources/mcp_local_server.md) and run
-governed. Everything else that is not approved gets `unapproved_mcp_action`
-(`report_only` by default).
+governed. Everything else that is not approved gets the `server_approval`
+scope default (`report_only` by default), set on `ferentin_mcp_scope_defaults`.
 
 ## Running it
 
@@ -53,7 +53,7 @@ fleet enforces each rule; refresh to read it again.
 When the inventory looks right, tighten the fallthrough:
 
 ```sh
-terraform apply -var unapproved_mcp_action=quarantine
+terraform apply -var server_approval=quarantine
 ```
 
 ## Sharp edges
@@ -71,9 +71,8 @@ into it instead of applying both: the two would overwrite each other.
 **`mcp_gateway_url` left null clears it**, and the agent stops rewriting MCP
 client configs.
 
-**`local_mcp_risk_policy` is tenant default only**, and an `ask_once` /
-`ask_every_call` tier needs approval routing (`local_mcp_approval_config`)
-first.
+**An `ask_once` / `ask_every_call` tier in `tool_vetting_risk_policy` needs
+approval routing** (`tool_vetting_approval_config`) first.
 
 ## Required scopes
 

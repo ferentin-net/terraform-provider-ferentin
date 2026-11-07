@@ -63,21 +63,21 @@ locals {
   # destination rules exhaustive — anything unmatched is blocked.
   stage = {
     observe = {
-      unapproved_mcp_action      = "report_only"
+      server_approval            = "report_only"
       unapproved_agent_action    = "report_only"
       default_destination_action = "allow"
       rewrite_mcp_configs        = false
       harden_network             = false
     }
     steer = {
-      unapproved_mcp_action      = "report_only"
+      server_approval            = "report_only"
       unapproved_agent_action    = "report_only"
       default_destination_action = "allow"
       rewrite_mcp_configs        = true
       harden_network             = false
     }
     allowlist = {
-      unapproved_mcp_action      = "quarantine"
+      server_approval            = "quarantine"
       unapproved_agent_action    = "block"
       default_destination_action = "block"
       rewrite_mcp_configs        = true
@@ -286,7 +286,6 @@ resource "ferentin_endpoint_agent_approval" "approved" {
 #    same code path. To stand enforcement down, apply
 #    `enforcement_stage = "observe"` first, then destroy.
 resource "ferentin_endpoint_policy_settings" "default" {
-  unapproved_mcp_action      = local.stage.unapproved_mcp_action
   unapproved_agent_action    = local.stage.unapproved_agent_action
   default_destination_action = local.stage.default_destination_action
 
@@ -316,7 +315,6 @@ resource "ferentin_endpoint_policy_settings" "override" {
 
   device_group_id = local.group_ids[each.key]
 
-  unapproved_mcp_action      = "quarantine"
   unapproved_agent_action    = "block"
   mcp_gateway_url            = var.mcp_gateway_url
   default_destination_action = "block"
@@ -331,6 +329,24 @@ resource "ferentin_endpoint_policy_settings" "override" {
   # that implements them; an older agent keeps its last-known-good policy.
   local_mcp_block_enabled    = true
   unnamed_flow_block_enabled = true
+}
+
+# MCP scope defaults: what an unapproved local MCP server meets, per stage for
+# the tenant default and strict from day one for the strict groups. They live
+# on the same posture rows as the settings above, and destroy leaves them in
+# force too.
+resource "ferentin_mcp_scope_defaults" "default" {
+  server_approval = local.stage.server_approval
+}
+
+resource "ferentin_mcp_scope_defaults" "override" {
+  for_each = var.strict_groups
+
+  device_group_id = local.group_ids[each.key]
+  server_approval = "quarantine"
+
+  # One writer creates each group's posture row.
+  depends_on = [ferentin_endpoint_policy_settings.override]
 }
 
 # --- Outputs -------------------------------------------------------------

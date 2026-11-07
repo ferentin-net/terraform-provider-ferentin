@@ -10,7 +10,7 @@
 #
 # Local servers your developers run are approved with ferentin_mcp_local_server,
 # which keeps them governed through `ferentin-mcp`. MCP server configs no
-# rule matches and nothing approves get the posture's `unapproved_mcp_action`.
+# rule matches and nothing approves get the `server_approval` scope default.
 #
 # `terraform apply` STAGES the change. Devices pick it up only after someone
 # activates the pending changes in the admin console.
@@ -86,20 +86,23 @@ resource "ferentin_mcp_local_server" "approved" {
 # ../endpoint-approved-ai) already manages it, move these attributes there
 # instead of applying both.
 resource "ferentin_endpoint_policy_settings" "default" {
-  # What happens to an MCP server config no rule matches and that is not
-  # approved in the registry: report_only, quarantine or block.
-  unapproved_mcp_action = var.unapproved_mcp_action
-
   # Approved server configs are rewritten to point here. Leaving it null
   # CLEARS it, and the agent stops rewriting MCP client configs.
   mcp_gateway_url = var.mcp_gateway_url
 
-  # What developers get from a local MCP tool nobody has vetted, by its risk
-  # rating. Tenant default only. An ask_once / ask_every_call tier needs
-  # approval routing (local_mcp_approval_config) first.
-  local_mcp_risk_policy = var.local_mcp_risk_policy
-
   default_destination_action = var.default_destination_action
+}
+
+# The tenant default's MCP scope defaults, on the same posture row.
+resource "ferentin_mcp_scope_defaults" "default" {
+  # What happens to an MCP server config no rule matches and that is not
+  # approved in the registry: report_only, quarantine or block.
+  server_approval = var.server_approval
+
+  # What developers get from a local MCP tool nobody has vetted, by its risk
+  # rating. An ask_once / ask_every_call tier needs approval routing
+  # (tool_vetting_approval_config) first.
+  tool_vetting_risk_policy = var.tool_vetting_risk_policy
 }
 
 output "mcp_rule_ladder" {
