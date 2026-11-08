@@ -17,6 +17,10 @@
 # The pilot group gets its own posture row, so it can move to `enforce` while
 # the rest of the tenant keeps counting.
 #
+# Optionally (manage_sandbox = true), the agent sandbox bounds what any shell
+# command an agent runs may write and reach, including on agents whose tool
+# calls the hook only counts.
+#
 # `terraform apply` STAGES the change. Devices pick it up only after someone
 # activates the pending changes in the admin console.
 
@@ -96,6 +100,40 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
   mcp_gateway_url            = local.shared_posture.mcp_gateway_url
 
   hook_rule_enforcement = var.pilot_hook_rule_enforcement
+}
+
+# The agent sandbox: Ferentin writes it into each tool's own sandbox settings,
+# so it holds even where tool call rules only count. Enforced on Claude Code,
+# Codex and Copilot (the developer cannot switch it off); a default the
+# developer can undo on Cursor and Antigravity.
+#
+# One per tenant, and opt-in: Terraform then owns the whole policy, and setting
+# manage_sandbox back to false destroys it, which turns the sandbox off on every
+# tool. Create refuses to overwrite a policy the tenant already saved; import it
+# instead:
+#   terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>
+resource "ferentin_endpoint_sandbox" "agents" {
+  count = var.manage_sandbox ? 1 : 0
+
+  tools = {
+    "claude-code" = { enabled = true }
+    "codex"       = { enabled = true }
+    "copilot"     = { enabled = true }
+  }
+
+  # The only domains sandboxed commands may reach, plus (with
+  # include_derived_domains) what the tenant already allows elsewhere:
+  # unconditioned allow destination rules, approved MCP servers and the
+  # Ferentin gateway. So `curl` to anywhere else fails even where rule 10 only
+  # counts.
+  allowed_domains         = var.sandbox_allowed_domains
+  include_derived_domains = true
+
+  # No filesystem block: devices keep their credential template, which denies
+  # ~/.ssh, ~/.aws, ~/.gnupg, ~/.config/gh and ~/Library/Keychains. Set one to
+  # replace it, and restate the template if you still want it.
+
+  description = "Coding agents: package registries only"
 }
 
 output "enforcement" {

@@ -65,3 +65,15 @@ variable "mcp_gateway_url" {
     error_message = "mcp_gateway_url must be https:// — http:// downgrades every governed MCP session to cleartext."
   }
 }
+
+variable "manage_sandbox" {
+  type        = bool
+  description = "Manage the tenant's agent sandbox here. Off by default because Terraform then owns the whole policy, and setting this back to false destroys it, which turns the sandbox off on every tool. If the tenant already has one, import it."
+  default     = false
+}
+
+variable "sandbox_allowed_domains" {
+  type        = list(string)
+  description = "Domains sandboxed agent commands may reach: a DNS name of two or more labels, optionally *.-prefixed for its subdomains."
+  default     = ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "*.githubusercontent.com"]
+}
