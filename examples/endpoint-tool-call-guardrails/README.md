@@ -27,8 +27,10 @@ examples/endpoint-tool-call-guardrails/
 With `manage_sandbox = true` it also manages the tenant's agent sandbox
 (`ferentin_endpoint_sandbox`): Claude Code, Codex and Copilot run shell
 commands in a sandbox that reaches only `sandbox_allowed_domains` and keeps
-the devices' credential folders out of reach. It is off by default because it
-replaces the tenant's whole sandbox policy.
+the devices' credential folders out of reach. It is off by default because
+Terraform then owns the tenant's whole sandbox policy, and turning
+`manage_sandbox` back off destroys it, which switches the sandbox off on every
+tool.
 
 Tool call rules are always `block`. Whether a match denies the call or only
 counts it is `hook_rule_enforcement` on the scope's posture: the tenant

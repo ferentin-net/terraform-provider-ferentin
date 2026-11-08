@@ -107,8 +107,10 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
 # Codex and Copilot (the developer cannot switch it off); a default the
 # developer can undo on Cursor and Antigravity.
 #
-# One per tenant, and it replaces the tenant's whole sandbox policy, so it is
-# opt-in. If the tenant already has one, import it instead of creating it:
+# One per tenant, and opt-in: Terraform then owns the whole policy, and setting
+# manage_sandbox back to false destroys it, which turns the sandbox off on every
+# tool. Create refuses to overwrite a policy the tenant already saved; import it
+# instead:
 #   terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>
 resource "ferentin_endpoint_sandbox" "agents" {
   count = var.manage_sandbox ? 1 : 0

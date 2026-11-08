@@ -68,7 +68,7 @@ variable "mcp_gateway_url" {
 
 variable "manage_sandbox" {
   type        = bool
-  description = "Manage the tenant's agent sandbox policy here. It is one per tenant and this replaces it whole, so it is off by default; import an existing one rather than creating it."
+  description = "Manage the tenant's agent sandbox here. Off by default because Terraform then owns the whole policy, and setting this back to false destroys it, which turns the sandbox off on every tool. If the tenant already has one, import it."
   default     = false
 }
 

@@ -150,7 +150,7 @@ resource "ferentin_endpoint_sandbox" "agents" {
 - **Where it holds.** Claude Code, Codex and Copilot enforce it, and the developer cannot switch it off. On Cursor and Antigravity it is a default the developer can undo. `allow_unsandboxed = true` on a tool lets it retry a command outside the sandbox through the tool's own approval prompt, for Docker and the like.
 - **Network.** Commands reach only `allowed_domains` and, with `include_derived_domains`, what the tenant already allows elsewhere (unconditioned allow destination rules, approved MCP servers and the Ferentin gateway). So `curl` to an unlisted host fails inside the sandbox even while rule 10 only counts.
 - **Files.** With no `filesystem` block, devices keep their credential template, which denies `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.config/gh` and `~/Library/Keychains`. A `filesystem` block replaces it, so restate the template if you still want it.
-- **One per tenant.** Creating it replaces the tenant's whole sandbox policy, so the example leaves it off unless you set `manage_sandbox = true`, and the provider refuses to create one over a policy someone already saved: import it with `terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>`. Destroying it stops Ferentin writing the sandbox into any tool.
+- **One per tenant, owned whole.** With `manage_sandbox = true`, Terraform owns the tenant's whole sandbox policy: a console edit shows as drift and the next apply reverts it. Create refuses to overwrite a policy someone already saved; import it with `terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>`. Destroying it, including setting `manage_sandbox` back to `false`, saves a policy that enables no tool, so Ferentin stops writing the sandbox into every tool, not only the three listed here. That is why the example leaves it off.
 
 ## What `enforce` does not cover
 
@@ -284,8 +284,10 @@ resource "ferentin_endpoint_policy_settings" "pilot" {
 # Codex and Copilot (the developer cannot switch it off); a default the
 # developer can undo on Cursor and Antigravity.
 #
-# One per tenant, and it replaces the tenant's whole sandbox policy, so it is
-# opt-in. If the tenant already has one, import it instead of creating it:
+# One per tenant, and opt-in: Terraform then owns the whole policy, and setting
+# manage_sandbox back to false destroys it, which turns the sandbox off on every
+# tool. Create refuses to overwrite a policy the tenant already saved; import it
+# instead:
 #   terraform import 'ferentin_endpoint_sandbox.agents[0]' <tenant_id>
 resource "ferentin_endpoint_sandbox" "agents" {
   count = var.manage_sandbox ? 1 : 0
