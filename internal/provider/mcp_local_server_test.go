@@ -9,9 +9,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hashicorp/terraform-plugin-framework/attr"
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	rschema "github.com/hashicorp/terraform-plugin-framework/resource/schema"
+	"github.com/hashicorp/terraform-plugin-framework/schema/validator"
 	"github.com/hashicorp/terraform-plugin-framework/tfsdk"
+	"github.com/hashicorp/terraform-plugin-framework/types"
 	"github.com/hashicorp/terraform-plugin-go/tftypes"
 
 	"github.com/ferentin-net/ferentin-cli-app/pkg/adminapi"
@@ -292,5 +296,45 @@ func TestMCPLocalServersDataSource_ListsByName(t *testing.T) {
 	}
 	if z.ImportID.ValueString() != fixtureTenantID+"/"+testLocalServerID || z.DeclaredVia.ValueString() != "template" {
 		t.Errorf("declared server = %v", z)
+	}
+}
+
+func TestArgvTemplateUsable(t *testing.T) {
+	ctx := context.Background()
+	list := func(tokens ...string) types.List {
+		vals := make([]attr.Value, len(tokens))
+		for i, tok := range tokens {
+			vals[i] = types.StringValue(tok)
+		}
+		return types.ListValueMust(types.StringType, vals)
+	}
+	for name, tc := range map[string]struct {
+		value   types.List
+		wantErr string
+	}{
+		"two literals and a wildcard":    {list("uv", "run", "--directory", "*", "okta-mcp-server"), ""},
+		"two literals":                   {list("npx", "@modelcontextprotocol/server-github"), ""},
+		"one absolute path":              {list("/Applications/1Password.app/Contents/MacOS/1password-mcp"), ""},
+		"one bare program name":          {list("safaridriver"), "must be an absolute path"},
+		"root alone":                     {list("/"), "must be an absolute path"},
+		"wildcard program":               {list("*", "run", "server"), "must name its program"},
+		"one literal and wildcards":      {list("node", "*"), "names too little"},
+		"empty token":                    {list("uv", ""), "Empty argv_template token"},
+		"null":                           {types.ListNull(types.StringType), ""},
+		"unknown":                        {types.ListUnknown(types.StringType), ""},
+		"a token not yet known":          {types.ListValueMust(types.StringType, []attr.Value{types.StringValue("*"), types.StringUnknown()}), ""},
+		"a wildcard alone is not a path": {list("*"), "must name its program"},
+	} {
+		resp := &validator.ListResponse{}
+		argvTemplateUsable{}.ValidateList(ctx, validator.ListRequest{Path: path.Root("argv_template"), ConfigValue: tc.value}, resp)
+		if tc.wantErr == "" {
+			if resp.Diagnostics.HasError() {
+				t.Errorf("%s: unexpected %v", name, resp.Diagnostics)
+			}
+			continue
+		}
+		if !resp.Diagnostics.HasError() || !strings.Contains(resp.Diagnostics.Errors()[0].Summary(), tc.wantErr) {
+			t.Errorf("%s: diags = %v, want %q", name, resp.Diagnostics, tc.wantErr)
+		}
 	}
 }

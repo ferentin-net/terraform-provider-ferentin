@@ -17,7 +17,8 @@ import (
 //  2. Both resources change in one apply, so whichever writes second meets a
 //     version the first moved: the provider must retry it, not fail with 412.
 //     The rehearsal ends (server_approval_mode unset: enforce).
-//  3. The risk policy and approval routing left out of config are kept.
+//  3. The risk policy and approval routing left out of config are kept, and
+//     the group's agent evidence floor returns to the tenant's (inherit).
 //  4. Import, with nothing ignored.
 func TestAccMCPScopeDefaults_deviceGroup(t *testing.T) {
 	suffix := randomSuffix(t)
@@ -66,6 +67,7 @@ resource "ferentin_mcp_scope_defaults" "group" {
   server_approval_mode = "report_only"
   unattributed         = "report_only"
   tool_vetting_mode    = "enforce"
+  agent_evidence_floor = "lineage_signature"
 `+risk+approval),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(r, "server_approval", "block"),
@@ -75,6 +77,8 @@ resource "ferentin_mcp_scope_defaults" "group" {
 					resource.TestCheckResourceAttr(r, "source", "device_group"),
 					resource.TestCheckResourceAttr(r, "tool_vetting_risk_policy.medium", "ask_once"),
 					resource.TestCheckResourceAttr(r, "tool_vetting_risk_policy_source", "device_group"),
+					resource.TestCheckResourceAttr(r, "agent_evidence_floor", "lineage_signature"),
+					resource.TestCheckResourceAttr(r, "agent_evidence_floor_source", "device_group"),
 					resource.TestCheckResourceAttrSet(r, "version"),
 				),
 			},
@@ -92,12 +96,20 @@ resource "ferentin_mcp_scope_defaults" "group" {
 			},
 			{
 				Config: cfg(true, `
-  server_approval   = "block"
-  unattributed      = "block"
-  tool_vetting_mode = "report_only"
+  server_approval      = "block"
+  unattributed         = "block"
+  tool_vetting_mode    = "report_only"
+  agent_evidence_floor = "inherit"
 `),
 				Check: resource.ComposeAggregateTestCheckFunc(
 					resource.TestCheckResourceAttr(r, "unattributed", "block"),
+					resource.TestCheckResourceAttr(r, "agent_evidence_floor", "inherit"),
+					resource.TestCheckResourceAttrWith(r, "agent_evidence_floor_source", func(v string) error {
+						if v != "tenant" && v != "built_in" {
+							return fmt.Errorf("source = %q, want tenant or built_in once the group inherits", v)
+						}
+						return nil
+					}),
 					resource.TestCheckResourceAttr(r, "tool_vetting_risk_policy.medium", "ask_once"),
 					resource.TestCheckResourceAttr(r, "tool_vetting_approval_config",
 						`{"channels":[{"type":"invocation_context"}],"step_up_mode":"approve","timeout_seconds":900}`),

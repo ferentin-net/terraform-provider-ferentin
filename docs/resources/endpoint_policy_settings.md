@@ -8,6 +8,7 @@ description: |-
   Omit device_group_id for the tenant default row (which every device, including ungrouped ones, resolves through). Set it for a per-group override.
   ~> This resource is an upsert, not a create. The platform API has no POST and no GET-by-id; identity is (tenant_id, device_group_id). Consequences:
   If posture already exists (e.g. configured in the console), terraform apply adopts the existing row rather than failing. managed_by still reports the original creator, so the adoption is visible as drift.terraform destroy on the tenant default row does not delete it and does not change it — the platform refuses to delete a row every device resolves through. Terraform drops it from state and the fleet keeps enforcing the last applied posture, with a warning saying so. This is fail-closed on purpose: resetting to the permissive defaults would silently de-enforce the whole fleet, and removing the resource block or dropping a module reaches the same code path as an explicit destroy. To stand enforcement down, apply the permissive posture first, then destroy. A group override is genuinely deleted, and the group falls back to the tenant default.
+  ~> A group whose MCP scope defaults differ from the tenant's keeps its posture on destroy. Where MCP policies have replaced endpoint MCP rules, the platform refuses a delete that would change the group's ferentin_mcp_scope_defaults by falling back (posture_field_moved). Destroy then warns and drops the resource from state, leaving the row in force. Deleting the device group removes the row with it, so a config that destroys the group too finishes cleanly. To keep the group, set its scope defaults to the tenant's first.
   Import
   Tenant default row:
   
@@ -30,6 +31,8 @@ Omit `device_group_id` for the **tenant default** row (which every device, inclu
 
 * If posture already exists (e.g. configured in the console), `terraform apply` **adopts** the existing row rather than failing. `managed_by` still reports the original creator, so the adoption is visible as drift.
 * `terraform destroy` on the **tenant default** row does not delete it and does not change it — the platform refuses to delete a row every device resolves through. Terraform drops it from state and **the fleet keeps enforcing the last applied posture**, with a warning saying so. This is fail-closed on purpose: resetting to the permissive defaults would silently de-enforce the whole fleet, and removing the resource block or dropping a module reaches the same code path as an explicit destroy. To stand enforcement down, apply the permissive posture first, then destroy. A group override *is* genuinely deleted, and the group falls back to the tenant default.
+
+~> **A group whose MCP scope defaults differ from the tenant's keeps its posture on destroy.** Where MCP policies have replaced endpoint MCP rules, the platform refuses a delete that would change the group's `ferentin_mcp_scope_defaults` by falling back (`posture_field_moved`). Destroy then warns and drops the resource from state, leaving the row in force. Deleting the device group removes the row with it, so a config that destroys the group too finishes cleanly. To keep the group, set its scope defaults to the tenant's first.
 
 ## Import
 

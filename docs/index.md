@@ -74,6 +74,12 @@ Probes: [`ferentin_workload_identity_provider_test`](data-sources/workload_ident
 
 Lookup: [`ferentin_otel_sink_provider`](data-sources/otel_sink_provider.md) reads the sink catalog.
 
+## Rate limits
+
+The platform limits admin API requests per category (for example 60 policy writes a minute per tenant), and every create, update and delete also spends the tenant's hourly write budget: 10,000 by default, of which one principal may spend 80%. The provider waits out a `429` for as long as the platform asks (up to 30 seconds) and tries each request up to four times. When the tenant's write budget is spent, it holds its other writes too rather than sending them to be refused.
+
+If an apply still fails as rate-limited, the error names the budget. For a category's per-minute budget, re-run with `-parallelism=1` or wait a minute. For the hourly write budget, lowering `-parallelism` does not help: wait, or spread large applies over time. Resources already applied are in state, so re-running the apply carries on from where it stopped.
+
 ## Example Usage
 
 ```terraform

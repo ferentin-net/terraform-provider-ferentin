@@ -48,6 +48,15 @@ resource "ferentin_mcp_local_server" "okta" {
   reason        = "Approved for the identity team's runbooks"
 }
 
+# A server launched with no arguments: one absolute path is enough. Any other
+# template needs at least two literal tokens, and its first token can never
+# be `*`.
+resource "ferentin_mcp_local_server" "internal_tools" {
+  display_name  = "Internal tools MCP"
+  argv_template = ["/opt/acme/bin/tools-mcp"]
+  reason        = "Platform team's internal tooling server"
+}
+
 # Approve a server from the local MCP catalog, keyed on its packages.
 resource "ferentin_mcp_local_server" "playwright" {
   catalog_slug = "local-playwright"
@@ -55,7 +64,7 @@ resource "ferentin_mcp_local_server" "playwright" {
 
 # Block a server outright. Devices consult a template only for a command line
 # that names no package, so a template suits a bare binary or a script; block
-# a package with an endpoint MCP rule instead. A server a device reported can
+# a package with a ferentin_mcp_policy deny whose target names the package. A server a device reported can
 # be imported to manage its verdict this way; destroying it leaves it in place.
 resource "ferentin_mcp_local_server" "unvetted" {
   display_name  = "Unvetted scraper"
@@ -69,7 +78,7 @@ resource "ferentin_mcp_local_server" "unvetted" {
 
 ### Optional
 
-- `argv_template` (List of String) The command line the approval covers, as the client's config spells it (`argv[0]` included); `*` matches exactly one argument and every other token is compared literally. At least two tokens must be literal. Changing it updates the server in place. Leaving it out keeps the server's current template.
+- `argv_template` (List of String) The command line the approval covers, as the client's config spells it (`argv[0]` included); `*` matches exactly one argument and every other token is compared literally. 1 to 64 tokens. The first token must be literal: a `*` there would approve any program, so declare `uv` and `/opt/homebrew/bin/uv` as two servers if both are in use. At least two tokens must be literal, except for a single absolute path such as `["/Applications/1Password.app/Contents/MacOS/1password-mcp"]`, which covers that program run with no arguments. A template that starts a shell or interpreter and names no script covers whatever it is given to run; the platform accepts it with a `template_runs_any_script` warning. Changing it updates the server in place. Leaving it out keeps the server's current template.
 - `catalog_slug` (String) Slug of the local MCP catalog entry to add the server from, e.g. `local-playwright`. Changing it replaces the server.
 - `display_name` (String) Name shown in the console. Required with `argv_template`; a catalog server takes its entry's. Changing it replaces the server.
 - `reason` (String) Note recorded in the audit log with each write. Not read back.

@@ -56,3 +56,29 @@ resource "ferentin_mcp_local_server" "test" {
 }
 `, suffix, extra)
 }
+
+// TestAccMCPLocalServer_oneAbsolutePath declares a server from a template that
+// is one absolute path (ferentin-platform#3331), which the provider used to
+// refuse at plan for having fewer than two tokens.
+func TestAccMCPLocalServer_oneAbsolutePath(t *testing.T) {
+	suffix := randomSuffix(t)
+	const r = "ferentin_mcp_local_server.test"
+	resource.Test(t, resource.TestCase{
+		PreCheck:                 func() { testAccPreCheck(t) },
+		ProtoV6ProviderFactories: testAccProtoV6ProviderFactories,
+		Steps: []resource.TestStep{{
+			Config: providerBlock() + fmt.Sprintf(`
+resource "ferentin_mcp_local_server" "test" {
+  display_name  = "tf-acc-local-abs-%[1]s"
+  argv_template = ["/opt/tf-acc-%[1]s/bin/mcp-server"]
+  reason        = "terraform acceptance test"
+}
+`, suffix),
+			Check: resource.ComposeAggregateTestCheckFunc(
+				resource.TestCheckResourceAttr(r, "status", "approved"),
+				resource.TestCheckResourceAttr(r, "declared_via", "template"),
+				resource.TestCheckResourceAttr(r, "argv_template.#", "1"),
+			),
+		}},
+	})
+}
