@@ -41,6 +41,12 @@ resource "ferentin_mcp_scope_defaults" "tenant" {
     timeout_seconds = 900
     channels        = [{ type = "invocation_context" }]
   })
+
+  # Credit a ferentin_mcp_policy grant that names an AI agent (subject.agents)
+  # on a local server only when the device verified the agent's code
+  # signature. Off by default, which credits no such grant. A deny naming an
+  # agent applies whatever this says.
+  agent_evidence_floor = "lineage_signature"
 }
 
 # Contractors: enforce. Tool vetting follows the tenant default's.

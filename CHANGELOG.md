@@ -299,7 +299,8 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   delete until the budget refills, so the diagnostic says to wait rather
   than serialize. The SDK transport also holds every other write while a
   write-wide budget is spent, instead of letting each of Terraform's
-  parallel writers be refused in turn. Reads are not held.
+  parallel writers be refused in turn. Reads are not held. The provider
+  overview gains a *Rate limits* section saying the same.
 - **Destroying a device group's `ferentin_endpoint_policy_settings` no
   longer fails where MCP policies have replaced endpoint MCP rules.** The
   platform now refuses that delete while the group's MCP scope defaults

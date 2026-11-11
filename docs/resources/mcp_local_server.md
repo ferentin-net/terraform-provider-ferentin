@@ -48,6 +48,15 @@ resource "ferentin_mcp_local_server" "okta" {
   reason        = "Approved for the identity team's runbooks"
 }
 
+# A server launched with no arguments: one absolute path is enough. Any other
+# template needs at least two literal tokens, and its first token can never
+# be `*`.
+resource "ferentin_mcp_local_server" "internal_tools" {
+  display_name  = "Internal tools MCP"
+  argv_template = ["/opt/acme/bin/tools-mcp"]
+  reason        = "Platform team's internal tooling server"
+}
+
 # Approve a server from the local MCP catalog, keyed on its packages.
 resource "ferentin_mcp_local_server" "playwright" {
   catalog_slug = "local-playwright"
@@ -55,7 +64,7 @@ resource "ferentin_mcp_local_server" "playwright" {
 
 # Block a server outright. Devices consult a template only for a command line
 # that names no package, so a template suits a bare binary or a script; block
-# a package with an endpoint MCP rule instead. A server a device reported can
+# a package with a ferentin_mcp_policy deny whose target names the package. A server a device reported can
 # be imported to manage its verdict this way; destroying it leaves it in place.
 resource "ferentin_mcp_local_server" "unvetted" {
   display_name  = "Unvetted scraper"
