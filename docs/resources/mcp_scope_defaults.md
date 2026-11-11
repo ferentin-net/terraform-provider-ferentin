@@ -5,9 +5,10 @@ subcategory: ""
 description: |-
   MCP scope defaults: what a local MCP server or tool on a managed device meets when no MCP policy applies to it, for the tenant default or for one device group. Four defaults, each enforced or rehearsed (report_only):
   server approval — a local MCP server config that is not approvedremote entry — a remote MCP server entry that is not approved; it equals server approval until devices carry the two apart, so it is read-only hereunattributed — a local MCP server started by a process the device cannot place in an identified AI agent's session (for example from Terminal.app)tool vetting — an unvetted tool on an approved local server: its mode, the action per risk rating, and the approval routing an ask_* tier needs
+  It also holds the agent evidence floor: how strongly a device must have verified the AI agent before a local MCP policy that grants on that agent applies.
   Omit device_group_id for the tenant default, which every device without a group default of its own runs. Set it for one device group.
   Each default is sent only when it is in the config: one left out keeps what the tenant has, so a default can stay with the admin console.
-  ~> This resource writes the endpoint posture row. The platform stores these defaults on the same row ferentin_endpoint_policy_settings manages for the scope, so the two share one version. When an apply changes both, the provider retries a write the other made stale, as long as the defaults this resource sends were not changed elsewhere. On a device group with no posture of its own, the first write here creates the group's row as a copy of the tenant default's posture. Destroying a group's ferentin_endpoint_policy_settings deletes that row, and with it the group's own scope defaults: the group then runs the tenant's, and the next plan here shows the difference. When both resources manage one group, make this one depends_on the settings resource so the group row is created once.
+  ~> This resource writes the endpoint posture row. The platform stores these defaults on the same row ferentin_endpoint_policy_settings manages for the scope, so the two share one version. When an apply changes both, the provider retries a write the other made stale, as long as the defaults this resource sends were not changed elsewhere. On a device group with no posture of its own, the first write here creates the group's row as a copy of the tenant default's posture. Destroying a group's ferentin_endpoint_policy_settings deletes that row, and with it the group's own scope defaults: the group then runs the tenant's, and the next plan here shows the difference. Where MCP policies have replaced endpoint MCP rules, the platform refuses that delete while the group's defaults differ from the tenant's, and the settings resource leaves the row in force with a warning; deleting the device group still removes it. When both resources manage one group, make this one depends_on the settings resource so the group row is created once.
   ~> Destroy does not reset anything. The platform has no way to delete the defaults, and resetting them to the permissive built-ins would stand enforcement down silently, so terraform destroy (or removing the block) drops the resource from state and leaves the defaults in force, with a warning. To stand them down, apply report_only values first.
   Import
   
@@ -26,11 +27,13 @@ MCP scope defaults: what a local MCP server or tool on a managed device meets wh
 * **unattributed** — a local MCP server started by a process the device cannot place in an identified AI agent's session (for example from Terminal.app)
 * **tool vetting** — an unvetted tool on an approved local server: its mode, the action per risk rating, and the approval routing an `ask_*` tier needs
 
+It also holds the **agent evidence floor**: how strongly a device must have verified the AI agent before a local MCP policy that grants on that agent applies.
+
 Omit `device_group_id` for the **tenant default**, which every device without a group default of its own runs. Set it for one device group.
 
 Each default is sent only when it is in the config: one left out keeps what the tenant has, so a default can stay with the admin console.
 
-~> **This resource writes the endpoint posture row.** The platform stores these defaults on the same row `ferentin_endpoint_policy_settings` manages for the scope, so the two share one version. When an apply changes both, the provider retries a write the other made stale, as long as the defaults this resource sends were not changed elsewhere. On a device group with no posture of its own, the first write here creates the group's row as a copy of the tenant default's posture. Destroying a group's `ferentin_endpoint_policy_settings` deletes that row, and with it the group's own scope defaults: the group then runs the tenant's, and the next plan here shows the difference. When both resources manage one group, make this one `depends_on` the settings resource so the group row is created once.
+~> **This resource writes the endpoint posture row.** The platform stores these defaults on the same row `ferentin_endpoint_policy_settings` manages for the scope, so the two share one version. When an apply changes both, the provider retries a write the other made stale, as long as the defaults this resource sends were not changed elsewhere. On a device group with no posture of its own, the first write here creates the group's row as a copy of the tenant default's posture. Destroying a group's `ferentin_endpoint_policy_settings` deletes that row, and with it the group's own scope defaults: the group then runs the tenant's, and the next plan here shows the difference. Where MCP policies have replaced endpoint MCP rules, the platform refuses that delete while the group's defaults differ from the tenant's, and the settings resource leaves the row in force with a warning; deleting the device group still removes it. When both resources manage one group, make this one `depends_on` the settings resource so the group row is created once.
 
 ~> **Destroy does not reset anything.** The platform has no way to delete the defaults, and resetting them to the permissive built-ins would stand enforcement down silently, so `terraform destroy` (or removing the block) drops the resource from state and leaves the defaults in force, with a warning. To stand them down, apply `report_only` values first.
 
@@ -106,6 +109,14 @@ resource "ferentin_mcp_scope_defaults" "contractors" {
 
 ### Optional
 
+- `agent_evidence_floor` (String) The weakest device-verified agent evidence at which a grant on a local MCP server that names an AI agent (`ferentin_mcp_policy` with `effect` `allow` or `step_up` and `subject.agents` or `subject.agent_evidence`) is credited:
+
+* `off` — no grant on the agent is credited; the default
+* `lineage_name` — the agent's process name in the MCP shim's lineage
+* `lineage_signature` — its kernel-verified code signature, which is what every agent a device verifies reads as today
+* `hook_correlated` — also matched to the agent's own pre-tool hook; no device reports it yet
+
+A deny naming an agent applies at any level, whatever this says. The platform decides it where a local server starts and at its tool calls; devices do not receive it. On a device group, `inherit` follows the tenant default's, and is what a group that sets none reads as. Omit to keep the current value.
 - `device_group_id` (String) Device group these defaults apply to — reference `ferentin_device_group.<name>.group_id`. Omit for the tenant default. Part of the resource's identity: changing it forces replacement.
 - `server_approval` (String) What a device does with a local MCP server config that no policy applies to and that is not approved:
 
@@ -130,6 +141,7 @@ Omit to keep the current policy. Clearing it (on a group, returning to the tenan
 
 ### Read-Only
 
+- `agent_evidence_floor_source` (String) Read-only. Where the agent evidence floor in force comes from: `device_group`, `tenant` or `built_in` (none set, which is `off`).
 - `id` (String) `<tenant_id>` for the tenant default, `<tenant_id>/<device_group_id>` for a group.
 - `remote_entry` (String) Read-only. The remote entry default, which equals `server_approval` until devices carry them apart.
 - `remote_entry_mode` (String) Read-only. The remote entry default's mode.

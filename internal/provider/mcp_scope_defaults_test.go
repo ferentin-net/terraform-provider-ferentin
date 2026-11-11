@@ -302,6 +302,36 @@ func TestScopeDefaultsToModel_TenantAndGroup(t *testing.T) {
 	}
 }
 
+func TestScopeDefaultsToModel_AgentEvidenceFloor(t *testing.T) {
+	resp := func(value, source string) *adminapi.MCPScopeDefaults {
+		v := gen.McpScopeAgentEvidenceFloorValue(value)
+		s := gen.McpScopeAgentEvidenceFloorSource(source)
+		return &adminapi.MCPScopeDefaults{AgentEvidenceFloor: &gen.McpScopeAgentEvidenceFloor{Value: &v, Source: &s}}
+	}
+	group := types.StringValue(scopeTestGroupID)
+	for name, tc := range map[string]struct {
+		groupID             types.String
+		value, source, want string
+	}{
+		"tenant, its own":                {types.StringNull(), "lineage_signature", "tenant", "lineage_signature"},
+		"tenant, none set reads off":     {types.StringNull(), "off", "built_in", "off"},
+		"group, its own":                 {group, "lineage_name", "device_group", "lineage_name"},
+		"group's own off is not inherit": {group, "off", "device_group", "off"},
+		"group following the tenant":     {group, "lineage_signature", "tenant", "inherit"},
+		"group, nothing set anywhere":    {group, "off", "built_in", "inherit"},
+	} {
+		m := scopeDefaultsToModel(fixtureTenantID, tc.groupID, resp(tc.value, tc.source))
+		if m.AgentEvidenceFloor.ValueString() != tc.want || m.AgentEvidenceFloorSource.ValueString() != tc.source {
+			t.Errorf("%s: floor = %v (source %v), want %s (%s)", name, m.AgentEvidenceFloor,
+				m.AgentEvidenceFloorSource, tc.want, tc.source)
+		}
+	}
+	if m := scopeDefaultsToModel(fixtureTenantID, types.StringNull(), &adminapi.MCPScopeDefaults{}); !m.AgentEvidenceFloor.IsNull() ||
+		!m.AgentEvidenceFloorSource.IsNull() {
+		t.Errorf("a platform that predates the floor: %v / %v, want null", m.AgentEvidenceFloor, m.AgentEvidenceFloorSource)
+	}
+}
+
 // ----------------------------------------------------------------- writing
 
 func TestScopeDefaultsToWrite_SendsOnlyConfigured(t *testing.T) {
@@ -313,6 +343,7 @@ func TestScopeDefaultsToWrite_SendsOnlyConfigured(t *testing.T) {
 		Unattributed: types.StringValue("block"), UnattributedMode: types.StringValue("enforce"),
 		ToolVettingMode: types.StringValue("inherit"), ToolVettingRiskPolicy: risk,
 		ToolVettingApprovalConfig: jsontypes.NewNormalizedValue(`{"step_up_mode":"approve","channels":[{"type":"invocation_context"}]}`),
+		AgentEvidenceFloor:        types.StringValue("lineage_signature"),
 	}
 
 	// Nothing configured: the plan carries state values (UseStateForUnknown),
@@ -323,7 +354,8 @@ func TestScopeDefaultsToWrite_SendsOnlyConfigured(t *testing.T) {
 		ToolVettingApprovalConfig: jsontypes.NewNormalizedNull(),
 	}
 	body, d := scopeDefaultsToWrite(plan, nothing)
-	if d.HasError() || body.ServerApproval != nil || body.Unattributed != nil || body.ToolVetting != nil || body.RemoteEntry != nil {
+	if d.HasError() || body.ServerApproval != nil || body.Unattributed != nil || body.ToolVetting != nil || body.RemoteEntry != nil ||
+		body.AgentEvidenceFloor != nil {
 		t.Errorf("config sets nothing, sent %+v (%v)", body, d)
 	}
 
@@ -344,6 +376,9 @@ func TestScopeDefaultsToWrite_SendsOnlyConfigured(t *testing.T) {
 	if tv == nil || tv.Mode == nil || *tv.Mode != "inherit" || tv.RiskPolicy == nil || *tv.RiskPolicy.Medium != "deny" ||
 		tv.ApprovalConfig == nil || tv.ApprovalConfig.StepUpMode != "approve" {
 		t.Errorf("tool_vetting = %+v", tv)
+	}
+	if body.AgentEvidenceFloor == nil || *body.AgentEvidenceFloor != "lineage_signature" {
+		t.Errorf("agent_evidence_floor = %v", body.AgentEvidenceFloor)
 	}
 
 	// A configured value with an unknown planned mode still sends the
@@ -432,6 +467,9 @@ func TestMCPScopeDefaults_ValidateConfig(t *testing.T) {
 		"inherit on a group":           {map[string]tftypes.Value{"device_group_id": tfStr(scopeTestGroupID), "tool_vetting_mode": tfStr("inherit")}, ""},
 		"inherit on the tenant":        {map[string]tftypes.Value{"tool_vetting_mode": tfStr("inherit")}, "device group only"},
 		"inherit, group not yet known": {map[string]tftypes.Value{"device_group_id": tftypes.NewValue(tftypes.String, tftypes.UnknownValue), "tool_vetting_mode": tfStr("inherit")}, ""},
+		"floor inherit on a group":     {map[string]tftypes.Value{"device_group_id": tfStr(scopeTestGroupID), "agent_evidence_floor": tfStr("inherit")}, ""},
+		"floor inherit on the tenant":  {map[string]tftypes.Value{"agent_evidence_floor": tfStr("inherit")}, "device group only"},
+		"floor level on the tenant":    {map[string]tftypes.Value{"agent_evidence_floor": tfStr("lineage_signature")}, ""},
 	} {
 		resp := &resource.ValidateConfigResponse{}
 		(&MCPScopeDefaultsResource{}).ValidateConfig(ctx, resource.ValidateConfigRequest{
@@ -504,6 +542,17 @@ func TestScopeDefaultsOwnedChanges(t *testing.T) {
 	fresh.ServerApprovalMode = types.StringValue("report_only")
 	if got := scopeDefaultsOwnedChanges(prior, fresh, serverApprovalWrite("block", "enforce")); strings.Join(got, ",") != "server_approval_mode" {
 		t.Errorf("changed = %v, want server_approval_mode", got)
+	}
+
+	floor := gen.McpScopeDefaultsWriteAgentEvidenceFloor("lineage_signature")
+	prior.AgentEvidenceFloor = types.StringValue("off")
+	fresh = prior
+	fresh.AgentEvidenceFloor = types.StringValue("lineage_name")
+	if got := scopeDefaultsOwnedChanges(prior, fresh, serverApprovalWrite("block", "enforce")); len(got) != 0 {
+		t.Errorf("a floor this write does not send changed: got %v, want nothing", got)
+	}
+	if got := scopeDefaultsOwnedChanges(prior, fresh, adminapi.MCPScopeDefaultsWrite{AgentEvidenceFloor: &floor}); strings.Join(got, ",") != "agent_evidence_floor" {
+		t.Errorf("changed = %v, want agent_evidence_floor", got)
 	}
 }
 

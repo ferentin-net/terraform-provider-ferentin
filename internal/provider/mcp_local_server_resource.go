@@ -134,11 +134,17 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"argv_template": schema.ListAttribute{
 				MarkdownDescription: "The command line the approval covers, as the client's config spells it " +
 					"(`argv[0]` included); `*` matches exactly one argument and every other token is compared " +
-					"literally. At least two tokens must be literal. Changing it updates the server in place. " +
-					"Leaving it out keeps the server's current template.",
+					"literally. 1 to 64 tokens. The first token must be literal: a `*` there would approve " +
+					"any program, so declare `uv` and `/opt/homebrew/bin/uv` as two servers if both are in " +
+					"use. At least two tokens must be literal, except for a single absolute path such as " +
+					"`[\"/Applications/1Password.app/Contents/MacOS/1password-mcp\"]`, which covers that " +
+					"program run with no arguments. A template that starts a shell or interpreter and names " +
+					"no script covers whatever it is given to run; the platform accepts it with a " +
+					"`template_runs_any_script` warning. Changing it updates the server in place. Leaving it " +
+					"out keeps the server's current template.",
 				Optional: true, Computed: true,
 				ElementType: types.StringType,
-				Validators:  []validator.List{listvalidator.SizeAtLeast(2)},
+				Validators:  []validator.List{listvalidator.SizeBetween(1, argvTemplateMaxTokens), argvTemplateUsable{}},
 				PlanModifiers: []planmodifier.List{
 					listplanmodifier.UseStateForUnknown(),
 				},
@@ -535,4 +541,70 @@ func derefEnum[T ~string](p *T) string {
 		return ""
 	}
 	return string(*p)
+}
+
+// argvTemplateMaxTokens is the most argv tokens a device reads
+// (EndpointPolicyWireLimits.MAX_ARGV_TOKENS on the platform).
+const argvTemplateMaxTokens = 64
+
+// argvTemplateUsable mirrors the platform's McpLocalArgvTemplate.isUsable, the
+// rule its declare and update apply: the first token is literal, and at least
+// two tokens are, unless the template is one absolute path (#3331). A template
+// the device would never match is refused at the API, so refusing it at plan
+// saves an apply that fails half-way.
+type argvTemplateUsable struct{}
+
+func (argvTemplateUsable) Description(context.Context) string {
+	return "the first token is literal, and at least two are unless the template is one absolute path"
+}
+
+func (v argvTemplateUsable) MarkdownDescription(ctx context.Context) string {
+	return v.Description(ctx)
+}
+
+func (argvTemplateUsable) ValidateList(ctx context.Context, req validator.ListRequest, resp *validator.ListResponse) {
+	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
+		return
+	}
+	var tokens []types.String
+	resp.Diagnostics.Append(req.ConfigValue.ElementsAs(ctx, &tokens, false)...)
+	if resp.Diagnostics.HasError() || len(tokens) == 0 {
+		return
+	}
+	literals := 0
+	for i, tok := range tokens {
+		if tok.IsUnknown() {
+			return // decided once every token is known
+		}
+		if tok.IsNull() || tok.ValueString() == "" {
+			resp.Diagnostics.AddAttributeError(req.Path.AtListIndex(i), "Empty argv_template token",
+				"Every token of argv_template must be non-empty; use \"*\" to match any one argument.")
+			return
+		}
+		if tok.ValueString() != "*" {
+			literals++
+		}
+	}
+	if tokens[0].ValueString() == "*" {
+		resp.Diagnostics.AddAttributeError(req.Path.AtListIndex(0), "argv_template must name its program",
+			"A \"*\" as the first token would approve any executable whose remaining arguments match, so the "+
+				"platform refuses it. Write the program as the client's config spells it, and declare a "+
+				"second server for another spelling (e.g. uv and /opt/homebrew/bin/uv).")
+		return
+	}
+	if literals >= 2 {
+		return
+	}
+	if len(tokens) == 1 {
+		if p := tokens[0].ValueString(); len(p) > 1 && strings.HasPrefix(p, "/") {
+			return
+		}
+		resp.Diagnostics.AddAttributeError(req.Path, "A one-token argv_template must be an absolute path",
+			fmt.Sprintf("%q is a bare program name, which is whatever comes first on each machine's PATH. "+
+				"Give its absolute path, or add the arguments it is run with.", tokens[0].ValueString()))
+		return
+	}
+	resp.Diagnostics.AddAttributeError(req.Path, "argv_template names too little",
+		"At least two tokens must be literal: a template like [\"node\", \"*\"] would approve every node "+
+			"server on the fleet. Spell out more of the command line.")
 }

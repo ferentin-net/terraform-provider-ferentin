@@ -110,7 +110,11 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   It covers `server_approval`, `unattributed` (servers started outside an
   identified AI agent), and tool vetting (`tool_vetting_mode`,
   `tool_vetting_risk_policy`, `tool_vetting_approval_config`). Each default
-  has a mode, so it can be rehearsed with `report_only`. The resource shares
+  has a mode, so it can be rehearsed with `report_only`. It also sets
+  `agent_evidence_floor` (ferentin-platform#3256 item 4): how strongly a
+  device must have verified the AI agent before a local MCP grant that names
+  the agent applies (`off` by default, which credits none; `inherit` on a
+  group). Read-only `agent_evidence_floor_source`. The resource shares
   the posture row, and its version, with `ferentin_endpoint_policy_settings`.
   A write that finds the row's version moved retries once when the fields it
   owns are unchanged, so the two can live in one apply. Destroy leaves the
@@ -288,6 +292,28 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **A rate-limit error says which budget refused the apply, and whether
+  `-parallelism=1` helps.** The platform now marks the tenant's hourly write
+  budget, and one principal's share of it, as write-wide (`scope="writes"`,
+  ferentin-platform#3335). Such a refusal stops every create, update and
+  delete until the budget refills, so the diagnostic says to wait rather
+  than serialize. The SDK transport also holds every other write while a
+  write-wide budget is spent, instead of letting each of Terraform's
+  parallel writers be refused in turn. Reads are not held.
+- **Destroying a device group's `ferentin_endpoint_policy_settings` no
+  longer fails where MCP policies have replaced endpoint MCP rules.** The
+  platform now refuses that delete while the group's MCP scope defaults
+  differ from the tenant's (`posture_field_moved`, ferentin-platform#3256
+  item 9). The provider warns, names the fields, and drops the resource from
+  state, leaving the row in force. Deleting the device group removes the row
+  with it, so a `terraform destroy` of a config that manages the group
+  finishes.
+- **`ferentin_mcp_local_server` checks `argv_template` the way the platform
+  does.** A single absolute path, such as
+  `["/Applications/1Password.app/Contents/MacOS/1password-mcp"]`, is now
+  accepted; the provider used to require two tokens. A `*` as the first
+  token, a one-token bare program name, fewer than two literal tokens, an
+  empty token and more than 64 tokens fail at plan rather than at apply.
 - Removing `criteria`, `unless` or `description` from a `ferentin_mcp_policy`
   now clears it on the platform. The update keeps omitted fields, and the
   provider used to omit them.

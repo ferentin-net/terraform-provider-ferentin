@@ -17,8 +17,8 @@ import (
 //   - ErrUnauthorized   (401)     → "auth expired / wrong credentials"
 //   - ErrForbidden      (403)     → "principal lacks scope for op"
 //   - ErrConflict       (409)     → "name/slug already taken; pick another"
-//   - ErrRateLimited    (429+retry-exhaust) → "platform rate-limiting;
-//     widen retry budget or run plan with -parallelism=1"
+//   - ErrRateLimited    (429+retry-exhaust) → which budget refused it, and
+//     whether -parallelism=1 can help (see rateLimitedDetail)
 //   - ErrServer         (5xx)     → "transient or platform incident"
 //
 // All other errors (including network failures and ErrNotFound that the
@@ -69,12 +69,7 @@ func addSDKError(diags *diag.Diagnostics, op string, err error) {
 				"Pick a unique value or import the existing resource instead.\n\nDetails: "+err.Error(),
 		)
 	case errors.Is(err, adminapi.ErrRateLimited):
-		diags.AddError(
-			fmt.Sprintf("%s — rate-limited", op),
-			"The platform's per-tenant rate limit was exceeded and the transport's retry budget "+
-				"didn't clear it. Re-run `terraform apply -parallelism=1` to serialize requests, "+
-				"or wait a minute and retry.\n\nDetails: "+err.Error(),
-		)
+		diags.AddError(fmt.Sprintf("%s — rate-limited", op), rateLimitedDetail(err))
 	case errors.Is(err, adminapi.ErrServer):
 		diags.AddError(
 			fmt.Sprintf("%s — platform error", op),
@@ -85,4 +80,33 @@ func addSDKError(diags *diag.Diagnostics, op string, err error) {
 	default:
 		diags.AddError(op, err.Error())
 	}
+}
+
+// rateLimitedDetail explains a 429 the transport's retries did not clear. The
+// remedy depends on the budget that refused it (platform #3335): an endpoint
+// category's per-minute window clears by spreading the requests out, but the
+// tenant's hourly write budget, and this principal's share of it, refuse every
+// write until the hour slides on, so -parallelism=1 would only make the apply
+// slower to fail.
+func rateLimitedDetail(err error) string {
+	r, _ := adminapi.RateLimitDetails(err)
+	wait := ""
+	if r.RetryAfter > 0 {
+		wait = fmt.Sprintf(" The platform asked for at least %s before the next try.", r.RetryAfter)
+	}
+	if r.WriteWide() {
+		return fmt.Sprintf("Every write to this tenant draws on the write budget %q, and it is spent, "+
+			"so the platform refuses every create, update and delete until it refills. It is an "+
+			"hourly budget, so lowering -parallelism does not help: wait, or spread large applies "+
+			"over time. Plans and refreshes still work. Resources Terraform already applied are "+
+			"in state, so re-running the apply carries on from here.%s\n\nDetails: %s",
+			r.Category, wait, err.Error())
+	}
+	bucket := "A platform rate limit"
+	if r.Category != "" {
+		bucket = fmt.Sprintf("The platform's rate limit %q", r.Category)
+	}
+	return fmt.Sprintf("%s was exceeded and the transport's retries did not clear it. Re-run "+
+		"`terraform apply -parallelism=1` to serialize requests, or wait a minute and retry.%s"+
+		"\n\nDetails: %s", bucket, wait, err.Error())
 }

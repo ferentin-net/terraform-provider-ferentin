@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -169,6 +170,13 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 			"destroy. To stand enforcement down, apply the permissive posture first, then " +
 			"destroy. A group override *is* genuinely deleted, and the group falls back to the " +
 			"tenant default.\n\n" +
+			"~> **A group whose MCP scope defaults differ from the tenant's keeps its posture on " +
+			"destroy.** Where MCP policies have replaced endpoint MCP rules, the platform refuses a " +
+			"delete that would change the group's `ferentin_mcp_scope_defaults` by falling back " +
+			"(`posture_field_moved`). Destroy then warns and drops the resource from state, leaving the " +
+			"row in force. Deleting the device group removes the row with it, so a config that destroys " +
+			"the group too finishes cleanly. To keep the group, set its scope defaults to the tenant's " +
+			"first.\n\n" +
 			"## Import\n\n" +
 			"Tenant default row:\n\n" +
 			"```\n" +
@@ -489,7 +497,9 @@ func (r *EndpointPolicySettingsResource) Update(ctx context.Context, req resourc
 // Delete has two behaviours because the platform has two shapes of row.
 //
 //   - A GROUP OVERRIDE is genuinely deleted. The group then falls back to the
-//     tenant default, which is real inheritance, not a weakening.
+//     tenant default, which is real inheritance, not a weakening. Unless the
+//     platform refuses it for moved MCP fields (postureFieldsMoved): then the
+//     row stays, with a warning; see postureMovedOnDeleteDetail.
 //
 //   - The TENANT DEFAULT row cannot be deleted — the platform returns 400,
 //     because every device including ungrouped ones resolves through it. So
@@ -529,6 +539,11 @@ func (r *EndpointPolicySettingsResource) Delete(ctx context.Context, req resourc
 		version := strconv.FormatInt(state.Version.ValueInt64(), 10)
 		err := r.sdk.EndpointPolicies().DeleteGroupSettings(ctx, tenantID,
 			state.DeviceGroupID.ValueString(), version)
+		if fields, moved := postureFieldsMoved(err); moved {
+			resp.Diagnostics.AddWarning("Device group endpoint posture removed from state, but STILL IN FORCE",
+				postureMovedOnDeleteDetail(state.DeviceGroupID.ValueString(), fields))
+			return
+		}
 		if err != nil && !errors.Is(err, adminapi.ErrNotFound) {
 			if addPostureConflictError(&resp.Diagnostics, "Failed to delete endpoint policy settings override", err) {
 				return
@@ -1034,4 +1049,58 @@ func stringSliceToSetOrNull(p *[]string) types.Set {
 		elems = append(elems, types.StringValue(v))
 	}
 	return types.SetValueMust(types.StringType, elems)
+}
+
+// postureFieldMovedCode ends the platform's refusal of a posture write or
+// delete that would change a field the MCP scope defaults now own, in a scope
+// whose old MCP authoring is retired (ferentin-platform#3256 item 9).
+const postureFieldMovedCode = "posture_field_moved"
+
+// postureFieldsMoved reports whether err is that refusal, and the posture
+// fields it names, sorted.
+func postureFieldsMoved(err error) ([]string, bool) {
+	var he *adminapi.HTTPError
+	if err == nil || !errors.As(err, &he) || he.Status != http.StatusBadRequest ||
+		!strings.Contains(he.Body, postureFieldMovedCode) {
+		return nil, false
+	}
+	var body struct {
+		FieldErrors map[string]string `json:"fieldErrors"`
+	}
+	_ = json.Unmarshal([]byte(he.Body), &body)
+	fields := make([]string, 0, len(body.FieldErrors))
+	for f, msg := range body.FieldErrors {
+		if strings.Contains(msg, postureFieldMovedCode) {
+			fields = append(fields, f)
+		}
+	}
+	slices.Sort(fields)
+	return fields, true
+}
+
+// postureMovedOnDeleteDetail explains a group posture DELETE the platform
+// refused because the group would fall back to different MCP scope defaults.
+//
+// Dropping the resource from state, rather than failing, is what lets
+// `terraform destroy` finish on a config that also manages the device group:
+// deleting the group removes its posture row with it, and that path takes no
+// such check. A config that removes only this resource keeps the group's
+// posture, which is the fail-safe side, and this warning says so.
+func postureMovedOnDeleteDetail(groupID string, fields []string) string {
+	named := "its MCP scope defaults"
+	if len(fields) > 0 {
+		named = "its MCP scope defaults (" + strings.Join(fields, ", ") + ")"
+	}
+	return fmt.Sprintf("The platform refused to delete the posture of device group %s: the group would "+
+		"fall back to the tenant default's posture, which changes %s, and in a scope whose MCP "+
+		"policies have replaced endpoint MCP rules those are changed only on purpose, through "+
+		"ferentin_mcp_scope_defaults (posture_field_moved).\n\n"+
+		"Terraform has stopped managing the row and left it in force, with every posture value the "+
+		"group had.\n\n"+
+		"* If the device group is being destroyed too, nothing more is needed: deleting the group "+
+		"removes its posture with it.\n"+
+		"* Otherwise, to put the group on the tenant's posture: set the group's "+
+		"ferentin_mcp_scope_defaults to the tenant default's values (server_approval and "+
+		"unattributed as the tenant has them, tool_vetting_mode and agent_evidence_floor = "+
+		"\"inherit\"), apply, then import this resource again and destroy it.", groupID, named)
 }

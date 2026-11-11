@@ -72,10 +72,13 @@ type MCPScopeDefaultsResourceModel struct {
 	ToolVettingRiskPolicy     types.Object         `tfsdk:"tool_vetting_risk_policy"`
 	ToolVettingApprovalConfig jsontypes.Normalized `tfsdk:"tool_vetting_approval_config"`
 
+	AgentEvidenceFloor types.String `tfsdk:"agent_evidence_floor"`
+
 	Source                          types.String `tfsdk:"source"`
 	ToolVettingModeSource           types.String `tfsdk:"tool_vetting_mode_source"`
 	ToolVettingRiskPolicySource     types.String `tfsdk:"tool_vetting_risk_policy_source"`
 	ToolVettingApprovalConfigSource types.String `tfsdk:"tool_vetting_approval_config_source"`
+	AgentEvidenceFloorSource        types.String `tfsdk:"agent_evidence_floor_source"`
 	Version                         types.Int64  `tfsdk:"version"`
 }
 
@@ -115,6 +118,7 @@ func (r *MCPScopeDefaultsResource) ModifyPlan(ctx context.Context, req resource.
 		"tool_vetting_mode_source":            types.StringUnknown(),
 		"tool_vetting_risk_policy_source":     types.StringUnknown(),
 		"tool_vetting_approval_config_source": types.StringUnknown(),
+		"agent_evidence_floor_source":         types.StringUnknown(),
 	})
 }
 
@@ -204,6 +208,8 @@ func (r *MCPScopeDefaultsResource) Schema(_ context.Context, _ resource.SchemaRe
 			"an identified AI agent's session (for example from Terminal.app)\n" +
 			"* **tool vetting** — an unvetted tool on an approved local server: its mode, the action " +
 			"per risk rating, and the approval routing an `ask_*` tier needs\n\n" +
+			"It also holds the **agent evidence floor**: how strongly a device must have verified the AI " +
+			"agent before a local MCP policy that grants on that agent applies.\n\n" +
 			"Omit `device_group_id` for the **tenant default**, which every device without a group " +
 			"default of its own runs. Set it for one device group.\n\n" +
 			"Each default is sent only when it is in the config: one left out keeps what the tenant " +
@@ -215,7 +221,10 @@ func (r *MCPScopeDefaultsResource) Schema(_ context.Context, _ resource.SchemaRe
 			"group with no posture of its own, the first write here creates the group's row as a copy of " +
 			"the tenant default's posture. Destroying a group's `ferentin_endpoint_policy_settings` " +
 			"deletes that row, and with it the group's own scope defaults: the group then runs the " +
-			"tenant's, and the next plan here shows the difference. When both resources manage one " +
+			"tenant's, and the next plan here shows the difference. Where MCP policies have replaced " +
+			"endpoint MCP rules, the platform refuses that delete while the group's defaults differ " +
+			"from the tenant's, and the settings resource leaves the row in force with a warning; " +
+			"deleting the device group still removes it. When both resources manage one " +
 			"group, make this one `depends_on` the settings resource so the group row is created once.\n\n" +
 			"~> **Destroy does not reset anything.** The platform has no way to delete the defaults, and " +
 			"resetting them to the permissive built-ins would stand enforcement down silently, so " +
@@ -350,6 +359,26 @@ func (r *MCPScopeDefaultsResource) Schema(_ context.Context, _ resource.SchemaRe
 				Validators:    []validator.String{approvalConfigJSON{}},
 			},
 
+			"agent_evidence_floor": schema.StringAttribute{
+				MarkdownDescription: "The weakest device-verified agent evidence at which a grant on a " +
+					"local MCP server that names an AI agent (`ferentin_mcp_policy` with `effect` `allow` or " +
+					"`step_up` and `subject.agents` or `subject.agent_evidence`) is credited:\n\n" +
+					"* `off` — no grant on the agent is credited; the default\n" +
+					"* `lineage_name` — the agent's process name in the MCP shim's lineage\n" +
+					"* `lineage_signature` — its kernel-verified code signature, which is what every agent " +
+					"a device verifies reads as today\n" +
+					"* `hook_correlated` — also matched to the agent's own pre-tool hook; no device reports " +
+					"it yet\n\n" +
+					"A deny naming an agent applies at any level, whatever this says. The platform decides " +
+					"it where a local server starts and at its tool calls; devices do not receive it. On a " +
+					"device group, `inherit` follows the tenant default's, and is what a group that sets " +
+					"none reads as. Omit to keep the current value.",
+				Optional: true, Computed: true,
+				PlanModifiers: keep,
+				Validators: []validator.String{stringvalidator.OneOf(
+					"off", "lineage_name", "lineage_signature", "hook_correlated", scopeVettingInherit)},
+			},
+
 			"source": schema.StringAttribute{
 				MarkdownDescription: "Read-only. Where `server_approval`, `remote_entry` and `unattributed` " +
 					"come from: `device_group` (this group's own posture), `tenant` (the tenant default's, " +
@@ -367,6 +396,11 @@ func (r *MCPScopeDefaultsResource) Schema(_ context.Context, _ resource.SchemaRe
 			"tool_vetting_approval_config_source": schema.StringAttribute{
 				MarkdownDescription: "Read-only. Where the approval routing in force comes from: `device_group`, `tenant` or `built_in`.",
 				Computed:            true,
+			},
+			"agent_evidence_floor_source": schema.StringAttribute{
+				MarkdownDescription: "Read-only. Where the agent evidence floor in force comes from: " +
+					"`device_group`, `tenant` or `built_in` (none set, which is `off`).",
+				Computed: true,
 			},
 			"version": schema.Int64Attribute{
 				MarkdownDescription: "The scope's posture row version, sent as `If-Match`. Shared with " +
@@ -406,6 +440,12 @@ func (r *MCPScopeDefaultsResource) ValidateConfig(ctx context.Context, req resou
 			"inherit is for a device group only",
 			"inherit follows the tenant default's tool vetting mode, so the tenant default itself cannot "+
 				"inherit (inherit_needs_device_group). Use enforce or report_only, or set device_group_id.")
+	}
+	if stringOrEmpty(cfg.AgentEvidenceFloor) == scopeVettingInherit && cfg.DeviceGroupID.IsNull() {
+		resp.Diagnostics.AddAttributeError(path.Root("agent_evidence_floor"),
+			"inherit is for a device group only",
+			"inherit follows the tenant default's agent evidence floor, so the tenant default itself "+
+				"cannot inherit (inherit_needs_device_group). Use off or a level, or set device_group_id.")
 	}
 }
 
@@ -529,14 +569,14 @@ func (r *MCPScopeDefaultsResource) Delete(ctx context.Context, req resource.Dele
 	resp.Diagnostics.AddWarning("MCP scope defaults removed from state, but STILL IN FORCE",
 		fmt.Sprintf("The platform has no way to delete MCP scope defaults, so Terraform has stopped "+
 			"managing those of %s and left them as they are (server_approval = %q (%s), unattributed = "+
-			"%q (%s), tool_vetting_mode = %q).\n\n"+
+			"%q (%s), tool_vetting_mode = %q, agent_evidence_floor = %q).\n\n"+
 			"Resetting them on destroy would silently stand enforcement down, and removing a resource "+
 			"block or dropping a module reaches this path just as `terraform destroy` does. To stand "+
 			"them down, set server_approval and unattributed to \"report_only\" and apply first, then "+
 			"destroy.", scope,
 			state.ServerApproval.ValueString(), state.ServerApprovalMode.ValueString(),
 			state.Unattributed.ValueString(), state.UnattributedMode.ValueString(),
-			state.ToolVettingMode.ValueString()))
+			state.ToolVettingMode.ValueString(), state.AgentEvidenceFloor.ValueString()))
 }
 
 func (r *MCPScopeDefaultsResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
@@ -657,6 +697,10 @@ func scopeDefaultsToWrite(plan, config MCPScopeDefaultsResourceModel) (adminapi.
 	if vetting {
 		body.ToolVetting = &tv
 	}
+	if !config.AgentEvidenceFloor.IsNull() {
+		floor := gen.McpScopeDefaultsWriteAgentEvidenceFloor(plan.AgentEvidenceFloor.ValueString())
+		body.AgentEvidenceFloor = &floor
+	}
 	return body, diags
 }
 
@@ -706,6 +750,18 @@ func scopeDefaultsToModel(tenantID string, groupID types.String, d *adminapi.MCP
 		}
 		if m.ToolVettingApprovalConfigSource.ValueString() == own {
 			m.ToolVettingApprovalConfig = approvalConfigToTF(tv.ApprovalConfig)
+		}
+	}
+
+	// As tool_vetting_mode: a group that sets no floor of its own reads as
+	// inherit, not as the tenant's value.
+	m.AgentEvidenceFloor = types.StringNull()
+	m.AgentEvidenceFloorSource = types.StringNull()
+	if f := d.AgentEvidenceFloor; f != nil {
+		m.AgentEvidenceFloorSource = enumPtrToTF(f.Source)
+		m.AgentEvidenceFloor = enumPtrToTF(f.Value)
+		if own == scopeSourceGroup && m.AgentEvidenceFloorSource.ValueString() != scopeSourceGroup {
+			m.AgentEvidenceFloor = types.StringValue(scopeVettingInherit)
 		}
 	}
 	return m
@@ -794,6 +850,9 @@ func scopeDefaultsOwnedChanges(prior, fresh MCPScopeDefaultsResourceModel, body 
 		if tv.ApprovalConfig != nil {
 			fields = append(fields, ownedField{"tool_vetting_approval_config", prior.ToolVettingApprovalConfig, fresh.ToolVettingApprovalConfig})
 		}
+	}
+	if body.AgentEvidenceFloor != nil {
+		fields = append(fields, ownedField{"agent_evidence_floor", prior.AgentEvidenceFloor, fresh.AgentEvidenceFloor})
 	}
 	return changedFields(fields)
 }
