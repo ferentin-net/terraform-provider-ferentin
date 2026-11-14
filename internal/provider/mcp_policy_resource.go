@@ -273,9 +273,17 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 					"* `class`: `local`, `remote` or `unapproved` (**deny only**)\n" +
 					"* `app_bundle_id`: the MCP client, by macOS bundle id; narrows the other targets " +
 					"and cannot stand alone\n\n" +
-					"A policy with targets cannot be a step-up and cannot list tools or toolsets in its " +
-					"`effect`: only an instance narrows its tools. `host` and `url_prefix` targets also " +
-					"reach the device network filter as destination rules.\n\n" +
+					"A policy with targets cannot be a step-up. An `allow` with targets cannot list tools " +
+					"or toolsets in its `effect`: only an instance narrows an allow's tools, so write a " +
+					"separate policy for them. A `deny` with targets can list tools, and refuses only " +
+					"those tools on the servers its targets select, with two limits:\n\n" +
+					"* on a target only a bare entry (`delete_repo`) names a tool, since a target has no " +
+					"slug: a deny whose tools are all `slug:tool` entries is refused, because it would " +
+					"refuse every server its targets select\n" +
+					"* it cannot also name `app_bundle_id` targets, since no device decides an app per " +
+					"tool\n\n" +
+					"`host` and `url_prefix` targets also reach the device network filter as destination " +
+					"rules.\n\n" +
 					"The platform stores values in canonical spelling (hosts lowercased, URLs " +
 					"canonicalized). Terraform keeps your spelling here and the platform's in " +
 					"`stored_targets`, so normalization does not show as drift.",
@@ -331,10 +339,30 @@ func (r *MCPPolicyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 							"policy refuses on.",
 						Optional: true,
 					},
-					"allowed_tools":  schema.ListAttribute{Optional: true, ElementType: types.StringType},
-					"denied_tools":   schema.ListAttribute{Optional: true, ElementType: types.StringType},
-					"grant_toolsets": schema.ListAttribute{Optional: true, ElementType: types.StringType},
-					"deny_toolsets":  schema.ListAttribute{Optional: true, ElementType: types.StringType},
+					"allowed_tools": schema.ListAttribute{
+						MarkdownDescription: "An `allow`'s tools: `tool` names it on every server the policy " +
+							"covers, `slug:tool` on one of its `provider_instances`. Left empty, it grants " +
+							"every tool on its servers; `slug:*` grants that server whole. A `deny` cannot " +
+							"carry it.",
+						Optional: true, ElementType: types.StringType,
+					},
+					"denied_tools": schema.ListAttribute{
+						MarkdownDescription: "A `deny`'s tools, and the only tools it refuses: `tool` (or a " +
+							"pattern) on every server it covers, `slug:tool` on one of its " +
+							"`provider_instances`. Left empty, or with a `*` entry, it refuses every tool on " +
+							"its servers; `slug:*` refuses that server whole. On device `targets` only a bare " +
+							"entry names a tool.",
+						Optional: true, ElementType: types.StringType,
+					},
+					"grant_toolsets": schema.ListAttribute{
+						MarkdownDescription: "Toolsets an `allow` grants, beside `allowed_tools`. A `deny` " +
+							"cannot carry it.",
+						Optional: true, ElementType: types.StringType,
+					},
+					"deny_toolsets": schema.ListAttribute{
+						MarkdownDescription: "Toolsets a `deny` refuses, beside `denied_tools`.",
+						Optional:            true, ElementType: types.StringType,
+					},
 					"rate_limit_per_minute": schema.Int64Attribute{
 						MarkdownDescription: "Per-minute rate limit for matching traffic.",
 						Optional:            true,
@@ -446,6 +474,7 @@ func (r *MCPPolicyResource) ValidateConfig(ctx context.Context, req resource.Val
 	}
 	effectType, effectKnown := "", false
 	listsTools, toolsKnown := false, true
+	var denyEntries []string
 	if !effect.IsNull() && !effect.IsUnknown() {
 		attrs := effect.Attributes()
 		if t, ok := attrs["type"].(types.String); ok && !t.IsUnknown() && !t.IsNull() {
@@ -462,6 +491,19 @@ func (r *MCPPolicyResource) ValidateConfig(ctx context.Context, req resource.Val
 			}
 			if len(l.Elements()) > 0 {
 				listsTools = true
+			}
+			if k != "denied_tools" && k != "deny_toolsets" {
+				continue
+			}
+			for _, el := range l.Elements() {
+				s, ok := el.(types.String)
+				if !ok || s.IsUnknown() {
+					toolsKnown = false
+					continue
+				}
+				if v := strings.TrimSpace(s.ValueString()); !s.IsNull() && v != "" {
+					denyEntries = append(denyEntries, v)
+				}
 			}
 		}
 	}
@@ -484,11 +526,14 @@ func (r *MCPPolicyResource) ValidateConfig(ctx context.Context, req resource.Val
 		}
 		return
 	}
-	if listsTools && toolsKnown {
+	if listsTools && toolsKnown && effectKnown && effectType == "allow" {
 		resp.Diagnostics.AddAttributeError(path.Root("targets"),
-			"A policy that names device targets cannot list tools or toolsets",
-			"Only a server's instance narrows its tools on a call, so a release on a host or package would "+
-				"admit every tool the policy withholds. Write a separate policy for the tools.")
+			"An allow that names device targets cannot list tools or toolsets",
+			"Only a server's instance narrows an allow's tools on a call, so a release on a host or package "+
+				"would admit every tool the policy withholds. Write a separate policy for the tools.")
+	}
+	if toolsKnown && effectKnown && effectType == "deny" && len(denyEntries) > 0 {
+		validateDenyTargetTools(targets, denyEntries, resp)
 	}
 	identifies := !instances.IsUnknown() && len(instances.Elements()) > 0
 	allKnown := !instances.IsUnknown()
@@ -550,6 +595,84 @@ func (r *MCPPolicyResource) ValidateConfig(ctx context.Context, req resource.Val
 		resp.Diagnostics.AddAttributeError(path.Root("targets"),
 			"app_bundle_id targets need a server to narrow",
 			"App bundle ids narrow another target. Name a server target or a provider instance too.")
+	}
+}
+
+// validateDenyTargetTools mirrors McpPolicyWriteCheck.denyEntriesRefusal's two
+// target checks for a deny that lists tools (ferentin-platform#3259, #3336). A
+// deny refuses only the tools it names, on device targets too, but a target is
+// no server: only a bare entry names a tool there. So the platform refuses a
+// deny whose tool-naming entries sit beside app_bundle_id targets
+// (deny_apps_tools: no device decides an app per tool) and one beside device
+// targets whose tools are all named with a slug (deny_target_slug_only: it
+// would refuse every server those targets select). Which entries name a tool
+// follows McpDenyScope.toolNamingEntries: a whole-server entry (`*`, `slug:*`)
+// names none, and a bare `*` makes the whole deny name none.
+func validateDenyTargetTools(targets types.List, entries []string, resp *resource.ValidateConfigResponse) {
+	isWhole := func(tool string) bool { return tool != "" && strings.Trim(tool, "*") == "" }
+	wholeSlugs := map[string]bool{}
+	for _, e := range entries {
+		colon := strings.Index(e, ":")
+		if colon < 0 && isWhole(e) {
+			return // a bare * refuses the servers whole: it names no tool anywhere
+		}
+		if colon > 0 && isWhole(e[colon+1:]) {
+			wholeSlugs[strings.ToLower(e[:colon])] = true
+		}
+	}
+	namesTool, bare, slugNamesTool := false, false, false
+	for _, e := range entries {
+		colon := strings.Index(e, ":")
+		if colon == 0 || colon == len(e)-1 {
+			continue // refused by the platform as deny_tool_entry
+		}
+		if colon < 0 {
+			bare = true
+		}
+		tool := e
+		if colon > 0 {
+			tool = e[colon+1:]
+		}
+		if isWhole(tool) || (colon > 0 && wholeSlugs[strings.ToLower(e[:colon])]) {
+			continue
+		}
+		namesTool = true
+		if colon > 0 {
+			slugNamesTool = true
+		}
+	}
+
+	namesApp, namesDevice := false, false
+	for _, el := range targets.Elements() {
+		obj, ok := el.(types.Object)
+		if !ok || obj.IsUnknown() {
+			continue
+		}
+		k, _ := obj.Attributes()["kind"].(types.String)
+		if k.IsUnknown() || k.IsNull() {
+			continue
+		}
+		if k.ValueString() == "app_bundle_id" {
+			namesApp = true
+		} else {
+			namesDevice = true
+		}
+	}
+
+	if namesTool && namesApp {
+		resp.Diagnostics.AddAttributeError(path.Root("targets"),
+			"A deny that names tools cannot also name app_bundle_id targets",
+			"No device decides an app per tool, and the gateway reads no app, so the platform refuses it "+
+				"(deny_apps_tools). Remove the app_bundle_id targets or the tool list.")
+		return
+	}
+	if slugNamesTool && !bare && namesDevice {
+		resp.Diagnostics.AddAttributeError(path.Root("targets"),
+			"A deny beside device targets cannot name its tools only as slug:tool",
+			"A slug:tool entry names a tool on one of the policy's provider_instances, not on its device "+
+				"targets, so this deny would refuse every server its targets select (deny_target_slug_only). "+
+				"Name the tool without a slug to refuse only that tool there, or put the targets in a policy "+
+				"of their own.")
 	}
 }
 

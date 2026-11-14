@@ -237,6 +237,15 @@ func TestMCPPolicyValidateConfig(t *testing.T) {
 		}
 		return tftypes.NewValue(effectType, vals)
 	}
+	allowEffect := func(allowedTools ...string) tftypes.Value {
+		vals := map[string]tftypes.Value{}
+		for name, at := range effectType.AttributeTypes {
+			vals[name] = tftypes.NewValue(at, nil)
+		}
+		vals["type"] = str("allow")
+		vals["allowed_tools"] = strs(allowedTools...)
+		return tftypes.NewValue(effectType, vals)
+	}
 	instance := strs("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa")
 
 	cases := []struct {
@@ -264,8 +273,20 @@ func TestMCPPolicyValidateConfig(t *testing.T) {
 			"targets": targets([2]string{"app_bundle_id", "com.example.app"}, [2]string{"host", "mcp.example.com"})}, ""},
 		{"host with a scheme", map[string]tftypes.Value{"effect": effect("deny"),
 			"targets": targets([2]string{"host", "https://mcp.example.com"})}, "not a bare hostname"},
-		{"targets with tools", map[string]tftypes.Value{"effect": effect("deny", "delete_repo"),
-			"targets": targets([2]string{"host", "mcp.example.com"})}, "cannot list tools or toolsets"},
+		{"allow on targets with tools", map[string]tftypes.Value{"effect": allowEffect("read_file"),
+			"targets": targets([2]string{"host", "mcp.example.com"})}, "An allow that names device targets cannot list tools"},
+		{"deny on targets with tools", map[string]tftypes.Value{"effect": effect("deny", "delete_repo"),
+			"targets": targets([2]string{"host", "mcp.example.com"})}, ""},
+		{"deny on targets with slug tools only", map[string]tftypes.Value{"effect": effect("deny", "github:delete_repo"),
+			"provider_instances": instance, "targets": targets([2]string{"package", "npm:@acme/mcp"})}, "only as slug:tool"},
+		{"deny on targets with slug and bare tools", map[string]tftypes.Value{"effect": effect("deny", "github:delete_repo", "push"),
+			"provider_instances": instance, "targets": targets([2]string{"package", "npm:@acme/mcp"})}, ""},
+		{"deny on targets with slug:* beside slug:tool", map[string]tftypes.Value{"effect": effect("deny", "github:*", "github:delete_repo"),
+			"provider_instances": instance, "targets": targets([2]string{"package", "npm:@acme/mcp"})}, ""},
+		{"deny naming tools and apps", map[string]tftypes.Value{"effect": effect("deny", "delete_repo"),
+			"targets": targets([2]string{"app_bundle_id", "com.example.app"}, [2]string{"host", "mcp.example.com"})}, "cannot also name app_bundle_id"},
+		{"deny with a bare star and apps", map[string]tftypes.Value{"effect": effect("deny", "*"),
+			"targets": targets([2]string{"app_bundle_id", "com.example.app"}, [2]string{"host", "mcp.example.com"})}, ""},
 		{"instance with tools", map[string]tftypes.Value{"effect": effect("deny", "delete_repo"),
 			"provider_instances": instance}, ""},
 		{"admit with tools", map[string]tftypes.Value{"effect": effect("deny", "delete_repo"),

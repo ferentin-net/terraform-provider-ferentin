@@ -29,8 +29,11 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     Write the replacement, then remove the old resource from config so the
     apply deletes the rule. Refreshing a server rule in state warns and names
     the replacement rather than failing, so the old resource can still be
-    destroyed. The platform's own `convert-endpoint-rules` skips IaC-managed
-    rules, so Terraform users convert in HCL.
+    destroyed. The platform has since retired server rules outright
+    (ferentin-net/ferentin-platform#3344): it refuses a server kind with
+    `mcp_rule_kind_retired`, removed `convert-endpoint-rules`, and deleted any
+    server rule left, so one still in state drops out on the next refresh.
+    Terraform users convert in HCL.
   - **`ferentin_endpoint_policy_settings` loses `unapproved_mcp_action`,
     `local_mcp_risk_policy` and `local_mcp_approval_config`.** They are
     `server_approval`, `tool_vetting_risk_policy` and
@@ -292,6 +295,18 @@ the provider adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   that can never authenticate anything.
 
 ### Fixed
+- **`ferentin_mcp_policy` accepts a `deny` with `targets` that lists tools.**
+  A deny refuses only the tools it names, on device targets too
+  (ferentin-net/ferentin-platform#3259), so the plan-time check that refused
+  tools beside any target now holds for an `allow` only. Two shapes the
+  platform refuses are caught at plan instead: a deny whose tools are all
+  `slug:tool` entries beside device targets (`deny_target_slug_only`), and a
+  deny naming tools beside `app_bundle_id` targets (`deny_apps_tools`). The
+  `effect` tool lists are documented, and the resource example gains a
+  read-only package. Docs no longer limit the group posture delete refusal
+  to scopes migrated to MCP policies (it holds in every scope now), and
+  `agent_evidence_floor` names the console's **AI agents on local servers**
+  switch.
 - **A rate-limit error says which budget refused the apply, and whether
   `-parallelism=1` helps.** The platform now marks the tenant's hourly write
   budget, and one principal's share of it, as write-wide (`scope="writes"`,

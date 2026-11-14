@@ -221,9 +221,9 @@ func (r *MCPScopeDefaultsResource) Schema(_ context.Context, _ resource.SchemaRe
 			"group with no posture of its own, the first write here creates the group's row as a copy of " +
 			"the tenant default's posture. Destroying a group's `ferentin_endpoint_policy_settings` " +
 			"deletes that row, and with it the group's own scope defaults: the group then runs the " +
-			"tenant's, and the next plan here shows the difference. Where MCP policies have replaced " +
-			"endpoint MCP rules, the platform refuses that delete while the group's defaults differ " +
-			"from the tenant's, and the settings resource leaves the row in force with a warning; " +
+			"tenant's, and the next plan here shows the difference. The platform refuses that delete " +
+			"while the group's defaults differ from the tenant's, and the settings resource leaves the " +
+			"row in force with a warning; " +
 			"deleting the device group still removes it. When both resources manage one " +
 			"group, make this one `depends_on` the settings resource so the group row is created once.\n\n" +
 			"~> **Destroy does not reset anything.** The platform has no way to delete the defaults, and " +
@@ -369,6 +369,9 @@ func (r *MCPScopeDefaultsResource) Schema(_ context.Context, _ resource.SchemaRe
 					"a device verifies reads as today\n" +
 					"* `hook_correlated` — also matched to the agent's own pre-tool hook; no device reports " +
 					"it yet\n\n" +
+					"The admin console shows this as one switch, **AI agents on local servers**: on writes " +
+					"`lineage_signature`, off writes `off`, and a value set here reads as on when it credits " +
+					"calls today (`lineage_name`, `lineage_signature`). " +
 					"A deny naming an agent applies at any level, whatever this says. The platform decides " +
 					"it where a local server starts and at its tool calls; devices do not receive it. On a " +
 					"device group, `inherit` follows the tenant default's, and is what a group that sets " +

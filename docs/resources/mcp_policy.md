@@ -143,6 +143,25 @@ resource "ferentin_mcp_policy" "allow_internal_package" {
   }
 }
 
+# Deny named tools, by device target: the internal package may start (above),
+# but its write tools are refused at each call. A deny refuses only the tools
+# it names. On a target only a bare tool name counts (a target has no slug), and
+# a deny that names tools cannot also name app_bundle_id targets.
+resource "ferentin_mcp_policy" "internal_package_read_only" {
+  name     = "internal-mcp-package-read-only"
+  priority = 15
+
+  targets = [
+    { kind = "package", values = ["npm:@acme/internal-mcp"] },
+  ]
+
+  effect = {
+    type         = "deny"
+    denied_tools = ["write_*", "delete_record"]
+    message      = "The internal MCP server is read-only on managed devices."
+  }
+}
+
 # Rehearse before enforcing: report_only records what the policy would have
 # refused on the audit trail and decides nothing.
 resource "ferentin_mcp_policy" "rehearse_block_remote" {
@@ -192,7 +211,12 @@ resource "ferentin_mcp_policy" "rehearse_block_remote" {
 * `class`: `local`, `remote` or `unapproved` (**deny only**)
 * `app_bundle_id`: the MCP client, by macOS bundle id; narrows the other targets and cannot stand alone
 
-A policy with targets cannot be a step-up and cannot list tools or toolsets in its `effect`: only an instance narrows its tools. `host` and `url_prefix` targets also reach the device network filter as destination rules.
+A policy with targets cannot be a step-up. An `allow` with targets cannot list tools or toolsets in its `effect`: only an instance narrows an allow's tools, so write a separate policy for them. A `deny` with targets can list tools, and refuses only those tools on the servers its targets select, with two limits:
+
+* on a target only a bare entry (`delete_repo`) names a tool, since a target has no slug: a deny whose tools are all `slug:tool` entries is refused, because it would refuse every server its targets select
+* it cannot also name `app_bundle_id` targets, since no device decides an app per tool
+
+`host` and `url_prefix` targets also reach the device network filter as destination rules.
 
 The platform stores values in canonical spelling (hosts lowercased, URLs canonicalized). Terraform keeps your spelling here and the platform's in `stored_targets`, so normalization does not show as drift. (see [below for nested schema](#nestedatt--targets))
 - `tenant_id` (String)
@@ -223,10 +247,10 @@ Required:
 
 Optional:
 
-- `allowed_tools` (List of String)
-- `denied_tools` (List of String)
-- `deny_toolsets` (List of String)
-- `grant_toolsets` (List of String)
+- `allowed_tools` (List of String) An `allow`'s tools: `tool` names it on every server the policy covers, `slug:tool` on one of its `provider_instances`. Left empty, it grants every tool on its servers; `slug:*` grants that server whole. A `deny` cannot carry it.
+- `denied_tools` (List of String) A `deny`'s tools, and the only tools it refuses: `tool` (or a pattern) on every server it covers, `slug:tool` on one of its `provider_instances`. Left empty, or with a `*` entry, it refuses every tool on its servers; `slug:*` refuses that server whole. On device `targets` only a bare entry names a tool.
+- `deny_toolsets` (List of String) Toolsets a `deny` refuses, beside `denied_tools`.
+- `grant_toolsets` (List of String) Toolsets an `allow` grants, beside `allowed_tools`. A `deny` cannot carry it.
 - `message` (String) Message shown to the person or agent on every surface the policy refuses on.
 - `rate_limit_per_minute` (Number) Per-minute rate limit for matching traffic.
 
