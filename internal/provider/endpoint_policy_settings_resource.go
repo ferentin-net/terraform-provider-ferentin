@@ -171,8 +171,8 @@ func (r *EndpointPolicySettingsResource) Schema(_ context.Context, _ resource.Sc
 			"destroy. A group override *is* genuinely deleted, and the group falls back to the " +
 			"tenant default.\n\n" +
 			"~> **A group whose MCP scope defaults differ from the tenant's keeps its posture on " +
-			"destroy.** Where MCP policies have replaced endpoint MCP rules, the platform refuses a " +
-			"delete that would change the group's `ferentin_mcp_scope_defaults` by falling back " +
+			"destroy.** The platform refuses a delete that would change the group's " +
+			"`ferentin_mcp_scope_defaults` by falling back " +
 			"(`posture_field_moved`). Destroy then warns and drops the resource from state, leaving the " +
 			"row in force. Deleting the device group removes the row with it, so a config that destroys " +
 			"the group too finishes cleanly. To keep the group, set its scope defaults to the tenant's " +
@@ -1092,9 +1092,8 @@ func postureMovedOnDeleteDetail(groupID string, fields []string) string {
 		named = "its MCP scope defaults (" + strings.Join(fields, ", ") + ")"
 	}
 	return fmt.Sprintf("The platform refused to delete the posture of device group %s: the group would "+
-		"fall back to the tenant default's posture, which changes %s, and in a scope whose MCP "+
-		"policies have replaced endpoint MCP rules those are changed only on purpose, through "+
-		"ferentin_mcp_scope_defaults (posture_field_moved).\n\n"+
+		"fall back to the tenant default's posture, which changes %s, and those are changed only "+
+		"on purpose, through ferentin_mcp_scope_defaults (posture_field_moved).\n\n"+
 		"Terraform has stopped managing the row and left it in force, with every posture value the "+
 		"group had.\n\n"+
 		"* If the device group is being destroyed too, nothing more is needed: deleting the group "+

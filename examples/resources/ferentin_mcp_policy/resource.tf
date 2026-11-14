@@ -99,6 +99,25 @@ resource "ferentin_mcp_policy" "allow_internal_package" {
   }
 }
 
+# Deny named tools, by device target: the internal package may start (above),
+# but its write tools are refused at each call. A deny refuses only the tools
+# it names. On a target only a bare tool name counts (a target has no slug), and
+# a deny that names tools cannot also name app_bundle_id targets.
+resource "ferentin_mcp_policy" "internal_package_read_only" {
+  name     = "internal-mcp-package-read-only"
+  priority = 15
+
+  targets = [
+    { kind = "package", values = ["npm:@acme/internal-mcp"] },
+  ]
+
+  effect = {
+    type         = "deny"
+    denied_tools = ["write_*", "delete_record"]
+    message      = "The internal MCP server is read-only on managed devices."
+  }
+}
+
 # Rehearse before enforcing: report_only records what the policy would have
 # refused on the audit trail and decides nothing.
 resource "ferentin_mcp_policy" "rehearse_block_remote" {
