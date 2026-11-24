@@ -107,16 +107,21 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 			"Create one from **exactly one** of:\n\n" +
 			"* `argv_template` (with `display_name`) — the command line the approval covers, where `*` " +
 			"matches exactly one argument: `[\"uv\", \"run\", \"--directory\", \"*\", \"okta-mcp-server\"]` " +
-			"approves that server from any directory. Devices consult a template only for a command line " +
-			"that names no package.\n" +
+			"approves that server from any directory. A `*` may stand for an argument after the package or " +
+			"program it is passed to, or for a `--directory` or `--project` (uv), `-w` (docker, podman) or " +
+			"`--tag` (npm) value. The platform refuses one a device would fill with a program or package " +
+			"nobody wrote down, such as `[\"npx\", \"-y\", \"*\"]`, which approves any package.\n" +
 			"* `catalog_slug` — a local MCP catalog entry, keyed on its package identities.\n\n" +
 			"Either way the server is approved on creation, tenant-wide. Its tools still start unvetted; " +
 			"`tool_vetting_risk_policy` on `ferentin_mcp_scope_defaults` decides what developers get " +
 			"from them.\n\n" +
 			"Import manages the verdict of a server a device reported, too. Such a server cannot be " +
 			"deleted: destroying it leaves it, and its verdict, in place, with a warning.\n\n" +
-			"~> The template is shipped **verbatim** in the signed policy bundle to every managed device. " +
-			"Put `*` where a credential or anything private would go.\n\n" +
+			"~> The template is shipped **verbatim** in the signed policy bundle to every managed device, so " +
+			"never put a credential or anything private in it. A device compares a template with the " +
+			"command line after replacing credentials with `[redacted]`, and the platform refuses that " +
+			"marker in a template: approve a server that takes a credential on its command line by " +
+			"`catalog_slug`, or import the server a device reported and set its `status`.\n\n" +
 			"## Import\n\n" +
 			"```\n" +
 			"terraform import ferentin_mcp_local_server.example <tenant_id>/<server_id>\n" +
@@ -138,7 +143,10 @@ func (r *MCPLocalServerResource) Schema(_ context.Context, _ resource.SchemaRequ
 					"any program, so declare `uv` and `/opt/homebrew/bin/uv` as two servers if both are in " +
 					"use. At least two tokens must be literal, except for a single absolute path such as " +
 					"`[\"/Applications/1Password.app/Contents/MacOS/1password-mcp\"]`, which covers that " +
-					"program run with no arguments. A template that starts a shell or interpreter and names " +
+					"program run with no arguments. No token may contain `[redacted]`, and a `*` may not stand " +
+					"where the launcher reads its own options or what it runs: only a `--directory`, " +
+					"`--project`, `-w` or `--tag` value, or an argument after the package or program. " +
+					"A template that starts a shell or interpreter and names " +
 					"no script covers whatever it is given to run; the platform accepts it with a " +
 					"`template_runs_any_script` warning. Changing it updates the server in place. Leaving it " +
 					"out keeps the server's current template.",
@@ -543,19 +551,28 @@ func derefEnum[T ~string](p *T) string {
 	return string(*p)
 }
 
+// argvRedactionMarker is what a device writes in place of a credential-shaped
+// argument (McpLocalArgvTemplate.REDACTION_PLACEHOLDER on the platform).
+const argvRedactionMarker = "[redacted]"
+
 // argvTemplateMaxTokens is the most argv tokens a device reads
 // (EndpointPolicyWireLimits.MAX_ARGV_TOKENS on the platform).
 const argvTemplateMaxTokens = 64
 
 // argvTemplateUsable mirrors the platform's McpLocalArgvTemplate.isUsable, the
 // rule its declare and update apply: the first token is literal, and at least
-// two tokens are, unless the template is one absolute path (#3331). A template
-// the device would never match is refused at the API, so refusing it at plan
-// saves an apply that fails half-way.
+// two tokens are, unless the template is one absolute path (#3331). It also
+// refuses the redaction marker, as the platform's authoring paths do
+// (ferentin-platform#3461): a device compares a template with the redacted
+// command line, so `[redacted]` matches every line whose argument redacts the
+// same way. A template the API refuses is refused at plan too, which saves an
+// apply that fails half-way. The platform's wildcard rule (#3462, a `*` that a
+// device would fill with a program or package) is decided on its launcher
+// parse and is not mirrored; its 422 names the wildcard.
 type argvTemplateUsable struct{}
 
 func (argvTemplateUsable) Description(context.Context) string {
-	return "the first token is literal, and at least two are unless the template is one absolute path"
+	return "the first token is literal, at least two are unless the template is one absolute path, and no token holds [redacted]"
 }
 
 func (v argvTemplateUsable) MarkdownDescription(ctx context.Context) string {
@@ -579,6 +596,14 @@ func (argvTemplateUsable) ValidateList(ctx context.Context, req validator.ListRe
 		if tok.IsNull() || tok.ValueString() == "" {
 			resp.Diagnostics.AddAttributeError(req.Path.AtListIndex(i), "Empty argv_template token",
 				"Every token of argv_template must be non-empty; use \"*\" to match any one argument.")
+			return
+		}
+		if strings.Contains(tok.ValueString(), argvRedactionMarker) {
+			resp.Diagnostics.AddAttributeError(req.Path.AtListIndex(i), "argv_template must not hold the redaction marker",
+				"A device writes \""+argvRedactionMarker+"\" in place of a credential-shaped argument and compares a "+
+					"template with that redacted command line, so this token would match every line whose argument "+
+					"redacts the same way, other packages included. The platform refuses it. Approve the server "+
+					"through catalog_slug, or import the server a device reported and set its status.")
 			return
 		}
 		if tok.ValueString() != "*" {

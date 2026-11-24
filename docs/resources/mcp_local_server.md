@@ -5,10 +5,10 @@ subcategory: ""
 description: |-
   Local MCP server approval — a locally spawned (stdio) MCP server that managed devices run governed, through ferentin-mcp, instead of refusing it under server_approval on ferentin_mcp_scope_defaults.
   Create one from exactly one of:
-  argv_template (with display_name) — the command line the approval covers, where * matches exactly one argument: ["uv", "run", "--directory", "*", "okta-mcp-server"] approves that server from any directory. Devices consult a template only for a command line that names no package.catalog_slug — a local MCP catalog entry, keyed on its package identities.
+  argv_template (with display_name) — the command line the approval covers, where * matches exactly one argument: ["uv", "run", "--directory", "*", "okta-mcp-server"] approves that server from any directory. A * may stand for an argument after the package or program it is passed to, or for a --directory or --project (uv), -w (docker, podman) or --tag (npm) value. The platform refuses one a device would fill with a program or package nobody wrote down, such as ["npx", "-y", "*"], which approves any package.catalog_slug — a local MCP catalog entry, keyed on its package identities.
   Either way the server is approved on creation, tenant-wide. Its tools still start unvetted; tool_vetting_risk_policy on ferentin_mcp_scope_defaults decides what developers get from them.
   Import manages the verdict of a server a device reported, too. Such a server cannot be deleted: destroying it leaves it, and its verdict, in place, with a warning.
-  ~> The template is shipped verbatim in the signed policy bundle to every managed device. Put * where a credential or anything private would go.
+  ~> The template is shipped verbatim in the signed policy bundle to every managed device, so never put a credential or anything private in it. A device compares a template with the command line after replacing credentials with [redacted], and the platform refuses that marker in a template: approve a server that takes a credential on its command line by catalog_slug, or import the server a device reported and set its status.
   Import
   
   terraform import ferentin_mcp_local_server.example <tenant_id>/<server_id>
@@ -20,14 +20,14 @@ Local MCP server approval — a locally spawned (stdio) MCP server that managed 
 
 Create one from **exactly one** of:
 
-* `argv_template` (with `display_name`) — the command line the approval covers, where `*` matches exactly one argument: `["uv", "run", "--directory", "*", "okta-mcp-server"]` approves that server from any directory. Devices consult a template only for a command line that names no package.
+* `argv_template` (with `display_name`) — the command line the approval covers, where `*` matches exactly one argument: `["uv", "run", "--directory", "*", "okta-mcp-server"]` approves that server from any directory. A `*` may stand for an argument after the package or program it is passed to, or for a `--directory` or `--project` (uv), `-w` (docker, podman) or `--tag` (npm) value. The platform refuses one a device would fill with a program or package nobody wrote down, such as `["npx", "-y", "*"]`, which approves any package.
 * `catalog_slug` — a local MCP catalog entry, keyed on its package identities.
 
 Either way the server is approved on creation, tenant-wide. Its tools still start unvetted; `tool_vetting_risk_policy` on `ferentin_mcp_scope_defaults` decides what developers get from them.
 
 Import manages the verdict of a server a device reported, too. Such a server cannot be deleted: destroying it leaves it, and its verdict, in place, with a warning.
 
-~> The template is shipped **verbatim** in the signed policy bundle to every managed device. Put `*` where a credential or anything private would go.
+~> The template is shipped **verbatim** in the signed policy bundle to every managed device, so never put a credential or anything private in it. A device compares a template with the command line after replacing credentials with `[redacted]`, and the platform refuses that marker in a template: approve a server that takes a credential on its command line by `catalog_slug`, or import the server a device reported and set its `status`.
 
 ## Import
 
@@ -40,8 +40,9 @@ terraform import ferentin_mcp_local_server.example <tenant_id>/<server_id>
 ```terraform
 # Approve a local (stdio) MCP server from the command line that runs it. `*`
 # matches exactly one argument, so this covers okta-mcp-server from any
-# checkout directory. The template ships verbatim to every managed device:
-# put `*` where anything private would go.
+# checkout directory. The template ships verbatim to every managed device, so
+# never put anything private in it. A `*` may stand for an argument after the
+# package or program, or for a --directory, --project, -w or --tag value.
 resource "ferentin_mcp_local_server" "okta" {
   display_name  = "Okta MCP"
   argv_template = ["uv", "run", "--directory", "*", "okta-mcp-server"]
@@ -62,9 +63,9 @@ resource "ferentin_mcp_local_server" "playwright" {
   catalog_slug = "local-playwright"
 }
 
-# Block a server outright. Devices consult a template only for a command line
-# that names no package, so a template suits a bare binary or a script; block
-# a package with a ferentin_mcp_policy deny whose target names the package. A server a device reported can
+# Block a server outright. A template names one command line, so it suits a
+# bare binary or a script; to block a package wherever it runs, use a
+# ferentin_mcp_policy deny whose target names the package. A server a device reported can
 # be imported to manage its verdict this way; destroying it leaves it in place.
 resource "ferentin_mcp_local_server" "unvetted" {
   display_name  = "Unvetted scraper"
@@ -78,7 +79,7 @@ resource "ferentin_mcp_local_server" "unvetted" {
 
 ### Optional
 
-- `argv_template` (List of String) The command line the approval covers, as the client's config spells it (`argv[0]` included); `*` matches exactly one argument and every other token is compared literally. 1 to 64 tokens. The first token must be literal: a `*` there would approve any program, so declare `uv` and `/opt/homebrew/bin/uv` as two servers if both are in use. At least two tokens must be literal, except for a single absolute path such as `["/Applications/1Password.app/Contents/MacOS/1password-mcp"]`, which covers that program run with no arguments. A template that starts a shell or interpreter and names no script covers whatever it is given to run; the platform accepts it with a `template_runs_any_script` warning. Changing it updates the server in place. Leaving it out keeps the server's current template.
+- `argv_template` (List of String) The command line the approval covers, as the client's config spells it (`argv[0]` included); `*` matches exactly one argument and every other token is compared literally. 1 to 64 tokens. The first token must be literal: a `*` there would approve any program, so declare `uv` and `/opt/homebrew/bin/uv` as two servers if both are in use. At least two tokens must be literal, except for a single absolute path such as `["/Applications/1Password.app/Contents/MacOS/1password-mcp"]`, which covers that program run with no arguments. No token may contain `[redacted]`, and a `*` may not stand where the launcher reads its own options or what it runs: only a `--directory`, `--project`, `-w` or `--tag` value, or an argument after the package or program. A template that starts a shell or interpreter and names no script covers whatever it is given to run; the platform accepts it with a `template_runs_any_script` warning. Changing it updates the server in place. Leaving it out keeps the server's current template.
 - `catalog_slug` (String) Slug of the local MCP catalog entry to add the server from, e.g. `local-playwright`. Changing it replaces the server.
 - `display_name` (String) Name shown in the console. Required with `argv_template`; a catalog server takes its entry's. Changing it replaces the server.
 - `reason` (String) Note recorded in the audit log with each write. Not read back.

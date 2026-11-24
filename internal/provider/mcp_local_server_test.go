@@ -312,18 +312,21 @@ func TestArgvTemplateUsable(t *testing.T) {
 		value   types.List
 		wantErr string
 	}{
-		"two literals and a wildcard":    {list("uv", "run", "--directory", "*", "okta-mcp-server"), ""},
-		"two literals":                   {list("npx", "@modelcontextprotocol/server-github"), ""},
-		"one absolute path":              {list("/Applications/1Password.app/Contents/MacOS/1password-mcp"), ""},
-		"one bare program name":          {list("safaridriver"), "must be an absolute path"},
-		"root alone":                     {list("/"), "must be an absolute path"},
-		"wildcard program":               {list("*", "run", "server"), "must name its program"},
-		"one literal and wildcards":      {list("node", "*"), "names too little"},
-		"empty token":                    {list("uv", ""), "Empty argv_template token"},
-		"null":                           {types.ListNull(types.StringType), ""},
-		"unknown":                        {types.ListUnknown(types.StringType), ""},
-		"a token not yet known":          {types.ListValueMust(types.StringType, []attr.Value{types.StringValue("*"), types.StringUnknown()}), ""},
-		"a wildcard alone is not a path": {list("*"), "must name its program"},
+		"two literals and a wildcard":     {list("uv", "run", "--directory", "*", "okta-mcp-server"), ""},
+		"two literals":                    {list("npx", "@modelcontextprotocol/server-github"), ""},
+		"one absolute path":               {list("/Applications/1Password.app/Contents/MacOS/1password-mcp"), ""},
+		"one bare program name":           {list("safaridriver"), "must be an absolute path"},
+		"root alone":                      {list("/"), "must be an absolute path"},
+		"wildcard program":                {list("*", "run", "server"), "must name its program"},
+		"one literal and wildcards":       {list("node", "*"), "names too little"},
+		"empty token":                     {list("uv", ""), "Empty argv_template token"},
+		"null":                            {types.ListNull(types.StringType), ""},
+		"unknown":                         {types.ListUnknown(types.StringType), ""},
+		"a token not yet known":           {types.ListValueMust(types.StringType, []attr.Value{types.StringValue("*"), types.StringUnknown()}), ""},
+		"a wildcard alone is not a path":  {list("*"), "must name its program"},
+		"redaction marker":                {list("uvx", "[redacted]"), "redaction marker"},
+		"embedded redaction marker":       {list("srv", "--token=[redacted]"), "redaction marker"},
+		"marker in other case is literal": {list("srv", "--token=[REDACTED]"), ""},
 	} {
 		resp := &validator.ListResponse{}
 		argvTemplateUsable{}.ValidateList(ctx, validator.ListRequest{Path: path.Root("argv_template"), ConfigValue: tc.value}, resp)

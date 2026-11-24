@@ -110,9 +110,9 @@ resource "ferentin_mcp_local_server" "okta" {
 }
 ```
 
-[`ferentin_mcp_local_server`](../resources/mcp_local_server.md) approves a local server tenant-wide. `argv_template` is the command line the approval covers, as the client's config spells it; `*` matches exactly one argument, so this one approves `okta-mcp-server` from any checkout directory. Devices consult a template only for a command line that names no package. For a packaged server in the local MCP catalog, set `catalog_slug` instead, and the approval is keyed on the entry's packages. Its tools still start unvetted: `tool_vetting_risk_policy` (step 5) decides what developers get from them.
+[`ferentin_mcp_local_server`](../resources/mcp_local_server.md) approves a local server tenant-wide. `argv_template` is the command line the approval covers, as the client's config spells it; `*` matches exactly one argument, so this one approves `okta-mcp-server` from any checkout directory. A `*` may stand for an argument after the package or program, or for a `--directory`, `--project`, `-w` or `--tag` value; the platform refuses one a device would fill with a program or package nobody wrote down, such as `npx -y *`. For a packaged server in the local MCP catalog, set `catalog_slug` instead, and the approval is keyed on the entry's packages. Its tools still start unvetted: `tool_vetting_risk_policy` (step 5) decides what developers get from them.
 
-~> The template ships **verbatim** in the signed policy bundle to every managed device. Put `*` where a credential or anything private would go.
+~> The template ships **verbatim** in the signed policy bundle to every managed device, so never put a credential or anything private in it. A device compares a template with the command line after replacing credentials with `[redacted]`, and the platform refuses that marker in a template; approve a server that takes a credential on its command line by `catalog_slug` instead.
 
 
 Known-bad local packages are denied by the policy in step 1.
